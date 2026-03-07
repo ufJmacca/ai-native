@@ -39,6 +39,8 @@ Those notes are then synthesized into the structured `plan.json` and rendered `p
 
 Before intent and implementation are locked in, the planning workflow may also emit a small clarification batch. When that happens, the CLI asks the questions directly in the terminal, stores the results under `plan/questions.*` and `plan/answers.*`, and feeds the answers back into the remaining planning passes.
 
+If the plan still fails critique, the workflow saves each attempt as `plan-attempt-N.*` and `plan-review-attempt-N.*`. A resumed run continues from the latest saved critique attempt instead of restarting the entire planning stage. When the configured attempt limit is exhausted, the CLI can ask whether to continue and how many extra attempts to grant.
+
 ## Ralph Loop Contract
 
 Each slice runs through the following sequence:

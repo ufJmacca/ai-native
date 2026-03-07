@@ -231,3 +231,169 @@ def test_plan_stage_passes_user_answers_back_into_planning(app_config, tmp_spec:
         }
     ]
     assert any("todo, in_progress, done" in prompt for prompt in builder.prompts)
+
+
+class ResumeOnlyBuilder:
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+        self.plan_attempts = 0
+
+    def run(self, prompt: str, cwd: Path, schema_path: Path | None = None) -> AgentResult:
+        self.prompts.append(prompt)
+        if schema_path and schema_path.name == "plan-artifact.json":
+            self.plan_attempts += 1
+            payload = {
+                "title": "Task Management Plan",
+                "summary": "Clarify read and edit interfaces.",
+                "implementation_steps": ["Finalize read/edit flows", "Add tests"],
+                "interfaces": ["GET /tasks", "PATCH /tasks/{id}"],
+                "data_flow": ["Read and edit paths are explicit"],
+                "edge_cases": ["Reject invalid edits"],
+                "test_strategy": ["Add interface-level tests"],
+                "rollout_notes": ["Ship after the critique is resolved"],
+            }
+            return AgentResult(text=json.dumps(payload), json_data=payload)
+        raise AssertionError("Resume should not rerun grounding, questions, intent, or implementation.")
+
+
+def test_plan_stage_resumes_from_latest_attempt(app_config, tmp_spec: Path, tmp_path: Path) -> None:
+    app_config.workspace.plan_max_attempts = 4
+    state_store = StateStore(tmp_path / "artifacts")
+    state = state_store.create_run(tmp_spec, Path(__file__).resolve().parents[2])
+    run_dir = Path(state.run_dir)
+    plan_dir = run_dir / "plan"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "recon").mkdir(parents=True, exist_ok=True)
+    write_json(
+        run_dir / "recon" / "context.json",
+        {
+            "repo_state": "greenfield",
+            "languages": [],
+            "manifests": [],
+            "test_frameworks": ["pytest"],
+            "architecture_summary": "No product code exists yet.",
+            "risks": ["Read and edit contracts remain ambiguous."],
+            "touched_areas": ["Application code", "Tests"],
+            "recommended_questions": [],
+        },
+    )
+    (plan_dir / "grounding.md").write_text("# Grounding\n", encoding="utf-8")
+    (plan_dir / "intent.md").write_text("# Intent\n", encoding="utf-8")
+    (plan_dir / "implementation.md").write_text("# Implementation\n", encoding="utf-8")
+    prior_plan = {
+        "title": "Task Management Plan",
+        "summary": "Previous attempt",
+        "implementation_steps": ["Draft plan"],
+        "interfaces": ["Task list view"],
+        "data_flow": ["Request updates data"],
+        "edge_cases": ["Validation errors"],
+        "test_strategy": ["Add tests"],
+        "rollout_notes": ["Ship carefully"],
+    }
+    prior_review = {
+        "verdict": "changes_required",
+        "summary": "Need explicit read/edit interfaces and higher-risk behavior definitions.",
+        "findings": ["Interfaces are underspecified."],
+        "required_changes": ["Define read/edit contracts"],
+    }
+    write_json(plan_dir / "plan-attempt-3.json", prior_plan)
+    (plan_dir / "plan-attempt-3.md").write_text("# Prior Plan\n", encoding="utf-8")
+    write_json(plan_dir / "plan-review-attempt-3.json", prior_review)
+    (plan_dir / "plan-review-attempt-3.md").write_text("# Prior Review\n", encoding="utf-8")
+    builder = ResumeOnlyBuilder()
+    progress: list[str] = []
+    context = ExecutionContext(
+        config=app_config,
+        prompt_library=PromptLibrary(Path(__file__).resolve().parents[2] / "ai_native" / "prompts"),
+        state_store=state_store,
+        template_root=Path(__file__).resolve().parents[2],
+        repo_root=Path(__file__).resolve().parents[2],
+        spec_path=tmp_spec,
+        run_dir=run_dir,
+        builder=builder,
+        critic=ApprovingCritic(),
+        verifier=FakeWorkflowAdapter(),
+        pr_reviewer=FakeWorkflowAdapter(),
+        emit_progress=progress.append,
+    )
+
+    run_plan(context, state)
+
+    assert builder.plan_attempts == 1
+    assert any("resuming from previous critique at attempt 4" in event for event in progress)
+    assert any("Need explicit read/edit interfaces" in prompt for prompt in builder.prompts)
+    assert (plan_dir / "plan-attempt-3.json").exists()
+    assert (plan_dir / "plan-attempt-4.json").exists()
+    assert (plan_dir / "plan-review-attempt-4.json").exists()
+
+
+class ExhaustionCritic:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def run(self, prompt: str, cwd: Path, schema_path: Path | None = None) -> AgentResult:
+        self.calls += 1
+        if self.calls < 3:
+            payload = ReviewReport(
+                verdict="changes_required",
+                summary="Still missing explicit edit semantics.",
+                findings=["Edit semantics are vague."],
+                required_changes=["Specify edit behavior"],
+            ).model_dump(mode="json")
+        else:
+            payload = ReviewReport(
+                verdict="approved",
+                summary="The plan is now explicit and implementable.",
+                findings=[],
+                required_changes=[],
+            ).model_dump(mode="json")
+        return AgentResult(text=json.dumps(payload), json_data=payload)
+
+
+def test_plan_stage_can_continue_after_attempt_budget_is_exhausted(app_config, tmp_spec: Path, tmp_path: Path) -> None:
+    app_config.workspace.plan_max_attempts = 1
+    state_store = StateStore(tmp_path / "artifacts")
+    state = state_store.create_run(tmp_spec, Path(__file__).resolve().parents[2])
+    run_dir = Path(state.run_dir)
+    (run_dir / "recon").mkdir(parents=True, exist_ok=True)
+    write_json(
+        run_dir / "recon" / "context.json",
+        {
+            "repo_state": "greenfield",
+            "languages": [],
+            "manifests": [],
+            "test_frameworks": ["pytest"],
+            "architecture_summary": "No product code exists yet.",
+            "risks": ["Edit semantics remain ambiguous."],
+            "touched_areas": ["Application code", "Tests"],
+            "recommended_questions": [],
+        },
+    )
+    builder = RevisingPlanBuilder()
+    critic = ExhaustionCritic()
+    progress: list[str] = []
+    asked_questions: list[list[str]] = []
+    context = ExecutionContext(
+        config=app_config,
+        prompt_library=PromptLibrary(Path(__file__).resolve().parents[2] / "ai_native" / "prompts"),
+        state_store=state_store,
+        template_root=Path(__file__).resolve().parents[2],
+        repo_root=Path(__file__).resolve().parents[2],
+        spec_path=tmp_spec,
+        run_dir=run_dir,
+        builder=builder,
+        critic=critic,
+        verifier=FakeWorkflowAdapter(),
+        pr_reviewer=FakeWorkflowAdapter(),
+        emit_progress=progress.append,
+        ask_questions=lambda stage, questions: asked_questions.append(questions) or ["yes", "2"],
+    )
+
+    run_plan(context, state)
+
+    assert critic.calls == 3
+    assert any("attempt budget exhausted" in event for event in progress)
+    assert any("continuing with 2 additional attempts" in event for event in progress)
+    assert len(asked_questions) == 1
+    assert "Continue with more planning attempts?" in asked_questions[0][0]
+    assert (run_dir / "plan" / "plan-review-attempt-3.json").exists()

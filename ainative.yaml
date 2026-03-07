@@ -2,9 +2,9 @@ workspace:
   artifacts_dir: artifacts
   specs_dir: specs
   base_branch: main
-  question_budget_per_stage: 1
-  question_budget_per_run: 3
-  plan_max_attempts: 3
+  question_budget_per_stage: 3
+  question_budget_per_run: 9
+  plan_max_attempts: 6
   mermaid_validate_command:
     - mmdc
   mermaid_validate_args:

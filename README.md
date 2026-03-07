@@ -24,6 +24,7 @@ The `Makefile` auto-detects whether it is running inside the devcontainer. Insid
 `TARGET_DIR` is mandatory for the workflow targets in `make`. The workflow runs Codex, git operations, repository recon, and implementation inside that target directory rather than inside the template repo. Relative spec paths are resolved from `TARGET_DIR`.
 If a relative spec path is not present under `TARGET_DIR`, the CLI falls back to the same relative path in the template repo.
 If the planning step needs clarification, `make run` now pauses and asks the questions directly in the terminal, then feeds the answers back into the planning loop.
+If planning fails after exhausting its current attempt budget, a resumed run now continues from the latest saved critique attempt rather than restarting grounding/intent/implementation, and the CLI can ask whether to grant additional planning attempts.
 
 ## Core Targets
 
