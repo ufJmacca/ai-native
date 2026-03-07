@@ -14,3 +14,4 @@ build/
 .DS_Store
 artifacts/*
 !artifacts/.gitkeep
+.ai-native/

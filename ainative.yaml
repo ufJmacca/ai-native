@@ -6,9 +6,9 @@ workspace:
   question_budget_per_run: 9
   plan_max_attempts: 6
   architecture_max_attempts: 6
-  prd_max_attempts: 6
-  loop_max_attempts: 6
-  verification_max_attempts: 6
+  prd_max_attempts: 10
+  loop_max_attempts: 10
+  verification_max_attempts: 10
   mermaid_validate_command:
     - mmdc
   mermaid_validate_args:
