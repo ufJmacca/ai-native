@@ -18,6 +18,9 @@ def _render_plan_prompt(
     intent_notes: str,
     implementation_notes: str,
     user_answers: str,
+    approval_checklist: str,
+    critique_history: str,
+    blocker_ledger: str,
     prior_plan: PlanArtifact | None = None,
     critique: ReviewReport | None = None,
 ) -> str:
@@ -30,6 +33,9 @@ def _render_plan_prompt(
             intent_notes=intent_notes,
             implementation_notes=implementation_notes,
             user_answers=user_answers,
+            approval_checklist=approval_checklist,
+            critique_history=critique_history,
+            blocker_ledger=blocker_ledger,
             prior_plan=prior_plan.model_dump(mode="json"),
             critique=critique.model_dump(mode="json"),
         )
@@ -41,6 +47,9 @@ def _render_plan_prompt(
         intent_notes=intent_notes,
         implementation_notes=implementation_notes,
         user_answers=user_answers,
+        approval_checklist=approval_checklist,
+        critique_history=critique_history,
+        blocker_ledger=blocker_ledger,
     )
 
 
@@ -107,6 +116,9 @@ def _existing_plan_artifacts(stage_dir: Path) -> list[Path]:
         stage_dir / "grounding.md",
         stage_dir / "intent.md",
         stage_dir / "implementation.md",
+        stage_dir / "approval-checklist.md",
+        stage_dir / "critique-history.md",
+        stage_dir / "blocker-ledger.md",
         stage_dir / "plan.json",
         stage_dir / "plan.md",
         stage_dir / "plan-review.json",
@@ -141,6 +153,97 @@ def _load_resume_state(stage_dir: Path) -> dict[str, object] | None:
         "prior_review": ReviewReport.model_validate(read_json(stage_dir / f"plan-review-attempt-{last_attempt}.json")),
         "last_attempt": last_attempt,
     }
+
+
+def _load_review_history(stage_dir: Path) -> list[tuple[int, ReviewReport]]:
+    history: list[tuple[int, ReviewReport]] = []
+    for attempt in _existing_attempt_numbers(stage_dir):
+        history.append(
+            (
+                attempt,
+                ReviewReport.model_validate(read_json(stage_dir / f"plan-review-attempt-{attempt}.json")),
+            )
+        )
+    return history
+
+
+def _normalize_blocker(text: str) -> str:
+    return " ".join(text.lower().split())
+
+
+def _collect_blocker_ledger(history: list[tuple[int, ReviewReport]]) -> list[str]:
+    blockers: list[str] = []
+    seen: set[str] = set()
+    for _attempt, review in history:
+        for blocker in review.required_changes:
+            key = _normalize_blocker(blocker)
+            if key in seen:
+                continue
+            seen.add(key)
+            blockers.append(blocker)
+    return blockers
+
+
+def _render_critique_history(history: list[tuple[int, ReviewReport]]) -> str:
+    if not history:
+        return "\n".join(
+            [
+                "# Critique History",
+                "",
+                "No prior critiques exist for this planning run.",
+            ]
+        )
+    lines = [
+        "# Critique History",
+        "",
+        "Carry forward unresolved acceptance-critical blockers unless the revised plan makes them explicit or explicitly narrows scope to remove the ambiguity.",
+    ]
+    for attempt, review in history:
+        lines.extend(
+            [
+                "",
+                f"## Attempt {attempt}",
+                f"- Verdict: `{review.verdict}`",
+                f"- Summary: {review.summary}",
+                "",
+                "Required changes:",
+            ]
+        )
+        if review.required_changes:
+            lines.extend(f"- {change}" for change in review.required_changes)
+        else:
+            lines.append("- None")
+    return "\n".join(lines)
+
+
+def _render_blocker_ledger(blockers: list[str]) -> str:
+    if not blockers:
+        return "\n".join(
+            [
+                "# Blocker Ledger",
+                "",
+                "No carried-forward blockers exist yet.",
+            ]
+        )
+    return "\n".join(
+        [
+            "# Blocker Ledger",
+            "",
+            "These are the stable acceptance-critical blockers accumulated so far. Resolve or explicitly de-scope them instead of silently bypassing them.",
+            "",
+            *[f"- {blocker}" for blocker in blockers],
+        ]
+    )
+
+
+def _write_guidance_artifacts(stage_dir: Path, approval_checklist: str, critique_history: str, blocker_ledger: str) -> list[Path]:
+    approval_checklist_path = stage_dir / "approval-checklist.md"
+    critique_history_path = stage_dir / "critique-history.md"
+    blocker_ledger_path = stage_dir / "blocker-ledger.md"
+    write_text(approval_checklist_path, approval_checklist)
+    write_text(critique_history_path, critique_history)
+    write_text(blocker_ledger_path, blocker_ledger)
+    return [approval_checklist_path, critique_history_path, blocker_ledger_path]
 
 
 def _parse_additional_attempts(answer: str, default_attempts: int) -> int:
@@ -257,6 +360,30 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
         write_text(implementation_md, implementation_notes)
         artifacts.append(implementation_md)
 
+    approval_checklist_path = stage_dir / "approval-checklist.md"
+    if approval_checklist_path.exists():
+        approval_checklist = read_text(approval_checklist_path)
+        artifacts.append(approval_checklist_path)
+    else:
+        context.emit_progress("[ainative] plan: approval checklist")
+        checklist_prompt = context.prompt_library.render(
+            "plan_checklist.md",
+            spec_text=spec_text,
+            context_report=context_report,
+            grounding_notes=grounding_notes,
+            intent_notes=intent_notes,
+            implementation_notes=implementation_notes,
+            user_answers=user_answers,
+        )
+        approval_checklist = context.builder.run(checklist_prompt, cwd=context.repo_root).text
+        write_text(approval_checklist_path, approval_checklist)
+        artifacts.append(approval_checklist_path)
+
+    review_history = _load_review_history(stage_dir)
+    critique_history = _render_critique_history(review_history)
+    blocker_ledger = _render_blocker_ledger(_collect_blocker_ledger(review_history))
+    artifacts.extend(_write_guidance_artifacts(stage_dir, approval_checklist, critique_history, blocker_ledger))
+
     schema_path = context.template_root / "ai_native" / "schemas" / "plan-artifact.json"
     review_schema = context.template_root / "ai_native" / "schemas" / "review-report.json"
     attempt_limit = max(1, context.config.workspace.plan_max_attempts)
@@ -292,6 +419,9 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
             intent_notes=intent_notes,
             implementation_notes=implementation_notes,
             user_answers=user_answers,
+            approval_checklist=approval_checklist,
+            critique_history=critique_history,
+            blocker_ledger=blocker_ledger,
             prior_plan=plan,
             critique=review,
         )
@@ -313,6 +443,9 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
             spec_text=spec_text,
             plan=plan.model_dump(mode="json"),
             context_report=context_report,
+            approval_checklist=approval_checklist,
+            critique_history=critique_history,
+            blocker_ledger=blocker_ledger,
         )
         review_response = context.critic.run(review_prompt, cwd=context.repo_root, schema_path=review_schema)
         review = ReviewReport.model_validate(review_response.json_data)
@@ -321,6 +454,10 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
         write_review(review_md, review)
         write_review(attempt_review_md, review)
         artifacts.extend([review_md, review_md.with_suffix(".json"), attempt_review_md, attempt_review_md.with_suffix(".json")])
+        review_history = _load_review_history(stage_dir)
+        critique_history = _render_critique_history(review_history)
+        blocker_ledger = _render_blocker_ledger(_collect_blocker_ledger(review_history))
+        artifacts.extend(_write_guidance_artifacts(stage_dir, approval_checklist, critique_history, blocker_ledger))
         if review.verdict == "approved":
             return list(dict.fromkeys(artifacts))
         if attempt < attempt_limit:
