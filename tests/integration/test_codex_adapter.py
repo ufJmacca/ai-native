@@ -17,6 +17,7 @@ def test_codex_exec_adapter_writes_schema_output(monkeypatch, tmp_path: Path) ->
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr("ai_native.adapters.codex._running_in_container", lambda: False)
     adapter = CodexExecAdapter(
         AgentProfile(type="codex-exec", model="gpt-5-codex", sandbox="workspace-write", extra_args=["--full-auto"])
     )
@@ -26,6 +27,32 @@ def test_codex_exec_adapter_writes_schema_output(monkeypatch, tmp_path: Path) ->
     assert result.json_data["title"] == "ok"
     assert "--output-schema" in captured["command"]
     assert "--full-auto" in captured["command"]
+
+
+def test_codex_exec_adapter_defaults_to_unsandboxed_mode_in_container(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(command, cwd, capture_output, text, check):  # type: ignore[no-untyped-def]
+        captured["command"] = command
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text("ok", encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr("ai_native.adapters.codex._running_in_container", lambda: True)
+    monkeypatch.delenv("AINATIVE_CODEX_CONTAINER_SANDBOX", raising=False)
+    adapter = CodexExecAdapter(
+        AgentProfile(type="codex-exec", model="gpt-5-codex", sandbox="workspace-write", extra_args=["--full-auto"])
+    )
+
+    result = adapter.run("prompt", cwd=tmp_path)
+
+    assert result.text == "ok"
+    assert "-s" not in captured["command"]
+    assert "--dangerously-bypass-approvals-and-sandbox" in captured["command"]
+    assert "-a" in captured["command"]
+    assert "never" in captured["command"]
+    assert "--full-auto" not in captured["command"]
 
 
 def test_codex_review_adapter_uses_profile_model_and_extra_args(monkeypatch, tmp_path: Path) -> None:
@@ -84,6 +111,7 @@ def test_codex_exec_adapter_retries_without_workspace_write_when_landlock_panics
 
     monkeypatch.setattr("subprocess.run", fake_run)
     monkeypatch.setattr("ai_native.adapters.codex._running_in_container", lambda: True)
+    monkeypatch.setenv("AINATIVE_CODEX_CONTAINER_SANDBOX", "workspace-write")
     adapter = CodexExecAdapter(
         AgentProfile(type="codex-exec", model="gpt-5-codex", sandbox="workspace-write", extra_args=["--full-auto"])
     )
@@ -91,6 +119,41 @@ def test_codex_exec_adapter_retries_without_workspace_write_when_landlock_panics
     result = adapter.run("prompt", cwd=tmp_path, schema_path=tmp_path / "schema.json")
 
     assert result.json_data["title"] == "ok"
+    assert len(commands) == 2
+    assert commands[0][commands[0].index("-s") + 1] == "workspace-write"
+    assert "-s" not in commands[1]
+    assert "--dangerously-bypass-approvals-and-sandbox" in commands[1]
+    assert "--full-auto" not in commands[1]
+
+
+def test_codex_exec_adapter_retries_when_agent_message_contains_landlock(monkeypatch, tmp_path: Path) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(command, cwd, capture_output, text, check):  # type: ignore[no-untyped-def]
+        commands.append(command)
+        output_path = Path(command[command.index("-o") + 1])
+        if len(commands) == 1:
+            output_path.write_text(
+                (
+                    "**Blocked**\n\n"
+                    "error applying legacy Linux sandbox restrictions: Sandbox(LandlockRestrict)\n"
+                ),
+                encoding="utf-8",
+            )
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        output_path.write_text("# Builder Summary\nRecovered.\n", encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr("ai_native.adapters.codex._running_in_container", lambda: True)
+    monkeypatch.setenv("AINATIVE_CODEX_CONTAINER_SANDBOX", "workspace-write")
+    adapter = CodexExecAdapter(
+        AgentProfile(type="codex-exec", model="gpt-5-codex", sandbox="workspace-write", extra_args=["--full-auto"])
+    )
+
+    result = adapter.run("prompt", cwd=tmp_path)
+
+    assert result.text == "# Builder Summary\nRecovered."
     assert len(commands) == 2
     assert commands[0][commands[0].index("-s") + 1] == "workspace-write"
     assert "-s" not in commands[1]

@@ -26,6 +26,8 @@ class CodexExecAdapter:
             extra_args = [arg for arg in extra_args if arg != "--full-auto"]
             if "--dangerously-bypass-approvals-and-sandbox" not in extra_args:
                 extra_args.insert(0, "--dangerously-bypass-approvals-and-sandbox")
+            if "-a" not in extra_args and "--ask-for-approval" not in extra_args:
+                extra_args[1:1] = ["-a", "never"]
         return extra_args
 
     def _build_command(self, cwd: Path, output_path: Path, prompt: str, schema_path: Path | None, sandbox: str | None) -> list[str]:
@@ -43,12 +45,17 @@ class CodexExecAdapter:
         command.append(prompt)
         return command
 
-    def _fallback_sandbox(self) -> str | None:
+    def _preferred_sandbox(self) -> str | None:
         raw = os.environ.get("AINATIVE_CODEX_CONTAINER_SANDBOX")
         if raw is not None:
             normalized = raw.strip()
             return normalized or None
         if _running_in_container():
+            return "danger-full-access"
+        return self.profile.sandbox
+
+    def _fallback_sandbox(self, current_sandbox: str | None) -> str | None:
+        if _running_in_container() and current_sandbox != "danger-full-access":
             return "danger-full-access"
         return None
 
@@ -57,6 +64,10 @@ class CodexExecAdapter:
             return False
         message = (completed.stderr or completed.stdout or "").strip()
         return LANDLOCK_RESTRICT_ERROR in message
+
+    def _contains_landlock_error(self, text: str, completed: subprocess.CompletedProcess[str]) -> bool:
+        combined = "\n".join(part for part in (text, completed.stderr, completed.stdout) if part)
+        return LANDLOCK_RESTRICT_ERROR in combined
 
     def _run_command(self, command: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -70,12 +81,12 @@ class CodexExecAdapter:
     def run(self, prompt: str, cwd: Path, schema_path: Path | None = None) -> AgentResult:
         with tempfile.TemporaryDirectory() as tmp_dir:
             output_path = Path(tmp_dir) / "codex-output.txt"
-            sandbox = self.profile.sandbox
+            sandbox = self._preferred_sandbox()
             command = self._build_command(cwd=cwd, output_path=output_path, prompt=prompt, schema_path=schema_path, sandbox=sandbox)
             completed = self._run_command(command, cwd=cwd)
 
             if self._should_retry_with_fallback(completed, sandbox):
-                fallback_sandbox = self._fallback_sandbox()
+                fallback_sandbox = self._fallback_sandbox(sandbox)
                 if fallback_sandbox != sandbox:
                     command = self._build_command(
                         cwd=cwd,
@@ -87,6 +98,21 @@ class CodexExecAdapter:
                     completed = self._run_command(command, cwd=cwd)
 
             text = output_path.read_text(encoding="utf-8").strip() if output_path.exists() else completed.stdout.strip()
+            if self._contains_landlock_error(text, completed):
+                fallback_sandbox = self._fallback_sandbox(sandbox)
+                if fallback_sandbox != sandbox:
+                    if output_path.exists():
+                        output_path.unlink()
+                    command = self._build_command(
+                        cwd=cwd,
+                        output_path=output_path,
+                        prompt=prompt,
+                        schema_path=schema_path,
+                        sandbox=fallback_sandbox,
+                    )
+                    completed = self._run_command(command, cwd=cwd)
+                    text = output_path.read_text(encoding="utf-8").strip() if output_path.exists() else completed.stdout.strip()
+
             if completed.returncode != 0:
                 raise AdapterError(completed.stderr.strip() or completed.stdout.strip() or "codex exec failed")
             payload = None
