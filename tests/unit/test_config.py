@@ -1,0 +1,16 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from ai_native.config import AppConfig
+
+
+def test_load_config_resolves_paths_from_repo_root() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    config = AppConfig.load(repo_root / "ainative.yaml")
+
+    assert config.repo_root == repo_root
+    assert config.workspace.artifacts_dir == repo_root / "artifacts"
+    assert config.workspace.specs_dir == repo_root / "specs"
+    assert config.git.branch_prefix == "codex"
+

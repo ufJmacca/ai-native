@@ -1,0 +1,46 @@
+workspace:
+  artifacts_dir: artifacts
+  specs_dir: specs
+  base_branch: main
+  question_budget_per_stage: 1
+  question_budget_per_run: 3
+  mermaid_validate_command:
+    - mmdc
+  mermaid_validate_args:
+    - --quiet
+
+agents:
+  builder:
+    type: codex-exec
+    model: gpt-5-codex
+    sandbox: workspace-write
+    extra_args:
+      - --full-auto
+  critic:
+    type: codex-exec
+    model: gpt-5-codex
+    sandbox: workspace-write
+    extra_args:
+      - --full-auto
+  verifier:
+    type: codex-exec
+    model: gpt-5-codex
+    sandbox: workspace-write
+    extra_args:
+      - --full-auto
+  pr_reviewer:
+    type: codex-review
+    base_branch: main
+
+git:
+  branch_prefix: codex
+  conventional_prefix: feat
+  pr_draft: true
+
+quality_gates:
+  require_plan_approval: true
+  require_diagram_approval: true
+  require_prd_approval: true
+  require_test_critique: true
+  require_red_green_refactor: true
+

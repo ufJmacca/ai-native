@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "repo_state",
+    "languages",
+    "manifests",
+    "test_frameworks",
+    "architecture_summary",
+    "risks",
+    "touched_areas",
+    "recommended_questions"
+  ],
+  "properties": {
+    "repo_state": {
+      "type": "string",
+      "enum": ["greenfield", "existing"]
+    },
+    "languages": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "manifests": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "test_frameworks": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "architecture_summary": {
+      "type": "string"
+    },
+    "risks": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "touched_areas": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "recommended_questions": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}
+

@@ -1,0 +1,25 @@
+name: Template Smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "ai_native/**"
+      - "tests/**"
+      - "specs/examples/**"
+      - "ainative.yaml"
+      - "pyproject.toml"
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build workspace image
+        run: docker compose build workspace
+      - name: Install dependencies
+        run: docker compose run --rm workspace uv sync
+      - name: Run smoke test
+        run: docker compose run --rm workspace uv run pytest tests/e2e/test_run_smoke.py -q
+

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "summary", "acceptance_checks", "evidence", "gaps"],
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["passed", "failed"]
+    },
+    "summary": { "type": "string" },
+    "acceptance_checks": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "evidence": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "gaps": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}
+

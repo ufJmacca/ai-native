@@ -1,0 +1,16 @@
+services:
+  workspace:
+    build:
+      context: .
+      dockerfile: .devcontainer/Dockerfile
+    working_dir: /workspace
+    command: sleep infinity
+    init: true
+    environment:
+      PYTHONUNBUFFERED: "1"
+      CODEX_HOME: /home/vscode/.codex
+      UV_LINK_MODE: copy
+      UV_CACHE_DIR: /workspace/.cache/uv
+      NPM_CONFIG_CACHE: /workspace/.cache/npm
+    volumes:
+      - .:/workspace

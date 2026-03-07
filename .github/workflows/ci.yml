@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "codex/**"
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build workspace image
+        run: docker compose build workspace
+      - name: Bootstrap workspace
+        run: docker compose run --rm workspace uv sync
+      - name: Run test suite
+        run: docker compose run --rm workspace uv run pytest
+

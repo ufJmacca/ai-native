@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "title",
+    "summary",
+    "implementation_steps",
+    "interfaces",
+    "data_flow",
+    "edge_cases",
+    "test_strategy",
+    "rollout_notes"
+  ],
+  "properties": {
+    "title": { "type": "string" },
+    "summary": { "type": "string" },
+    "implementation_steps": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "interfaces": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "data_flow": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "edge_cases": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "test_strategy": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "rollout_notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}
+
