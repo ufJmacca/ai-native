@@ -11,6 +11,7 @@ Work inside the repository until the slice is complete. Follow this sequence str
 
 Use Triple A structure in tests. Reject test theatre, dead mocks, and low-signal assertions.
 Use the target repository as the source of truth. Consider application code, infrastructure, CI, docs, and configuration when they materially affect the feature. Build only the product feature requested by the spec and active slice.
+If prior test critiques exist, resolve the blocker ledger instead of drifting into unrelated changes.
 
 Feature spec:
 {spec_text}
@@ -23,3 +24,9 @@ Run directory:
 
 Slice artifact directory:
 {slice_dir}
+
+Critique history:
+{critique_history}
+
+Blocker ledger:
+{blocker_ledger}
