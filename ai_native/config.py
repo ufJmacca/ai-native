@@ -15,6 +15,9 @@ class WorkspaceConfig(BaseModel):
     question_budget_per_run: int = 3
     plan_max_attempts: int = 3
     architecture_max_attempts: int = 3
+    prd_max_attempts: int = 3
+    loop_max_attempts: int = 3
+    verification_max_attempts: int = 3
     mermaid_validate_command: list[str] = Field(default_factory=lambda: ["mmdc"])
     mermaid_validate_args: list[str] = Field(default_factory=lambda: ["--quiet"])
 
