@@ -50,8 +50,6 @@ def test_codex_exec_adapter_defaults_to_unsandboxed_mode_in_container(monkeypatc
     assert result.text == "ok"
     assert "-s" not in captured["command"]
     assert "--dangerously-bypass-approvals-and-sandbox" in captured["command"]
-    assert "-a" in captured["command"]
-    assert "never" in captured["command"]
     assert "--full-auto" not in captured["command"]
 
 

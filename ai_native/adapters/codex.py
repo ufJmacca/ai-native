@@ -26,8 +26,6 @@ class CodexExecAdapter:
             extra_args = [arg for arg in extra_args if arg != "--full-auto"]
             if "--dangerously-bypass-approvals-and-sandbox" not in extra_args:
                 extra_args.insert(0, "--dangerously-bypass-approvals-and-sandbox")
-            if "-a" not in extra_args and "--ask-for-approval" not in extra_args:
-                extra_args[1:1] = ["-a", "never"]
         return extra_args
 
     def _build_command(self, cwd: Path, output_path: Path, prompt: str, schema_path: Path | None, sandbox: str | None) -> list[str]:
