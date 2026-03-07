@@ -27,11 +27,28 @@ def _resolve_workspace_root(config: AppConfig, workspace_dir: str | None) -> Pat
     return (Path(workspace_dir).resolve() if workspace_dir else config.repo_root)
 
 
-def _resolve_spec_path(spec: str, workspace_root: Path) -> Path:
+def _resolve_spec_path(config: AppConfig, spec: str, workspace_root: Path) -> Path:
     spec_path = Path(spec)
     if spec_path.is_absolute():
-        return spec_path.resolve()
-    return (workspace_root / spec_path).resolve()
+        resolved = spec_path.resolve()
+        if resolved.exists():
+            return resolved
+        raise SystemExit(f"Spec file not found: {resolved}")
+
+    candidates: list[Path] = []
+    for base in (workspace_root, config.repo_root):
+        candidate = (base / spec_path).resolve()
+        if candidate not in candidates:
+            candidates.append(candidate)
+        if candidate.exists():
+            return candidate
+
+    searched = "\n".join(f"- {candidate}" for candidate in candidates)
+    raise SystemExit(
+        "Spec file not found. Checked:\n"
+        f"{searched}\n"
+        "Pass an absolute path, place the spec under TARGET_DIR, or keep it in the template repo and pass the same relative path."
+    )
 
 
 def _print_progress(message: str) -> None:
@@ -85,7 +102,7 @@ def command_run(args: argparse.Namespace) -> int:
     orchestrator = WorkflowOrchestrator(config, progress=_print_progress, question_responder=_ask_questions)
     workspace_root = _resolve_workspace_root(config, args.workspace_dir)
     state = orchestrator.run_all(
-        _resolve_spec_path(args.spec, workspace_root),
+        _resolve_spec_path(config, args.spec, workspace_root),
         run_dir=Path(args.run_dir).resolve() if args.run_dir else None,
         dry_run_pr=args.dry_run_pr,
         workspace_root=workspace_root,
@@ -99,7 +116,7 @@ def command_stage(args: argparse.Namespace) -> int:
     orchestrator = WorkflowOrchestrator(config, progress=_print_progress, question_responder=_ask_questions)
     workspace_root = _resolve_workspace_root(config, args.workspace_dir)
     state = orchestrator.run_until(
-        spec_path=_resolve_spec_path(args.spec, workspace_root),
+        spec_path=_resolve_spec_path(config, args.spec, workspace_root),
         target_stage=args.stage,
         run_dir=Path(args.run_dir).resolve() if args.run_dir else None,
         dry_run_pr=args.dry_run_pr,
@@ -113,7 +130,7 @@ def command_review(args: argparse.Namespace) -> int:
     config = _load_config()
     orchestrator = WorkflowOrchestrator(config, progress=_print_progress, question_responder=_ask_questions)
     workspace_root = _resolve_workspace_root(config, args.workspace_dir)
-    spec_path = _resolve_spec_path(args.spec, workspace_root)
+    spec_path = _resolve_spec_path(config, args.spec, workspace_root)
     run_dir = Path(args.run_dir).resolve() if args.run_dir else _state_store(config).find_latest_for_spec(spec_path, workspace_root)
     if run_dir is None:
         raise SystemExit("No matching run found for spec.")
@@ -133,7 +150,7 @@ def command_pr(args: argparse.Namespace) -> int:
     orchestrator = WorkflowOrchestrator(config, progress=_print_progress, question_responder=_ask_questions)
     workspace_root = _resolve_workspace_root(config, args.workspace_dir)
     state = orchestrator.run_until(
-        spec_path=_resolve_spec_path(args.spec, workspace_root),
+        spec_path=_resolve_spec_path(config, args.spec, workspace_root),
         target_stage="pr",
         run_dir=Path(args.run_dir).resolve() if args.run_dir else None,
         dry_run_pr=args.dry_run,

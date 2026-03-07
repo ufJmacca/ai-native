@@ -3,7 +3,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from ai_native.cli import main
+import pytest
+
+from ai_native.cli import _resolve_spec_path, main
 from ai_native.models import RunState
 from ai_native.utils import utc_now
 
@@ -50,3 +52,36 @@ def test_cli_stage_command_invokes_orchestrator(monkeypatch, capsys, app_config,
     output = capsys.readouterr().out
     assert "[ainative] plan: started" in output
     assert str(tmp_path / "artifacts" / "run-1") in output
+
+
+def test_resolve_spec_path_prefers_target_workspace_when_present(app_config, tmp_path: Path) -> None:
+    workspace_root = tmp_path / "target-repo"
+    workspace_root.mkdir()
+    spec_path = workspace_root / "specs" / "task-management.md"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("# Spec\n", encoding="utf-8")
+
+    resolved = _resolve_spec_path(app_config, "specs/task-management.md", workspace_root)
+
+    assert resolved == spec_path.resolve()
+
+
+def test_resolve_spec_path_falls_back_to_template_repo(app_config, tmp_path: Path) -> None:
+    workspace_root = tmp_path / "target-repo"
+    workspace_root.mkdir()
+    spec_path = app_config.repo_root / "specs" / "test-cli-fallback-spec.md"
+    spec_path.write_text("# Spec\n", encoding="utf-8")
+    try:
+        resolved = _resolve_spec_path(app_config, "specs/test-cli-fallback-spec.md", workspace_root)
+    finally:
+        spec_path.unlink(missing_ok=True)
+
+    assert resolved == spec_path.resolve()
+
+
+def test_resolve_spec_path_raises_clear_error_when_missing(app_config, tmp_path: Path) -> None:
+    workspace_root = tmp_path / "target-repo"
+    workspace_root.mkdir()
+
+    with pytest.raises(SystemExit, match="Spec file not found. Checked:"):
+        _resolve_spec_path(app_config, "specs/missing.md", workspace_root)
