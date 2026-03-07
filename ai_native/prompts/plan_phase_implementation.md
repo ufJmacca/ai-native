@@ -20,3 +20,6 @@ Grounding notes:
 
 Intent notes:
 {intent_notes}
+
+User answers:
+{user_answers}

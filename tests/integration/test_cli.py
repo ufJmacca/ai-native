@@ -15,15 +15,17 @@ def test_cli_stage_command_invokes_orchestrator(monkeypatch, capsys, app_config,
     spec_path.write_text(tmp_spec.read_text(encoding="utf-8"), encoding="utf-8")
 
     class FakeOrchestrator:
-        def __init__(self, config, progress=None):
+        def __init__(self, config, progress=None, question_responder=None):
             self.config = config
             self.progress = progress
+            self.question_responder = question_responder
 
         def run_until(self, spec_path, target_stage, run_dir=None, dry_run_pr=False, workspace_root=None):  # type: ignore[no-untyped-def]
             assert spec_path == (Path(workspace_root) / "feature.md").resolve()
             assert target_stage == "plan"
             assert Path(workspace_root) == workspace_root.resolve()
             assert callable(self.progress)
+            assert callable(self.question_responder)
             self.progress("[ainative] plan: started")
             return RunState(
                 run_id="run-1",

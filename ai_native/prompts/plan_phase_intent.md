@@ -17,3 +17,6 @@ Context report:
 
 Grounding notes:
 {grounding_notes}
+
+User answers:
+{user_answers}

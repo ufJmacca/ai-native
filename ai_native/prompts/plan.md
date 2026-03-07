@@ -18,4 +18,7 @@ Intent notes:
 Implementation notes:
 {implementation_notes}
 
+User answers:
+{user_answers}
+
 Return JSON that matches the provided schema.

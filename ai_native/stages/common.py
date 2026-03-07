@@ -30,6 +30,7 @@ class ExecutionContext:
     verifier: AgentAdapter
     pr_reviewer: AgentAdapter | ReviewAdapter
     emit_progress: Callable[[str], None] = field(default=lambda _message: None, repr=False)
+    ask_questions: Callable[[str, list[str]], list[str]] = field(default=lambda _stage, questions: [""] * len(questions), repr=False)
 
 
 def dump_model(path: Path, model: Any) -> None:

@@ -80,6 +80,12 @@ class ReviewReport(BaseModel):
     required_changes: list[str] = Field(default_factory=list)
 
 
+class QuestionBatch(BaseModel):
+    needs_user_input: bool = False
+    summary: str = ""
+    questions: list[str] = Field(default_factory=list)
+
+
 class VerificationReport(BaseModel):
     verdict: Literal["passed", "failed"]
     summary: str

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import sys
 from pathlib import Path
 
 from ai_native.config import AppConfig
@@ -37,6 +38,20 @@ def _print_progress(message: str) -> None:
     print(message, flush=True)
 
 
+def _ask_questions(stage: str, questions: list[str]) -> list[str]:
+    if not questions:
+        return []
+    if not sys.stdin.isatty():
+        raise SystemExit(f"{stage} requires user input, but stdin is not interactive.")
+    answers: list[str] = []
+    print(f"[ainative] {stage}: clarification needed", flush=True)
+    for index, question in enumerate(questions, start=1):
+        print(f"[ainative] {stage}: question {index}/{len(questions)}", flush=True)
+        print(question, flush=True)
+        answers.append(input("> ").strip())
+    return answers
+
+
 def command_doctor(_: argparse.Namespace) -> int:
     config = _load_config()
     checks = {
@@ -67,7 +82,7 @@ def command_doctor(_: argparse.Namespace) -> int:
 
 def command_run(args: argparse.Namespace) -> int:
     config = _load_config()
-    orchestrator = WorkflowOrchestrator(config, progress=_print_progress)
+    orchestrator = WorkflowOrchestrator(config, progress=_print_progress, question_responder=_ask_questions)
     workspace_root = _resolve_workspace_root(config, args.workspace_dir)
     state = orchestrator.run_all(
         _resolve_spec_path(args.spec, workspace_root),
@@ -81,7 +96,7 @@ def command_run(args: argparse.Namespace) -> int:
 
 def command_stage(args: argparse.Namespace) -> int:
     config = _load_config()
-    orchestrator = WorkflowOrchestrator(config, progress=_print_progress)
+    orchestrator = WorkflowOrchestrator(config, progress=_print_progress, question_responder=_ask_questions)
     workspace_root = _resolve_workspace_root(config, args.workspace_dir)
     state = orchestrator.run_until(
         spec_path=_resolve_spec_path(args.spec, workspace_root),
@@ -96,7 +111,7 @@ def command_stage(args: argparse.Namespace) -> int:
 
 def command_review(args: argparse.Namespace) -> int:
     config = _load_config()
-    orchestrator = WorkflowOrchestrator(config, progress=_print_progress)
+    orchestrator = WorkflowOrchestrator(config, progress=_print_progress, question_responder=_ask_questions)
     workspace_root = _resolve_workspace_root(config, args.workspace_dir)
     spec_path = _resolve_spec_path(args.spec, workspace_root)
     run_dir = Path(args.run_dir).resolve() if args.run_dir else _state_store(config).find_latest_for_spec(spec_path, workspace_root)
@@ -115,7 +130,7 @@ def command_review(args: argparse.Namespace) -> int:
 
 def command_pr(args: argparse.Namespace) -> int:
     config = _load_config()
-    orchestrator = WorkflowOrchestrator(config, progress=_print_progress)
+    orchestrator = WorkflowOrchestrator(config, progress=_print_progress, question_responder=_ask_questions)
     workspace_root = _resolve_workspace_root(config, args.workspace_dir)
     state = orchestrator.run_until(
         spec_path=_resolve_spec_path(args.spec, workspace_root),

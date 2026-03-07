@@ -18,6 +18,9 @@ Intent notes:
 Implementation notes:
 {implementation_notes}
 
+User answers:
+{user_answers}
+
 Previous plan:
 {prior_plan}
 

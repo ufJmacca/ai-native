@@ -52,6 +52,12 @@ class FakeWorkflowAdapter:
                 "test_strategy": ["Unit tests for service logic", "Integration tests for HTTP behavior"],
                 "rollout_notes": ["Ship behind example feature branch"],
             }
+        if name == "question-batch.json":
+            return {
+                "needs_user_input": False,
+                "summary": "The spec and repo context are sufficient for planning.",
+                "questions": [],
+            }
         if name == "diagram-artifact.json":
             return {
                 "title": "Todo API Architecture",
@@ -100,4 +106,3 @@ class FakeWorkflowAdapter:
                 "gaps": [],
             }
         raise AssertionError(f"Unexpected schema requested: {name}")
-

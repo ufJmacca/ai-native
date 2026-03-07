@@ -64,6 +64,13 @@ class RevisingPlanBuilder:
                     "rollout_notes": ["Release behind a feature branch and verify dashboard aggregates against seeded fixtures"],
                 }
             return AgentResult(text=json.dumps(payload), json_data=payload)
+        if schema_path and schema_path.name == "question-batch.json":
+            payload = {
+                "needs_user_input": False,
+                "summary": "The spec is detailed enough.",
+                "questions": [],
+            }
+            return AgentResult(text=json.dumps(payload), json_data=payload)
         return AgentResult(text="# Notes\nGrounded planning notes.")
 
 
@@ -137,3 +144,90 @@ def test_plan_stage_revises_after_critique(app_config, tmp_spec: Path, tmp_path:
     assert (run_dir / "plan" / "plan-review.md").exists()
     assert any(path.name == "plan-review-attempt-2.md" for path in artifacts)
     assert read_json(run_dir / "plan" / "plan-review.json")["verdict"] == "approved"
+
+
+class QuestionAskingPlanBuilder:
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+
+    def run(self, prompt: str, cwd: Path, schema_path: Path | None = None) -> AgentResult:
+        self.prompts.append(prompt)
+        if schema_path and schema_path.name == "question-batch.json":
+            payload = {
+                "needs_user_input": True,
+                "summary": "The allowed task statuses are not specified.",
+                "questions": ["Which task statuses should the first release support?"],
+            }
+            return AgentResult(text=json.dumps(payload), json_data=payload)
+        if schema_path and schema_path.name == "plan-artifact.json":
+            payload = {
+                "title": "Task Management Plan",
+                "summary": "Implement task management using the user-confirmed statuses.",
+                "implementation_steps": ["Add task model", "Add status transitions", "Add tests"],
+                "interfaces": ["POST /tasks", "PATCH /tasks/{id}/status"],
+                "data_flow": ["Requests validate status values before persistence"],
+                "edge_cases": ["Reject unknown statuses"],
+                "test_strategy": ["Unit and integration tests cover allowed statuses"],
+                "rollout_notes": ["Seed fixtures with the confirmed statuses"],
+            }
+            return AgentResult(text=json.dumps(payload), json_data=payload)
+        return AgentResult(text="# Notes\nPlan using the provided user answers.")
+
+
+class ApprovingCritic:
+    def run(self, prompt: str, cwd: Path, schema_path: Path | None = None) -> AgentResult:
+        payload = ReviewReport(
+            verdict="approved",
+            summary="The plan is concrete and implementable.",
+            findings=[],
+            required_changes=[],
+        ).model_dump(mode="json")
+        return AgentResult(text=json.dumps(payload), json_data=payload)
+
+
+def test_plan_stage_passes_user_answers_back_into_planning(app_config, tmp_spec: Path, tmp_path: Path) -> None:
+    app_config.workspace.plan_max_attempts = 1
+    state_store = StateStore(tmp_path / "artifacts")
+    state = state_store.create_run(tmp_spec, Path(__file__).resolve().parents[2])
+    run_dir = Path(state.run_dir)
+    (run_dir / "recon").mkdir(parents=True, exist_ok=True)
+    write_json(
+        run_dir / "recon" / "context.json",
+        {
+            "repo_state": "greenfield",
+            "languages": [],
+            "manifests": [],
+            "test_frameworks": ["pytest"],
+            "architecture_summary": "No product code exists yet.",
+            "risks": ["Statuses must be defined before tests can be written."],
+            "touched_areas": ["Application code", "Tests"],
+            "recommended_questions": [],
+        },
+    )
+    builder = QuestionAskingPlanBuilder()
+    context = ExecutionContext(
+        config=app_config,
+        prompt_library=PromptLibrary(Path(__file__).resolve().parents[2] / "ai_native" / "prompts"),
+        state_store=state_store,
+        template_root=Path(__file__).resolve().parents[2],
+        repo_root=Path(__file__).resolve().parents[2],
+        spec_path=tmp_spec,
+        run_dir=run_dir,
+        builder=builder,
+        critic=ApprovingCritic(),
+        verifier=FakeWorkflowAdapter(),
+        pr_reviewer=FakeWorkflowAdapter(),
+        ask_questions=lambda stage, questions: ["todo, in_progress, done"],
+    )
+
+    run_plan(context, state)
+
+    assert (run_dir / "plan" / "questions.md").exists()
+    assert (run_dir / "plan" / "answers.md").exists()
+    assert read_json(run_dir / "plan" / "answers.json") == [
+        {
+            "question": "Which task statuses should the first release support?",
+            "answer": "todo, in_progress, done",
+        }
+    ]
+    assert any("todo, in_progress, done" in prompt for prompt in builder.prompts)

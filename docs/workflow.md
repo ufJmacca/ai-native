@@ -37,6 +37,8 @@ The `plan` stage is intentionally multi-pass. It first writes:
 
 Those notes are then synthesized into the structured `plan.json` and rendered `plan.md`, followed by the separate `plan-review.md` critique. If the critique requests changes, the planning agent revises the plan and retries up to the configured attempt limit before the stage fails.
 
+Before intent and implementation are locked in, the planning workflow may also emit a small clarification batch. When that happens, the CLI asks the questions directly in the terminal, stores the results under `plan/questions.*` and `plan/answers.*`, and feeds the answers back into the remaining planning passes.
+
 ## Ralph Loop Contract
 
 Each slice runs through the following sequence:

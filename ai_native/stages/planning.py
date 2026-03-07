@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ai_native.models import PlanArtifact, ReviewReport, RunState
+from ai_native.models import PlanArtifact, QuestionBatch, ReviewReport, RunState
 from ai_native.stages.common import ExecutionContext, StageError, dump_model, render_plan_markdown, write_review
-from ai_native.utils import read_json, read_text, write_text
+from ai_native.utils import read_json, read_text, write_json, write_text
 
 
 def _render_plan_prompt(
@@ -14,6 +14,7 @@ def _render_plan_prompt(
     grounding_notes: str,
     intent_notes: str,
     implementation_notes: str,
+    user_answers: str,
     prior_plan: PlanArtifact | None = None,
     critique: ReviewReport | None = None,
 ) -> str:
@@ -25,6 +26,7 @@ def _render_plan_prompt(
             grounding_notes=grounding_notes,
             intent_notes=intent_notes,
             implementation_notes=implementation_notes,
+            user_answers=user_answers,
             prior_plan=prior_plan.model_dump(mode="json"),
             critique=critique.model_dump(mode="json"),
         )
@@ -35,7 +37,53 @@ def _render_plan_prompt(
         grounding_notes=grounding_notes,
         intent_notes=intent_notes,
         implementation_notes=implementation_notes,
+        user_answers=user_answers,
     )
+
+
+def _render_user_answers(answer_pairs: list[dict[str, str]]) -> str:
+    if not answer_pairs:
+        return "No user clarifications were requested."
+    lines = []
+    for item in answer_pairs:
+        lines.extend([f"- Question: {item['question']}", f"  Answer: {item['answer'] or '(no answer provided)'}"])
+    return "\n".join(lines)
+
+
+def _write_question_artifacts(stage_dir: Path, batch: QuestionBatch, answer_pairs: list[dict[str, str]]) -> list[Path]:
+    questions_json = stage_dir / "questions.json"
+    questions_md = stage_dir / "questions.md"
+    answers_json = stage_dir / "answers.json"
+    answers_md = stage_dir / "answers.md"
+    write_json(questions_json, batch.model_dump(mode="json"))
+    write_text(
+        questions_md,
+        "\n".join(
+            [
+                "# Planning Questions",
+                "",
+                f"- Needs user input: `{str(batch.needs_user_input).lower()}`",
+                "",
+                "## Summary",
+                batch.summary or "No planning clarification was needed.",
+                "",
+                "## Questions",
+                "\n".join(f"- {question}" for question in batch.questions) or "- None",
+            ]
+        ),
+    )
+    write_json(answers_json, answer_pairs)
+    write_text(
+        answers_md,
+        "\n".join(
+            [
+                "# Planning Answers",
+                "",
+                _render_user_answers(answer_pairs),
+            ]
+        ),
+    )
+    return [questions_json, questions_md, answers_json, answers_md]
 
 
 def run(context: ExecutionContext, state: RunState) -> list[Path]:
@@ -55,12 +103,45 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
     write_text(grounding_md, grounding_notes)
     artifacts.append(grounding_md)
 
+    answer_pairs: list[dict[str, str]] = []
+    questions_json = stage_dir / "questions.json"
+    answers_json = stage_dir / "answers.json"
+    if answers_json.exists():
+        answer_pairs = list(read_json(answers_json))
+    remaining_run_budget = max(0, context.config.workspace.question_budget_per_run - int(state.metadata.get("question_batches_used", 0)))
+    if context.config.workspace.question_budget_per_stage > 0 and remaining_run_budget > 0 and not answer_pairs:
+        context.emit_progress("[ainative] plan: evaluating whether clarification is needed")
+        question_prompt = context.prompt_library.render(
+            "plan_questions.md",
+            spec_text=spec_text,
+            context_report=context_report,
+            grounding_notes=grounding_notes,
+            max_questions=min(3, remaining_run_budget),
+        )
+        question_schema = context.template_root / "ai_native" / "schemas" / "question-batch.json"
+        question_response = context.builder.run(question_prompt, cwd=context.repo_root, schema_path=question_schema)
+        question_batch = QuestionBatch.model_validate(question_response.json_data)
+        if question_batch.needs_user_input and question_batch.questions:
+            answers = context.ask_questions("plan", question_batch.questions)
+            answer_pairs = [
+                {"question": question, "answer": answers[index] if index < len(answers) else ""}
+                for index, question in enumerate(question_batch.questions)
+            ]
+            state.metadata["question_batches_used"] = int(state.metadata.get("question_batches_used", 0)) + 1
+        artifacts.extend(_write_question_artifacts(stage_dir, question_batch, answer_pairs))
+    elif questions_json.exists():
+        existing_batch = QuestionBatch.model_validate(read_json(questions_json))
+        artifacts.extend(_write_question_artifacts(stage_dir, existing_batch, answer_pairs))
+
+    user_answers = _render_user_answers(answer_pairs)
+
     context.emit_progress("[ainative] plan: intent")
     intent_prompt = context.prompt_library.render(
         "plan_phase_intent.md",
         spec_text=spec_text,
         context_report=context_report,
         grounding_notes=grounding_notes,
+        user_answers=user_answers,
     )
     intent_notes = context.builder.run(intent_prompt, cwd=context.repo_root).text
     intent_md = stage_dir / "intent.md"
@@ -74,6 +155,7 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
         context_report=context_report,
         grounding_notes=grounding_notes,
         intent_notes=intent_notes,
+        user_answers=user_answers,
     )
     implementation_notes = context.builder.run(implementation_prompt, cwd=context.repo_root).text
     implementation_md = stage_dir / "implementation.md"
@@ -99,6 +181,7 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
             grounding_notes=grounding_notes,
             intent_notes=intent_notes,
             implementation_notes=implementation_notes,
+            user_answers=user_answers,
             prior_plan=plan,
             critique=review,
         )

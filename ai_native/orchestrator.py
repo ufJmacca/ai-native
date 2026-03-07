@@ -14,11 +14,17 @@ from ai_native.utils import sha256_file
 
 
 class WorkflowOrchestrator:
-    def __init__(self, config: AppConfig, progress: Callable[[str], None] | None = None):
+    def __init__(
+        self,
+        config: AppConfig,
+        progress: Callable[[str], None] | None = None,
+        question_responder: Callable[[str, list[str]], list[str]] | None = None,
+    ):
         self.config = config
         self.state_store = StateStore(config.workspace.artifacts_dir)
         self.prompt_library = PromptLibrary(config.repo_root / "ai_native" / "prompts")
         self.progress = progress or (lambda _message: None)
+        self.question_responder = question_responder or (lambda _stage, questions: [""] * len(questions))
         adapters = build_role_adapters(config)
         self.adapters = adapters
         self.stage_handlers: dict[str, Callable[..., list[Path]]] = {
@@ -51,6 +57,7 @@ class WorkflowOrchestrator:
             verifier=self.adapters["verifier"],
             pr_reviewer=self.adapters["pr_reviewer"],
             emit_progress=self._emit,
+            ask_questions=self.question_responder,
         )
 
     def prepare_state(self, spec_path: Path, workspace_root: Path | None = None, run_dir: Path | None = None) -> RunState:
