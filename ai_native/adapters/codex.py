@@ -20,18 +20,26 @@ class CodexExecAdapter:
     def __init__(self, profile: AgentProfile):
         self.profile = profile
 
+    def _normalized_extra_args(self, sandbox: str | None) -> list[str]:
+        extra_args = list(self.profile.extra_args)
+        if sandbox == "danger-full-access" and "--full-auto" in extra_args:
+            extra_args = [arg for arg in extra_args if arg != "--full-auto"]
+            if "--dangerously-bypass-approvals-and-sandbox" not in extra_args:
+                extra_args.insert(0, "--dangerously-bypass-approvals-and-sandbox")
+        return extra_args
+
     def _build_command(self, cwd: Path, output_path: Path, prompt: str, schema_path: Path | None, sandbox: str | None) -> list[str]:
         command = ["codex", "exec", "-C", str(cwd)]
         if self.profile.model:
             command.extend(["-m", self.profile.model])
-        if sandbox:
+        if sandbox and sandbox != "danger-full-access":
             command.extend(["-s", sandbox])
         if self.profile.search:
             command.append("--search")
         if schema_path:
             command.extend(["--output-schema", str(schema_path)])
         command.extend(["-o", str(output_path)])
-        command.extend(self.profile.extra_args)
+        command.extend(self._normalized_extra_args(sandbox))
         command.append(prompt)
         return command
 

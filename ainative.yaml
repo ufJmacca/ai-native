@@ -7,7 +7,7 @@ workspace:
   plan_max_attempts: 6
   architecture_max_attempts: 6
   prd_max_attempts: 10
-  loop_max_attempts: 10
+  loop_max_attempts: 15
   verification_max_attempts: 10
   mermaid_validate_command:
     - mmdc
