@@ -19,6 +19,8 @@
 4. Copy or create a spec in `specs/`.
 5. Run `make run SPEC=specs/examples/todo-api.md`.
 
+The `Makefile` auto-detects whether it is running inside the devcontainer. Inside the devcontainer it runs `uv` commands directly. On the host it shells out through `docker compose run`.
+
 ## Core Targets
 
 - `make doctor`
@@ -59,4 +61,3 @@ The root `compose.yaml` does not require host auth mounts so CI and headless smo
 10. `pr`
 
 See [docs/workflow.md](/Users/jonmcmillin/ai-native-base/docs/workflow.md) for the full stage contract and [docs/prompts.md](/Users/jonmcmillin/ai-native-base/docs/prompts.md) for prompt design guidance.
-
