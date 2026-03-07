@@ -58,10 +58,18 @@ class CodexReviewAdapter:
     def __init__(self, profile: AgentProfile):
         self.profile = profile
 
-    def review(self, cwd: Path, prompt: str, base_branch: str | None = None) -> AgentResult:
-        command = ["codex", "review", "--base", base_branch or self.profile.base_branch or "main"]
+    def _build_command(self, prompt: str, base_branch: str | None = None) -> list[str]:
+        command = ["codex", "review"]
+        if self.profile.model:
+            command.extend(["-c", f"model={json.dumps(self.profile.model)}"])
+        command.extend(self.profile.extra_args)
+        command.extend(["--base", base_branch or self.profile.base_branch or "main"])
         if prompt:
             command.append(prompt)
+        return command
+
+    def review(self, cwd: Path, prompt: str, base_branch: str | None = None) -> AgentResult:
+        command = self._build_command(prompt=prompt, base_branch=base_branch)
         completed = subprocess.run(
             command,
             cwd=cwd,
@@ -81,4 +89,3 @@ class CodexReviewAdapter:
 
     def run(self, prompt: str, cwd: Path, schema_path: Path | None = None) -> AgentResult:
         return self.review(cwd=cwd, prompt=prompt, base_branch=self.profile.base_branch)
-
