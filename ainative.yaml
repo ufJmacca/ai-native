@@ -5,6 +5,7 @@ workspace:
   question_budget_per_stage: 3
   question_budget_per_run: 9
   plan_max_attempts: 6
+  architecture_max_attempts: 6
   mermaid_validate_command:
     - mmdc
   mermaid_validate_args:
