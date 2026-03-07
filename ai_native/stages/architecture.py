@@ -49,7 +49,7 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
         context_report=context_report,
         plan=plan,
     )
-    schema_path = context.repo_root / "ai_native" / "schemas" / "diagram-artifact.json"
+    schema_path = context.template_root / "ai_native" / "schemas" / "diagram-artifact.json"
     response = context.builder.run(prompt, cwd=context.repo_root, schema_path=schema_path)
     artifact = DiagramArtifact.model_validate(response.json_data)
     artifacts = write_diagram_artifacts(stage_dir, artifact)
@@ -66,7 +66,7 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
         plan=plan,
         architecture=artifact.model_dump(mode="json"),
     )
-    review_schema = context.repo_root / "ai_native" / "schemas" / "review-report.json"
+    review_schema = context.template_root / "ai_native" / "schemas" / "review-report.json"
     review_response = context.critic.run(review_prompt, cwd=context.repo_root, schema_path=review_schema)
     review = ReviewReport.model_validate(review_response.json_data)
     review_md = stage_dir / "architecture-review.md"

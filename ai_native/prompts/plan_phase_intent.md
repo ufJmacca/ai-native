@@ -5,6 +5,7 @@ Phase 2: stabilize intent.
 Instructions:
 - Use the feature spec, context report, and grounding notes.
 - Produce concise markdown that locks down the goal, success criteria, audience, scope, constraints, and defaults.
+- Use the target repository as the source of truth. Consider application code, infrastructure, CI, docs, and configuration when they materially affect the feature.
 - If ambiguity remains and the workflow cannot ask the user right now, choose a reasonable default and record it explicitly.
 - Write markdown with sections for `Goal`, `Success Criteria`, `Scope`, `Constraints`, and `Chosen Defaults`.
 
@@ -16,4 +17,3 @@ Context report:
 
 Grounding notes:
 {grounding_notes}
-

@@ -7,7 +7,20 @@ from ai_native.models import ContextReport, RunState
 from ai_native.stages.common import ExecutionContext, dump_model, render_context_markdown
 from ai_native.utils import read_text, write_json, write_text
 
-IGNORE_DIRS = {".git", ".venv", "node_modules", "__pycache__", "artifacts"}
+IGNORE_DIRS = {
+    ".git",
+    ".venv",
+    "node_modules",
+    "__pycache__",
+    "artifacts",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".next",
+    "dist",
+    "build",
+}
+IGNORE_FILES: set[str] = set()
 MANIFEST_NAMES = {
     "pyproject.toml",
     "package.json",
@@ -17,6 +30,14 @@ MANIFEST_NAMES = {
     "Dockerfile",
     "compose.yaml",
 }
+
+
+def _is_ignored(relative: Path) -> bool:
+    return any(part in IGNORE_DIRS for part in relative.parts) or (len(relative.parts) == 1 and relative.name in IGNORE_FILES)
+
+
+def _is_test_file(relative: Path) -> bool:
+    return "tests" in relative.parts or relative.name.startswith("test_")
 
 
 def _scan_repository(repo_root: Path) -> dict[str, object]:
@@ -29,11 +50,14 @@ def _scan_repository(repo_root: Path) -> dict[str, object]:
     for path in repo_root.rglob("*"):
         if not path.is_file():
             continue
-        if any(part in IGNORE_DIRS for part in path.parts):
-            continue
         relative = path.relative_to(repo_root)
+        if _is_ignored(relative):
+            continue
         if path.name in MANIFEST_NAMES:
             manifests.append(str(relative))
+        if _is_test_file(relative):
+            tests_present.add("pytest")
+            continue
         suffix = path.suffix.lower()
         if suffix == ".py":
             language_counter["python"] += 1
@@ -60,11 +84,14 @@ def _scan_repository(repo_root: Path) -> dict[str, object]:
         "test_frameworks": sorted(tests_present),
         "source_file_count": source_files,
         "top_level_areas": [name for name, _ in touched_areas.most_common(10)],
+        "ignored_paths": sorted(IGNORE_DIRS | IGNORE_FILES),
+        "analysis_focus": "Infer architecture from the target repository as it exists. Consider app code, infrastructure, CI, docs, and configuration when they materially affect the feature. Ignore generated/runtime noise, and do not let tests alone define product architecture.",
     }
 
 
 def run(context: ExecutionContext, state: RunState) -> list[Path]:
     recon_dir = context.state_store.stage_dir(state, "recon")
+    context.emit_progress("[ainative] recon: scanning repository")
     scan = _scan_repository(context.repo_root)
     scan_path = recon_dir / "scan.json"
     write_json(scan_path, scan)
@@ -84,12 +111,13 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
             recommended_questions=[],
         )
     else:
+        context.emit_progress("[ainative] recon: generating context report")
         prompt = context.prompt_library.render(
             "recon.md",
             spec_text=read_text(context.spec_path),
             scan_summary=scan,
         )
-        schema_path = context.repo_root / "ai_native" / "schemas" / "context-report.json"
+        schema_path = context.template_root / "ai_native" / "schemas" / "context-report.json"
         response = context.builder.run(prompt, cwd=context.repo_root, schema_path=schema_path)
         report = ContextReport.model_validate(response.json_data)
 
@@ -98,4 +126,3 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
     dump_model(json_path, report)
     write_text(md_path, render_context_markdown(report))
     return [scan_path, json_path, md_path]
-

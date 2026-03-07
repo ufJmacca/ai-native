@@ -19,7 +19,7 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
             slice_definition=slice_def.model_dump(mode="json"),
             slice_dir=slice_dir,
         )
-        schema_path = context.repo_root / "ai_native" / "schemas" / "verification-report.json"
+        schema_path = context.template_root / "ai_native" / "schemas" / "verification-report.json"
         response = context.verifier.run(prompt, cwd=context.repo_root, schema_path=schema_path)
         verification = VerificationReport.model_validate(response.json_data)
         json_path = verification_dir / f"{slice_def.id}.json"
@@ -30,4 +30,3 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
         if verification.verdict != "passed":
             raise StageError(f"Verification failed for slice {slice_def.id}: {verification.summary}")
     return artifacts
-

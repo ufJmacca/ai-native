@@ -16,24 +16,26 @@
 1. Open the repository in a devcontainer.
 2. Confirm the devcontainer mounted `~/.codex`, `~/.ssh`, and `~/.gitconfig`.
 3. Run `make bootstrap`.
-4. Copy or create a spec in `specs/`.
-5. Run `make run SPEC=specs/examples/todo-api.md`.
+4. Pick the target repository directory you want the agents to modify.
+5. Copy or create a spec inside that target repository.
+6. Run `make run SPEC=specs/task-management.md TARGET_DIR=/path/to/target-repo`.
 
 The `Makefile` auto-detects whether it is running inside the devcontainer. Inside the devcontainer it runs `uv` commands directly. On the host it shells out through `docker compose run`.
+`TARGET_DIR` is mandatory for the workflow targets in `make`. The workflow runs Codex, git operations, repository recon, and implementation inside that target directory rather than inside the template repo. Relative spec paths are resolved from `TARGET_DIR`.
 
 ## Core Targets
 
 - `make doctor`
 - `make bootstrap`
-- `make plan SPEC=...`
-- `make architect SPEC=...`
-- `make prd SPEC=...`
-- `make slice SPEC=...`
-- `make loop SPEC=...`
-- `make verify SPEC=...`
-- `make commit SPEC=...`
-- `make pr SPEC=...`
-- `make run SPEC=...`
+- `make plan SPEC=... TARGET_DIR=...`
+- `make architect SPEC=... TARGET_DIR=...`
+- `make prd SPEC=... TARGET_DIR=...`
+- `make slice SPEC=... TARGET_DIR=...`
+- `make loop SPEC=... TARGET_DIR=...`
+- `make verify SPEC=... TARGET_DIR=...`
+- `make commit SPEC=... TARGET_DIR=...`
+- `make pr SPEC=... TARGET_DIR=...`
+- `make run SPEC=... TARGET_DIR=...`
 
 ## Auth Model
 

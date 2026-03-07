@@ -2,6 +2,7 @@ SHELL := /bin/bash
 
 WORKSPACE ?= workspace
 SPEC ?= specs/examples/todo-api.md
+TARGET_DIR ?=
 RUN_DIR ?=
 DOCKER_COMPOSE ?= docker compose
 RUN_ARGS ?=
@@ -16,22 +17,25 @@ endif
 UV_RUN = $(RUNNER) uv run
 UV_SYNC = $(RUNNER) uv sync
 
-.PHONY: help bootstrap doctor test lint run plan architect prd slice loop verify commit pr
+.PHONY: help bootstrap doctor test lint require-target-dir run plan architect prd slice loop verify commit pr
 
 help:
 	@printf "Targets:\n"
 	@printf "  make bootstrap          Install Python deps in the current runtime (and build the image when run on the host)\n"
 	@printf "  make doctor             Check runtime and auth mounts in the current runtime\n"
-	@printf "  make plan SPEC=...      Run intake, recon, and planning stages\n"
-	@printf "  make architect SPEC=... Run architecture stage and critique\n"
-	@printf "  make prd SPEC=...       Run PRD stage and critique\n"
-	@printf "  make slice SPEC=...     Generate implementation slices\n"
-	@printf "  make loop SPEC=...      Run Ralph loop for every slice\n"
-	@printf "  make verify SPEC=...    Verify all generated slices\n"
-	@printf "  make commit SPEC=...    Commit verified slice changes\n"
-	@printf "  make pr SPEC=...        Create a pull request\n"
-	@printf "  make run SPEC=...       Run the full workflow\n"
+	@printf "  make plan SPEC=... TARGET_DIR=/path/to/repo      Run intake, recon, and planning stages\n"
+	@printf "  make architect SPEC=... TARGET_DIR=/path/to/repo Run architecture stage and critique\n"
+	@printf "  make prd SPEC=... TARGET_DIR=/path/to/repo       Run PRD stage and critique\n"
+	@printf "  make slice SPEC=... TARGET_DIR=/path/to/repo     Generate implementation slices\n"
+	@printf "  make loop SPEC=... TARGET_DIR=/path/to/repo      Run Ralph loop for every slice\n"
+	@printf "  make verify SPEC=... TARGET_DIR=/path/to/repo    Verify all generated slices\n"
+	@printf "  make commit SPEC=... TARGET_DIR=/path/to/repo    Commit verified slice changes\n"
+	@printf "  make pr SPEC=... TARGET_DIR=/path/to/repo        Create a pull request\n"
+	@printf "  make run SPEC=... TARGET_DIR=/path/to/repo       Run the full workflow\n"
 	@printf "  make test               Run the full pytest suite in the current runtime\n"
+
+require-target-dir:
+	@test -n "$(TARGET_DIR)" || (printf "TARGET_DIR is required. Example: make run SPEC=specs/task-management.md TARGET_DIR=/workspace/my-app\n" >&2; exit 1)
 
 bootstrap:
 ifeq ($(IN_CONTAINER),1)
@@ -44,32 +48,32 @@ endif
 doctor:
 	$(UV_RUN) ainative doctor
 
-plan:
-	$(UV_RUN) ainative stage --stage plan --spec $(SPEC) $(if $(RUN_DIR),--run-dir $(RUN_DIR),)
+plan: require-target-dir
+	$(UV_RUN) ainative stage --stage plan --spec $(SPEC) $(if $(TARGET_DIR),--workspace-dir $(TARGET_DIR),) $(if $(RUN_DIR),--run-dir $(RUN_DIR),)
 
-architect:
-	$(UV_RUN) ainative stage --stage architecture --spec $(SPEC) $(if $(RUN_DIR),--run-dir $(RUN_DIR),)
+architect: require-target-dir
+	$(UV_RUN) ainative stage --stage architecture --spec $(SPEC) $(if $(TARGET_DIR),--workspace-dir $(TARGET_DIR),) $(if $(RUN_DIR),--run-dir $(RUN_DIR),)
 
-prd:
-	$(UV_RUN) ainative stage --stage prd --spec $(SPEC) $(if $(RUN_DIR),--run-dir $(RUN_DIR),)
+prd: require-target-dir
+	$(UV_RUN) ainative stage --stage prd --spec $(SPEC) $(if $(TARGET_DIR),--workspace-dir $(TARGET_DIR),) $(if $(RUN_DIR),--run-dir $(RUN_DIR),)
 
-slice:
-	$(UV_RUN) ainative stage --stage slice --spec $(SPEC) $(if $(RUN_DIR),--run-dir $(RUN_DIR),)
+slice: require-target-dir
+	$(UV_RUN) ainative stage --stage slice --spec $(SPEC) $(if $(TARGET_DIR),--workspace-dir $(TARGET_DIR),) $(if $(RUN_DIR),--run-dir $(RUN_DIR),)
 
-loop:
-	$(UV_RUN) ainative stage --stage loop --spec $(SPEC) $(if $(RUN_DIR),--run-dir $(RUN_DIR),)
+loop: require-target-dir
+	$(UV_RUN) ainative stage --stage loop --spec $(SPEC) $(if $(TARGET_DIR),--workspace-dir $(TARGET_DIR),) $(if $(RUN_DIR),--run-dir $(RUN_DIR),)
 
-verify:
-	$(UV_RUN) ainative stage --stage verify --spec $(SPEC) $(if $(RUN_DIR),--run-dir $(RUN_DIR),)
+verify: require-target-dir
+	$(UV_RUN) ainative stage --stage verify --spec $(SPEC) $(if $(TARGET_DIR),--workspace-dir $(TARGET_DIR),) $(if $(RUN_DIR),--run-dir $(RUN_DIR),)
 
-commit:
-	$(UV_RUN) ainative stage --stage commit --spec $(SPEC) $(if $(RUN_DIR),--run-dir $(RUN_DIR),)
+commit: require-target-dir
+	$(UV_RUN) ainative stage --stage commit --spec $(SPEC) $(if $(TARGET_DIR),--workspace-dir $(TARGET_DIR),) $(if $(RUN_DIR),--run-dir $(RUN_DIR),)
 
-pr:
-	$(UV_RUN) ainative pr --spec $(SPEC) $(if $(RUN_DIR),--run-dir $(RUN_DIR),)
+pr: require-target-dir
+	$(UV_RUN) ainative pr --spec $(SPEC) $(if $(TARGET_DIR),--workspace-dir $(TARGET_DIR),) $(if $(RUN_DIR),--run-dir $(RUN_DIR),)
 
-run:
-	$(UV_RUN) ainative run --spec $(SPEC) $(if $(RUN_DIR),--run-dir $(RUN_DIR),) $(RUN_ARGS)
+run: require-target-dir
+	$(UV_RUN) ainative run --spec $(SPEC) $(if $(TARGET_DIR),--workspace-dir $(TARGET_DIR),) $(if $(RUN_DIR),--run-dir $(RUN_DIR),) $(RUN_ARGS)
 
 lint:
 	$(UV_RUN) python -m compileall ai_native tests

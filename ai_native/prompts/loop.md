@@ -10,6 +10,7 @@ Work inside the repository until the slice is complete. Follow this sequence str
 6. Return a concise markdown summary of what changed and how the tests prove the behavior.
 
 Use Triple A structure in tests. Reject test theatre, dead mocks, and low-signal assertions.
+Use the target repository as the source of truth. Consider application code, infrastructure, CI, docs, and configuration when they materially affect the feature. Build only the product feature requested by the spec and active slice.
 
 Feature spec:
 {spec_text}
@@ -22,4 +23,3 @@ Run directory:
 
 Slice artifact directory:
 {slice_dir}
-

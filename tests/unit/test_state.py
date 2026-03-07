@@ -8,16 +8,18 @@ from ai_native.state import StateStore
 def test_state_store_creates_and_updates_runs(tmp_path: Path) -> None:
     spec = tmp_path / "feature.md"
     spec.write_text("# Feature\n", encoding="utf-8")
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
 
     store = StateStore(tmp_path / "artifacts")
-    state = store.create_run(spec)
+    state = store.create_run(spec, workspace_root)
 
     assert Path(state.run_dir).exists()
     assert (Path(state.run_dir) / "spec.md").exists()
+    assert Path(state.workspace_root) == workspace_root.resolve()
 
     store.update_stage(state, stage="intake", status="completed")
     reloaded = store.load(Path(state.run_dir))
 
     assert reloaded.stage_status["intake"].status == "completed"
     assert reloaded.status == "in_progress"
-

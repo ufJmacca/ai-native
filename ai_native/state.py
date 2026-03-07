@@ -12,7 +12,7 @@ class StateStore:
         self.artifacts_root = artifacts_root
         ensure_dir(self.artifacts_root)
 
-    def create_run(self, spec_path: Path) -> RunState:
+    def create_run(self, spec_path: Path, workspace_root: Path) -> RunState:
         feature_slug = slugify(spec_path.stem)
         run_stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         run_id = f"{run_stamp}-{feature_slug}"
@@ -23,6 +23,7 @@ class StateStore:
             run_id=run_id,
             feature_slug=feature_slug,
             spec_path=str(spec_path.resolve()),
+            workspace_root=str(workspace_root.resolve()),
             spec_hash=sha256_file(spec_path),
             run_dir=str(run_dir),
             created_at=utc_now(),
@@ -39,15 +40,18 @@ class StateStore:
         data = read_json(run_dir / "state.json")
         return RunState.model_validate(data)
 
-    def find_latest_for_spec(self, spec_path: Path) -> RunState | None:
+    def find_latest_for_spec(self, spec_path: Path, workspace_root: Path | None = None) -> RunState | None:
         matches: list[RunState] = []
         for state_file in self.artifacts_root.glob("*/state.json"):
             try:
                 state = RunState.model_validate(read_json(state_file))
             except Exception:
                 continue
-            if Path(state.spec_path) == spec_path.resolve():
-                matches.append(state)
+            if Path(state.spec_path) != spec_path.resolve():
+                continue
+            if workspace_root is not None and Path(state.workspace_root) != workspace_root.resolve():
+                continue
+            matches.append(state)
         if not matches:
             return None
         return sorted(matches, key=lambda item: item.created_at)[-1]

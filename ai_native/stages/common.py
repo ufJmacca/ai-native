@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from ai_native.adapters.base import AgentAdapter, ReviewAdapter
 from ai_native.config import AppConfig
@@ -21,6 +21,7 @@ class ExecutionContext:
     config: AppConfig
     prompt_library: PromptLibrary
     state_store: StateStore
+    template_root: Path
     repo_root: Path
     spec_path: Path
     run_dir: Path
@@ -28,6 +29,7 @@ class ExecutionContext:
     critic: AgentAdapter
     verifier: AgentAdapter
     pr_reviewer: AgentAdapter | ReviewAdapter
+    emit_progress: Callable[[str], None] = field(default=lambda _message: None, repr=False)
 
 
 def dump_model(path: Path, model: Any) -> None:
@@ -207,4 +209,3 @@ def write_diagram_artifacts(base_dir: Path, artifact: DiagramArtifact) -> list[P
     ]
     write_text(doc_path, "\n".join(lines))
     return [json_path, diagram_path, doc_path]
-

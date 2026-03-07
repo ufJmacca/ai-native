@@ -99,6 +99,7 @@ class RunState(BaseModel):
     run_id: str
     feature_slug: str
     spec_path: str
+    workspace_root: str
     spec_hash: str
     run_dir: str
     created_at: str
@@ -108,4 +109,3 @@ class RunState(BaseModel):
     stage_status: dict[str, StageSnapshot] = Field(default_factory=dict)
     active_slice: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
-

@@ -22,6 +22,21 @@ def _state_store(config: AppConfig) -> StateStore:
     return StateStore(config.workspace.artifacts_dir)
 
 
+def _resolve_workspace_root(config: AppConfig, workspace_dir: str | None) -> Path:
+    return (Path(workspace_dir).resolve() if workspace_dir else config.repo_root)
+
+
+def _resolve_spec_path(spec: str, workspace_root: Path) -> Path:
+    spec_path = Path(spec)
+    if spec_path.is_absolute():
+        return spec_path.resolve()
+    return (workspace_root / spec_path).resolve()
+
+
+def _print_progress(message: str) -> None:
+    print(message, flush=True)
+
+
 def command_doctor(_: argparse.Namespace) -> int:
     config = _load_config()
     checks = {
@@ -52,20 +67,28 @@ def command_doctor(_: argparse.Namespace) -> int:
 
 def command_run(args: argparse.Namespace) -> int:
     config = _load_config()
-    orchestrator = WorkflowOrchestrator(config)
-    state = orchestrator.run_all(Path(args.spec).resolve(), run_dir=Path(args.run_dir).resolve() if args.run_dir else None, dry_run_pr=args.dry_run_pr)
+    orchestrator = WorkflowOrchestrator(config, progress=_print_progress)
+    workspace_root = _resolve_workspace_root(config, args.workspace_dir)
+    state = orchestrator.run_all(
+        _resolve_spec_path(args.spec, workspace_root),
+        run_dir=Path(args.run_dir).resolve() if args.run_dir else None,
+        dry_run_pr=args.dry_run_pr,
+        workspace_root=workspace_root,
+    )
     print(Path(state.run_dir))
     return 0
 
 
 def command_stage(args: argparse.Namespace) -> int:
     config = _load_config()
-    orchestrator = WorkflowOrchestrator(config)
+    orchestrator = WorkflowOrchestrator(config, progress=_print_progress)
+    workspace_root = _resolve_workspace_root(config, args.workspace_dir)
     state = orchestrator.run_until(
-        spec_path=Path(args.spec).resolve(),
+        spec_path=_resolve_spec_path(args.spec, workspace_root),
         target_stage=args.stage,
         run_dir=Path(args.run_dir).resolve() if args.run_dir else None,
         dry_run_pr=args.dry_run_pr,
+        workspace_root=workspace_root,
     )
     print(Path(state.run_dir))
     return 0
@@ -73,29 +96,33 @@ def command_stage(args: argparse.Namespace) -> int:
 
 def command_review(args: argparse.Namespace) -> int:
     config = _load_config()
-    orchestrator = WorkflowOrchestrator(config)
-    run_dir = Path(args.run_dir).resolve() if args.run_dir else _state_store(config).find_latest_for_spec(Path(args.spec).resolve())
+    orchestrator = WorkflowOrchestrator(config, progress=_print_progress)
+    workspace_root = _resolve_workspace_root(config, args.workspace_dir)
+    spec_path = _resolve_spec_path(args.spec, workspace_root)
+    run_dir = Path(args.run_dir).resolve() if args.run_dir else _state_store(config).find_latest_for_spec(spec_path, workspace_root)
     if run_dir is None:
         raise SystemExit("No matching run found for spec.")
     if hasattr(run_dir, "run_dir"):
         run_dir = Path(run_dir.run_dir)
     state = _state_store(config).load(Path(run_dir))
     if args.target == "pr":
-        orchestrator.run_until(Path(args.spec).resolve(), "pr", run_dir=Path(state.run_dir), dry_run_pr=True)
+        orchestrator.run_until(spec_path, "pr", run_dir=Path(state.run_dir), dry_run_pr=True, workspace_root=workspace_root)
     else:
-        orchestrator.run_until(Path(args.spec).resolve(), args.target, run_dir=Path(state.run_dir), dry_run_pr=True)
+        orchestrator.run_until(spec_path, args.target, run_dir=Path(state.run_dir), dry_run_pr=True, workspace_root=workspace_root)
     print(Path(state.run_dir) / args.target)
     return 0
 
 
 def command_pr(args: argparse.Namespace) -> int:
     config = _load_config()
-    orchestrator = WorkflowOrchestrator(config)
+    orchestrator = WorkflowOrchestrator(config, progress=_print_progress)
+    workspace_root = _resolve_workspace_root(config, args.workspace_dir)
     state = orchestrator.run_until(
-        spec_path=Path(args.spec).resolve(),
+        spec_path=_resolve_spec_path(args.spec, workspace_root),
         target_stage="pr",
         run_dir=Path(args.run_dir).resolve() if args.run_dir else None,
         dry_run_pr=args.dry_run,
+        workspace_root=workspace_root,
     )
     print(Path(state.run_dir) / "pr")
     return 0
@@ -110,12 +137,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = subparsers.add_parser("run")
     run.add_argument("--spec", required=True)
+    run.add_argument("--workspace-dir")
     run.add_argument("--run-dir")
     run.add_argument("--dry-run-pr", action="store_true")
     run.set_defaults(func=command_run)
 
     stage = subparsers.add_parser("stage")
     stage.add_argument("--spec", required=True)
+    stage.add_argument("--workspace-dir")
     stage.add_argument("--stage", required=True, choices=["plan", "architecture", "prd", "slice", "loop", "verify", "commit", "pr"])
     stage.add_argument("--run-dir")
     stage.add_argument("--dry-run-pr", action="store_true")
@@ -123,12 +152,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     review = subparsers.add_parser("review")
     review.add_argument("--spec", required=True)
+    review.add_argument("--workspace-dir")
     review.add_argument("--target", required=True, choices=["plan", "architecture", "prd", "slice", "verify", "pr"])
     review.add_argument("--run-dir")
     review.set_defaults(func=command_review)
 
     pr = subparsers.add_parser("pr")
     pr.add_argument("--spec", required=True)
+    pr.add_argument("--workspace-dir")
     pr.add_argument("--run-dir")
     pr.add_argument("--dry-run", action="store_true")
     pr.set_defaults(func=command_pr)

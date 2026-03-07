@@ -14,10 +14,11 @@ from ai_native.utils import sha256_file
 
 
 class WorkflowOrchestrator:
-    def __init__(self, config: AppConfig):
+    def __init__(self, config: AppConfig, progress: Callable[[str], None] | None = None):
         self.config = config
         self.state_store = StateStore(config.workspace.artifacts_dir)
         self.prompt_library = PromptLibrary(config.repo_root / "ai_native" / "prompts")
+        self.progress = progress or (lambda _message: None)
         adapters = build_role_adapters(config)
         self.adapters = adapters
         self.stage_handlers: dict[str, Callable[..., list[Path]]] = {
@@ -33,50 +34,81 @@ class WorkflowOrchestrator:
             "pr": create_prs,
         }
 
+    def _emit(self, message: str) -> None:
+        self.progress(message)
+
     def _context(self, spec_path: Path, state: RunState) -> ExecutionContext:
         return ExecutionContext(
             config=self.config,
             prompt_library=self.prompt_library,
             state_store=self.state_store,
-            repo_root=self.config.repo_root,
+            template_root=self.config.repo_root,
+            repo_root=Path(state.workspace_root),
             spec_path=spec_path,
             run_dir=Path(state.run_dir),
             builder=self.adapters["builder"],
             critic=self.adapters["critic"],
             verifier=self.adapters["verifier"],
             pr_reviewer=self.adapters["pr_reviewer"],
+            emit_progress=self._emit,
         )
 
-    def prepare_state(self, spec_path: Path, run_dir: Path | None = None) -> RunState:
+    def prepare_state(self, spec_path: Path, workspace_root: Path | None = None, run_dir: Path | None = None) -> RunState:
+        effective_workspace_root = workspace_root.resolve() if workspace_root is not None else self.config.repo_root
         if run_dir:
             return self.state_store.load(run_dir)
-        existing = self.state_store.find_latest_for_spec(spec_path.resolve())
+        existing = self.state_store.find_latest_for_spec(spec_path.resolve(), effective_workspace_root)
         if existing and existing.status != "completed" and existing.spec_hash == sha256_file(spec_path.resolve()):
             return existing
-        return self.state_store.create_run(spec_path.resolve())
+        return self.state_store.create_run(spec_path.resolve(), effective_workspace_root)
 
-    def run_until(self, spec_path: Path, target_stage: str, run_dir: Path | None = None, dry_run_pr: bool = False) -> RunState:
-        state = self.prepare_state(spec_path, run_dir=run_dir)
+    def run_until(
+        self,
+        spec_path: Path,
+        target_stage: str,
+        run_dir: Path | None = None,
+        dry_run_pr: bool = False,
+        workspace_root: Path | None = None,
+    ) -> RunState:
+        state = self.prepare_state(spec_path, workspace_root=workspace_root, run_dir=run_dir)
+        self._emit(f"[ainative] run-dir: {state.run_dir}")
+        self._emit(f"[ainative] workspace-dir: {state.workspace_root}")
         context = self._context(spec_path.resolve(), state)
         for stage in ORDERED_STAGES:
             handler = self.stage_handlers[stage]
             snapshot = state.stage_status.get(stage)
             if snapshot and snapshot.status == "completed":
+                self._emit(f"[ainative] {stage}: skipped (already completed)")
                 if stage == target_stage:
                     return state
                 continue
             try:
+                self._emit(f"[ainative] {stage}: started")
                 if stage == "pr":
                     artifacts = handler(context, state, dry_run=dry_run_pr)
                 else:
                     artifacts = handler(context, state)
                 self.state_store.update_stage(state, stage=stage, status="completed", artifacts=artifacts)
+                self._emit(f"[ainative] {stage}: completed")
             except StageError as exc:
                 self.state_store.update_stage(state, stage=stage, status="failed", notes=[str(exc)])
+                self._emit(f"[ainative] {stage}: failed - {exc}")
                 raise
             if stage == target_stage:
                 return state
         return state
 
-    def run_all(self, spec_path: Path, run_dir: Path | None = None, dry_run_pr: bool = False) -> RunState:
-        return self.run_until(spec_path=spec_path, target_stage="pr", run_dir=run_dir, dry_run_pr=dry_run_pr)
+    def run_all(
+        self,
+        spec_path: Path,
+        run_dir: Path | None = None,
+        dry_run_pr: bool = False,
+        workspace_root: Path | None = None,
+    ) -> RunState:
+        return self.run_until(
+            spec_path=spec_path,
+            target_stage="pr",
+            run_dir=run_dir,
+            dry_run_pr=dry_run_pr,
+            workspace_root=workspace_root,
+        )
