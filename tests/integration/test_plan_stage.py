@@ -62,7 +62,7 @@ class RevisingPlanBuilder:
                         "Integration test task endpoints and dashboard responses against acceptance criteria",
                     ],
                     "rollout_notes": ["Release behind a feature branch and verify dashboard aggregates against seeded fixtures"],
-                }
+            }
             return AgentResult(text=json.dumps(payload), json_data=payload)
         if schema_path and schema_path.name == "question-batch.json":
             payload = {
@@ -71,15 +71,31 @@ class RevisingPlanBuilder:
                 "questions": [],
             }
             return AgentResult(text=json.dumps(payload), json_data=payload)
+        if "stable approval rubric" in prompt:
+            return AgentResult(
+                text=(
+                    "# Approval Checklist\n\n"
+                    "## Approval Gates\n"
+                    "- Make workflow and API contracts explicit.\n\n"
+                    "## Minimum Explicit Contracts\n"
+                    "- Task read and write interfaces.\n\n"
+                    "## Allowed Defaults\n"
+                    "- A small opinionated v1 is acceptable if stated.\n\n"
+                    "## Ask The User If\n"
+                    "- Workflow semantics remain ambiguous."
+                )
+            )
         return AgentResult(text="# Notes\nGrounded planning notes.")
 
 
 class OneRejectingPlanCritic:
     def __init__(self) -> None:
         self.calls = 0
+        self.prompts: list[str] = []
 
     def run(self, prompt: str, cwd: Path, schema_path: Path | None = None) -> AgentResult:
         self.calls += 1
+        self.prompts.append(prompt)
         if self.calls == 1:
             payload = ReviewReport(
                 verdict="changes_required",
@@ -140,8 +156,13 @@ def test_plan_stage_revises_after_critique(app_config, tmp_spec: Path, tmp_path:
     assert critic.calls == 2
     assert any("critique requested changes" in event for event in progress)
     assert "Define API contracts" in builder.prompts[-1]
+    assert any("Approval checklist:" in prompt for prompt in critic.prompts)
+    assert any("Blocker ledger:" in prompt for prompt in critic.prompts)
     assert (run_dir / "plan" / "plan.md").exists()
     assert (run_dir / "plan" / "plan-review.md").exists()
+    assert (run_dir / "plan" / "approval-checklist.md").exists()
+    assert (run_dir / "plan" / "critique-history.md").exists()
+    assert (run_dir / "plan" / "blocker-ledger.md").exists()
     assert any(path.name == "plan-review-attempt-2.md" for path in artifacts)
     assert read_json(run_dir / "plan" / "plan-review.json")["verdict"] == "approved"
 
@@ -253,7 +274,21 @@ class ResumeOnlyBuilder:
                 "rollout_notes": ["Ship after the critique is resolved"],
             }
             return AgentResult(text=json.dumps(payload), json_data=payload)
-        raise AssertionError("Resume should not rerun grounding, questions, intent, or implementation.")
+        if "stable approval rubric" in prompt:
+            return AgentResult(
+                text=(
+                    "# Approval Checklist\n\n"
+                    "## Approval Gates\n"
+                    "- Resolve read and edit contracts.\n\n"
+                    "## Minimum Explicit Contracts\n"
+                    "- Read and edit request and response behavior.\n\n"
+                    "## Allowed Defaults\n"
+                    "- Keep the first release intentionally small.\n\n"
+                    "## Ask The User If\n"
+                    "- Edit semantics remain ambiguous."
+                )
+            )
+        raise AssertionError("Resume should not rerun grounding, questions, intent, or implementation beyond checklist recovery.")
 
 
 def test_plan_stage_resumes_from_latest_attempt(app_config, tmp_spec: Path, tmp_path: Path) -> None:
@@ -296,6 +331,16 @@ def test_plan_stage_resumes_from_latest_attempt(app_config, tmp_spec: Path, tmp_
         "findings": ["Interfaces are underspecified."],
         "required_changes": ["Define read/edit contracts"],
     }
+    older_review = {
+        "verdict": "changes_required",
+        "summary": "Earlier review also flagged workflow ambiguity.",
+        "findings": ["Workflow behavior was vague."],
+        "required_changes": ["Define workflow semantics"],
+    }
+    write_json(plan_dir / "plan-attempt-1.json", prior_plan)
+    (plan_dir / "plan-attempt-1.md").write_text("# Older Plan\n", encoding="utf-8")
+    write_json(plan_dir / "plan-review-attempt-1.json", older_review)
+    (plan_dir / "plan-review-attempt-1.md").write_text("# Older Review\n", encoding="utf-8")
     write_json(plan_dir / "plan-attempt-3.json", prior_plan)
     (plan_dir / "plan-attempt-3.md").write_text("# Prior Plan\n", encoding="utf-8")
     write_json(plan_dir / "plan-review-attempt-3.json", prior_review)
@@ -322,6 +367,9 @@ def test_plan_stage_resumes_from_latest_attempt(app_config, tmp_spec: Path, tmp_
     assert builder.plan_attempts == 1
     assert any("resuming from previous critique at attempt 4" in event for event in progress)
     assert any("Need explicit read/edit interfaces" in prompt for prompt in builder.prompts)
+    assert any("Define workflow semantics" in prompt for prompt in builder.prompts)
+    assert (plan_dir / "approval-checklist.md").exists()
+    assert "Define read/edit contracts" in (plan_dir / "blocker-ledger.md").read_text(encoding="utf-8")
     assert (plan_dir / "plan-attempt-3.json").exists()
     assert (plan_dir / "plan-attempt-4.json").exists()
     assert (plan_dir / "plan-review-attempt-4.json").exists()
@@ -330,9 +378,11 @@ def test_plan_stage_resumes_from_latest_attempt(app_config, tmp_spec: Path, tmp_
 class ExhaustionCritic:
     def __init__(self) -> None:
         self.calls = 0
+        self.prompts: list[str] = []
 
     def run(self, prompt: str, cwd: Path, schema_path: Path | None = None) -> AgentResult:
         self.calls += 1
+        self.prompts.append(prompt)
         if self.calls < 3:
             payload = ReviewReport(
                 verdict="changes_required",
@@ -396,4 +446,5 @@ def test_plan_stage_can_continue_after_attempt_budget_is_exhausted(app_config, t
     assert any("continuing with 2 additional attempts" in event for event in progress)
     assert len(asked_questions) == 1
     assert "Continue with more planning attempts?" in asked_questions[0][0]
+    assert any("Critique history:" in prompt for prompt in critic.prompts)
     assert (run_dir / "plan" / "plan-review-attempt-3.json").exists()
