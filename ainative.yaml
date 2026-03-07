@@ -4,6 +4,7 @@ workspace:
   base_branch: main
   question_budget_per_stage: 1
   question_budget_per_run: 3
+  plan_max_attempts: 3
   mermaid_validate_command:
     - mmdc
   mermaid_validate_args:

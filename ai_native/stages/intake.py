@@ -16,6 +16,7 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
             "",
             f"- Run ID: `{state.run_id}`",
             f"- Spec path: `{state.spec_path}`",
+            f"- Workspace root: `{state.workspace_root}`",
             f"- Feature slug: `{state.feature_slug}`",
             "",
             "## Spec",
@@ -24,4 +25,3 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
     )
     write_text(intake_path, content)
     return [intake_path]
-

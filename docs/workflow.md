@@ -16,6 +16,16 @@ The template treats the workflow as a stateful pipeline:
 10. `pr`
 
 Each stage writes artifacts under `artifacts/<run-id>/`.
+The run state also records the target workspace directory, so the same spec can be used against different repositories without colliding.
+
+## Target Workspace
+
+The template repo holds the prompts, schemas, and orchestration code. The actual feature work runs inside a user-provided target repository passed as `TARGET_DIR` in `make` or `--workspace-dir` in the CLI.
+
+- Repository scan and context generation run against the target workspace.
+- Codex builder, critic, verifier, and PR review commands execute in the target workspace.
+- Git branch, commit, push, and PR creation also execute in the target workspace.
+- Prompt and schema assets still come from the template repo.
 
 ## Plan-Mode Planning
 
@@ -25,7 +35,9 @@ The `plan` stage is intentionally multi-pass. It first writes:
 2. `plan/intent.md`
 3. `plan/implementation.md`
 
-Those notes are then synthesized into the structured `plan.json` and rendered `plan.md`, followed by the separate `plan-review.md` critique.
+Those notes are then synthesized into the structured `plan.json` and rendered `plan.md`, followed by the separate `plan-review.md` critique. If the critique requests changes, the planning agent revises the plan and retries up to the configured attempt limit before the stage fails.
+
+Before intent and implementation are locked in, the planning workflow may also emit a small clarification batch. When that happens, the CLI asks the questions directly in the terminal, stores the results under `plan/questions.*` and `plan/answers.*`, and feeds the answers back into the remaining planning passes.
 
 ## Ralph Loop Contract
 

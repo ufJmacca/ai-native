@@ -45,7 +45,7 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
             slice_definition=slice_def.model_dump(mode="json"),
             slice_dir=slice_dir,
         )
-        review_schema = context.repo_root / "ai_native" / "schemas" / "review-report.json"
+        review_schema = context.template_root / "ai_native" / "schemas" / "review-report.json"
         review_response = context.critic.run(review_prompt, cwd=context.repo_root, schema_path=review_schema)
         review = ReviewReport.model_validate(review_response.json_data)
         review_md = slice_dir / "test-review.md"
@@ -55,4 +55,3 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
             raise StageError(f"Test critique failed for slice {slice_def.id}: {review.summary}")
         state.active_slice = slice_def.id
     return artifacts
-

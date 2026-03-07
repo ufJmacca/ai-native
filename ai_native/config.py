@@ -13,6 +13,7 @@ class WorkspaceConfig(BaseModel):
     base_branch: str = "main"
     question_budget_per_stage: int = 1
     question_budget_per_run: int = 3
+    plan_max_attempts: int = 3
     mermaid_validate_command: list[str] = Field(default_factory=lambda: ["mmdc"])
     mermaid_validate_args: list[str] = Field(default_factory=lambda: ["--quiet"])
 
@@ -58,4 +59,3 @@ class AppConfig(BaseModel):
         config.workspace.artifacts_dir = (config.repo_root / config.workspace.artifacts_dir).resolve()
         config.workspace.specs_dir = (config.repo_root / config.workspace.specs_dir).resolve()
         return config
-

@@ -80,6 +80,12 @@ class ReviewReport(BaseModel):
     required_changes: list[str] = Field(default_factory=list)
 
 
+class QuestionBatch(BaseModel):
+    needs_user_input: bool = False
+    summary: str = ""
+    questions: list[str] = Field(default_factory=list)
+
+
 class VerificationReport(BaseModel):
     verdict: Literal["passed", "failed"]
     summary: str
@@ -99,6 +105,7 @@ class RunState(BaseModel):
     run_id: str
     feature_slug: str
     spec_path: str
+    workspace_root: str
     spec_hash: str
     run_dir: str
     created_at: str
@@ -108,4 +115,3 @@ class RunState(BaseModel):
     stage_status: dict[str, StageSnapshot] = Field(default_factory=dict)
     active_slice: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
-
