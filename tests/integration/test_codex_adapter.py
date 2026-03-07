@@ -93,4 +93,6 @@ def test_codex_exec_adapter_retries_without_workspace_write_when_landlock_panics
     assert result.json_data["title"] == "ok"
     assert len(commands) == 2
     assert commands[0][commands[0].index("-s") + 1] == "workspace-write"
-    assert commands[1][commands[1].index("-s") + 1] == "danger-full-access"
+    assert "-s" not in commands[1]
+    assert "--dangerously-bypass-approvals-and-sandbox" in commands[1]
+    assert "--full-auto" not in commands[1]

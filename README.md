@@ -24,7 +24,7 @@ The `Makefile` auto-detects whether it is running inside the devcontainer. Insid
 `TARGET_DIR` is mandatory for the workflow targets in `make`. The workflow runs Codex, git operations, repository recon, and implementation inside that target directory rather than inside the template repo. Relative spec paths are resolved from `TARGET_DIR`.
 If a relative spec path is not present under `TARGET_DIR`, the CLI falls back to the same relative path in the template repo.
 If the planning step needs clarification, `make run` now pauses and asks the questions directly in the terminal, then feeds the answers back into the planning loop.
-Inside the devcontainer, nested `codex exec` runs automatically fall back from `workspace-write` to `danger-full-access` if the Linux Landlock sandbox is unavailable. Ralph loop evidence files are staged under `TARGET_DIR/.ai-native/runs/<run-id>/...` so nested agents can write them, then mirrored back into the canonical `artifacts/<run-id>/...` directory.
+Inside the devcontainer, nested `codex exec` runs automatically fall back away from `workspace-write` if the Linux Landlock sandbox is unavailable, including stripping `--full-auto` so Codex does not silently re-enable the failing sandbox. Ralph loop evidence files are staged under `TARGET_DIR/.ai-native/runs/<run-id>/...` so nested agents can write them, then mirrored back into the canonical `artifacts/<run-id>/...` directory.
 If planning fails after exhausting its current attempt budget, a resumed run now continues from the latest saved critique attempt rather than restarting grounding/intent/implementation, and the CLI can ask whether to grant additional planning attempts.
 
 ## Core Targets
