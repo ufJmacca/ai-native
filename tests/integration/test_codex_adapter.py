@@ -59,3 +59,38 @@ def test_codex_review_adapter_uses_profile_model_and_extra_args(monkeypatch, tmp
         "develop",
         "prompt",
     ]
+
+
+def test_codex_exec_adapter_retries_without_workspace_write_when_landlock_panics(monkeypatch, tmp_path: Path) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(command, cwd, capture_output, text, check):  # type: ignore[no-untyped-def]
+        commands.append(command)
+        output_path = Path(command[command.index("-o") + 1])
+        if len(commands) == 1:
+            return SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr=(
+                    "thread 'main' panicked at linux-sandbox/src/linux_run_main.rs:167:9\n"
+                    "error applying legacy Linux sandbox restrictions: Sandbox(LandlockRestrict)"
+                ),
+            )
+        output_path.write_text(
+            '{"title":"ok","summary":"ok","implementation_steps":[],"interfaces":[],"data_flow":[],"edge_cases":[],"test_strategy":[],"rollout_notes":[]}',
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr("ai_native.adapters.codex._running_in_container", lambda: True)
+    adapter = CodexExecAdapter(
+        AgentProfile(type="codex-exec", model="gpt-5-codex", sandbox="workspace-write", extra_args=["--full-auto"])
+    )
+
+    result = adapter.run("prompt", cwd=tmp_path, schema_path=tmp_path / "schema.json")
+
+    assert result.json_data["title"] == "ok"
+    assert len(commands) == 2
+    assert commands[0][commands[0].index("-s") + 1] == "workspace-write"
+    assert commands[1][commands[1].index("-s") + 1] == "danger-full-access"

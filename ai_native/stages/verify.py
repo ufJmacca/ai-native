@@ -7,6 +7,7 @@ from pathlib import Path
 from ai_native.models import RunState, SlicePlan, VerificationReport
 from ai_native.stages.common import ExecutionContext, StageError, dump_model, render_verification_markdown
 from ai_native.utils import read_json, read_text, write_text
+from ai_native.workspace_artifacts import mirror_files, workspace_slice_dir
 
 ATTEMPT_RE = re.compile(r"(?P<slice_id>.+)-attempt-(?P<attempt>\d+)\.json$")
 
@@ -211,6 +212,8 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
 
     for slice_def in slice_plan.slices:
         slice_dir = Path(state.run_dir) / "slices" / slice_def.id
+        agent_slice_dir = workspace_slice_dir(state, slice_def.id)
+        mirror_files(slice_dir, agent_slice_dir)
         _materialize_legacy_attempt(verification_dir, slice_def.id)
         artifacts.extend(_existing_slice_artifacts(verification_dir, slice_def.id))
 
@@ -258,12 +261,13 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
                     context=context,
                     spec_text=spec_text,
                     slice_definition=slice_def.model_dump(mode="json"),
-                    slice_dir=slice_dir,
+                    slice_dir=agent_slice_dir,
                     critique_history=critique_history,
                     blocker_ledger=blocker_ledger,
                     prior_verification=verification,
                 )
                 builder_summary = context.builder.run(revise_prompt, cwd=context.repo_root)
+                artifacts.extend(mirror_files(agent_slice_dir, slice_dir))
                 summary_path = verification_dir / f"{slice_def.id}-revision-summary.md"
                 attempt_summary_path = verification_dir / f"{slice_def.id}-revision-summary-attempt-{attempt}.md"
                 write_text(summary_path, builder_summary.text or "# Verification Revision Summary\n")
@@ -274,7 +278,7 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
                 "verify.md",
                 spec_text=spec_text,
                 slice_definition=slice_def.model_dump(mode="json"),
-                slice_dir=slice_dir,
+                slice_dir=agent_slice_dir,
                 critique_history=critique_history,
                 blocker_ledger=blocker_ledger,
             )

@@ -7,12 +7,17 @@ from pathlib import Path
 from ai_native.models import ReviewReport, RunState, SlicePlan
 from ai_native.stages.common import ExecutionContext, StageError, write_review
 from ai_native.utils import read_json, read_text, write_text
+from ai_native.workspace_artifacts import WORKSPACE_ARTIFACT_FILES, mirror_files, workspace_run_dir, workspace_slice_dir
 
 ATTEMPT_RE = re.compile(r"test-review-attempt-(?P<attempt>\d+)\.json$")
 
 
 def _slice_dir(state: RunState, slice_id: str) -> Path:
     return Path(state.run_dir) / "slices" / slice_id
+
+
+def _agent_slice_dir(state: RunState, slice_id: str) -> Path:
+    return workspace_slice_dir(state, slice_id)
 
 
 def _existing_attempt_numbers(slice_dir: Path) -> list[int]:
@@ -271,7 +276,9 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
 
     for slice_def in slice_plan.slices:
         slice_dir = _slice_dir(state, slice_def.id)
+        agent_slice_dir = _agent_slice_dir(state, slice_def.id)
         slice_dir.mkdir(parents=True, exist_ok=True)
+        mirror_files(slice_dir, agent_slice_dir)
         _materialize_legacy_attempt(slice_dir)
         artifacts.extend(_existing_slice_artifacts(slice_dir))
 
@@ -320,8 +327,8 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
                 context=context,
                 spec_text=spec_text,
                 slice_definition=slice_def.model_dump(mode="json"),
-                run_dir=state.run_dir,
-                slice_dir=slice_dir,
+                run_dir=str(workspace_run_dir(state)),
+                slice_dir=agent_slice_dir,
                 critique_history=critique_history,
                 blocker_ledger=blocker_ledger,
                 prior_summary=prior_summary,
@@ -331,11 +338,12 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
             summary_path = slice_dir / "builder-summary.md"
             write_text(summary_path, builder_summary.text or "# Builder Summary\n")
             artifacts.append(summary_path)
+            artifacts.extend(mirror_files(agent_slice_dir, slice_dir))
 
             missing_files = [
-                path.name
-                for path in (slice_dir / "red.log", slice_dir / "green.log", slice_dir / "refactor-notes.md")
-                if not path.exists()
+                name
+                for name in WORKSPACE_ARTIFACT_FILES
+                if not (slice_dir / name).exists()
             ]
             artifacts.extend(_copy_attempt_artifacts(slice_dir, attempt))
             if missing_files:
@@ -345,7 +353,7 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
                     "test_review.md",
                     spec_text=spec_text,
                     slice_definition=slice_def.model_dump(mode="json"),
-                    slice_dir=slice_dir,
+                    slice_dir=agent_slice_dir,
                     critique_history=critique_history,
                     blocker_ledger=blocker_ledger,
                 )
