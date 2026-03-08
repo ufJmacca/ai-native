@@ -15,3 +15,5 @@ build/
 artifacts/*
 !artifacts/.gitkeep
 .ai-native/
+.pnpm-store/
+app/
