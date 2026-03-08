@@ -82,6 +82,35 @@ def test_codex_review_adapter_uses_profile_model_and_extra_args(monkeypatch, tmp
         'model_reasoning_effort="xhigh"',
         "--base",
         "develop",
+    ]
+
+
+def test_codex_review_adapter_uses_prompt_when_no_base_branch(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(command, cwd, capture_output, text, check):  # type: ignore[no-untyped-def]
+        captured["command"] = command
+        return SimpleNamespace(returncode=0, stdout="review ok", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    adapter = CodexReviewAdapter(
+        AgentProfile(
+            type="codex-review",
+            model="gpt-5.4",
+            extra_args=["-c", 'model_reasoning_effort="xhigh"'],
+        )
+    )
+
+    result = adapter.review(cwd=tmp_path, prompt="prompt", base_branch=None)
+
+    assert result.text == "review ok"
+    assert captured["command"] == [
+        "codex",
+        "review",
+        "-c",
+        'model="gpt-5.4"',
+        "-c",
+        'model_reasoning_effort="xhigh"',
         "prompt",
     ]
 

@@ -138,8 +138,10 @@ class CodexReviewAdapter:
         if self.profile.model:
             command.extend(["-c", f"model={json.dumps(self.profile.model)}"])
         command.extend(self.profile.extra_args)
-        command.extend(["--base", base_branch or self.profile.base_branch or "main"])
-        if prompt:
+        resolved_base = base_branch or self.profile.base_branch
+        if resolved_base:
+            command.extend(["--base", resolved_base])
+        elif prompt:
             command.append(prompt)
         return command
 
