@@ -20,6 +20,12 @@ def _agent_slice_dir(state: RunState, slice_id: str) -> Path:
     return workspace_slice_dir(state, slice_id)
 
 
+def _target_slices(state: RunState, slice_plan: SlicePlan) -> list:
+    if not state.active_slice:
+        return slice_plan.slices
+    return [slice_def for slice_def in slice_plan.slices if slice_def.id == state.active_slice]
+
+
 def _existing_attempt_numbers(slice_dir: Path) -> list[int]:
     attempts: list[int] = []
     for review_path in slice_dir.glob("test-review-attempt-*.json"):
@@ -274,7 +280,7 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
     spec_text = read_text(context.spec_path)
     review_schema = context.template_root / "ai_native" / "schemas" / "review-report.json"
 
-    for slice_def in slice_plan.slices:
+    for slice_def in _target_slices(state, slice_plan):
         slice_dir = _slice_dir(state, slice_def.id)
         agent_slice_dir = _agent_slice_dir(state, slice_def.id)
         slice_dir.mkdir(parents=True, exist_ok=True)

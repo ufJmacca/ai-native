@@ -19,8 +19,11 @@ def _load_config() -> AppConfig:
     return AppConfig.load(_config_path())
 
 
-def _state_store(config: AppConfig) -> StateStore:
-    return StateStore(config.workspace.artifacts_dir)
+def _state_store(config: AppConfig, workspace_root: Path | None = None, run_dir: Path | None = None) -> StateStore:
+    if run_dir is not None:
+        return StateStore(run_dir.resolve().parent)
+    resolved_workspace = workspace_root.resolve() if workspace_root is not None else config.repo_root
+    return StateStore(config.resolve_artifacts_dir(resolved_workspace))
 
 
 def _resolve_workspace_root(config: AppConfig, workspace_dir: str | None) -> Path:
@@ -131,12 +134,14 @@ def command_review(args: argparse.Namespace) -> int:
     orchestrator = WorkflowOrchestrator(config, progress=_print_progress, question_responder=_ask_questions)
     workspace_root = _resolve_workspace_root(config, args.workspace_dir)
     spec_path = _resolve_spec_path(config, args.spec, workspace_root)
-    run_dir = Path(args.run_dir).resolve() if args.run_dir else _state_store(config).find_latest_for_spec(spec_path, workspace_root)
+    explicit_run_dir = Path(args.run_dir).resolve() if args.run_dir else None
+    state_store = _state_store(config, workspace_root=workspace_root, run_dir=explicit_run_dir)
+    run_dir = explicit_run_dir or state_store.find_latest_for_spec(spec_path, workspace_root)
     if run_dir is None:
         raise SystemExit("No matching run found for spec.")
     if hasattr(run_dir, "run_dir"):
         run_dir = Path(run_dir.run_dir)
-    state = _state_store(config).load(Path(run_dir))
+    state = _state_store(config, workspace_root=workspace_root, run_dir=Path(run_dir)).load(Path(run_dir))
     if args.target == "pr":
         orchestrator.run_until(spec_path, "pr", run_dir=Path(state.run_dir), dry_run_pr=True, workspace_root=workspace_root)
     else:

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ai_native.gitops import commit_all, create_pull_request, ensure_branch, push_branch
+from ai_native.gitops import commit_all, create_pull_request, ensure_branch, has_changes, push_branch
 from ai_native.models import RunState, SliceDefinition, SlicePlan
 from ai_native.stages.common import ExecutionContext
-from ai_native.utils import read_json, write_text
+from ai_native.utils import read_json, read_text, write_text
 
 
 def _target_slice(state: RunState, slice_plan: SlicePlan) -> SliceDefinition:
@@ -18,18 +18,64 @@ def _target_slice(state: RunState, slice_plan: SlicePlan) -> SliceDefinition:
     return slice_plan.slices[-1]
 
 
-def commit_run(context: ExecutionContext, state: RunState) -> list[Path]:
-    commit_dir = context.state_store.stage_dir(state, "commit")
-    slice_plan = SlicePlan.model_validate(read_json(Path(state.run_dir) / "slice" / "slices.json"))
-    slice_def = _target_slice(state, slice_plan)
-    artifacts: list[Path] = []
+def _target_slices(state: RunState, slice_plan: SlicePlan) -> list[SliceDefinition]:
+    if state.active_slice:
+        return [_target_slice(state, slice_plan)]
+    return slice_plan.slices
+
+
+def _commit_artifact_path(context: ExecutionContext, state: RunState, slice_id: str) -> Path:
+    return context.state_store.stage_dir(state, "commit") / f"{slice_id}.txt"
+
+
+def _commit_message(slice_def: SliceDefinition, slice_dir: Path, conventional_prefix: str) -> tuple[str, str]:
+    subject = f"{conventional_prefix}: {slice_def.name} [{slice_def.id}]"
+    summary = ""
+    summary_path = slice_dir / "builder-summary.md"
+    if summary_path.exists():
+        for line in read_text(summary_path).splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            summary = stripped
+            break
+    acceptance_lines = [f"- {item}" for item in slice_def.acceptance_criteria] or ["- None"]
+    file_impact_lines = [f"- {item}" for item in slice_def.file_impact] or ["- None"]
+    body_lines = [
+        f"Goal: {slice_def.goal}",
+        "",
+        "Acceptance Criteria:",
+        *acceptance_lines,
+        "",
+        "File Impact:",
+        *file_impact_lines,
+    ]
+    if summary:
+        body_lines = [summary, "", *body_lines]
+    return subject, "\n".join(body_lines)
+
+
+def commit_slice(context: ExecutionContext, state: RunState, slice_def: SliceDefinition) -> list[Path]:
+    commit_path = _commit_artifact_path(context, state, slice_def.id)
+    if commit_path.exists():
+        return [commit_path]
+    if not has_changes(context.repo_root):
+        return []
+
+    slice_dir = Path(state.run_dir) / "slices" / slice_def.id
+    subject, body = _commit_message(slice_def, slice_dir, context.config.git.conventional_prefix)
     branch_name = f"{context.config.git.branch_prefix}/{state.feature_slug}-{slice_def.id}"
     ensure_branch(context.repo_root, branch_name)
-    message = f"{context.config.git.conventional_prefix}: {state.feature_slug} [{slice_def.id}]"
-    sha = commit_all(context.repo_root, message)
-    commit_path = commit_dir / f"{slice_def.id}.txt"
-    write_text(commit_path, f"{message}\n{sha}\n")
-    artifacts.append(commit_path)
+    sha = commit_all(context.repo_root, subject, body)
+    write_text(commit_path, f"{subject}\n\n{body}\n\n{sha}\n")
+    return [commit_path]
+
+
+def commit_run(context: ExecutionContext, state: RunState) -> list[Path]:
+    slice_plan = SlicePlan.model_validate(read_json(Path(state.run_dir) / "slice" / "slices.json"))
+    artifacts: list[Path] = []
+    for slice_def in _target_slices(state, slice_plan):
+        artifacts.extend(commit_slice(context, state, slice_def))
     return artifacts
 
 

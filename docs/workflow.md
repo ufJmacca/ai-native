@@ -15,7 +15,7 @@ The template treats the workflow as a stateful pipeline:
 9. `commit`
 10. `pr`
 
-Each stage writes artifacts under `artifacts/<run-id>/`.
+Each stage writes artifacts under `TARGET_DIR/.ai-native/runs/<run-id>/`.
 The run state also records the target workspace directory, so the same spec can be used against different repositories without colliding.
 
 ## Target Workspace
@@ -25,6 +25,7 @@ The template repo holds the prompts, schemas, and orchestration code. The actual
 - Repository scan and context generation run against the target workspace.
 - Codex builder, critic, verifier, and PR review commands execute in the target workspace.
 - Git branch, commit, push, and PR creation also execute in the target workspace.
+- If the target workspace is not already a git repository, the workflow initializes one there before stage execution begins.
 - Prompt and schema assets still come from the template repo.
 
 ## Plan-Mode Planning
@@ -51,6 +52,8 @@ Each slice runs through the following sequence:
 4. Implement until the slice is green and capture `green.log`.
 5. Refactor and record the reasoning in `refactor-notes.md`.
 6. Run a separate verifier agent before allowing commit or PR stages.
+
+When using `make run`, slices are processed sequentially after slice generation rather than batching all loop work before verification. Each slice runs `loop -> verify -> commit` before the next slice begins, and the commit message is derived from that slice's contract and implementation summary.
 
 ## Critique Stages
 

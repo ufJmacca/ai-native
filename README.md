@@ -24,8 +24,10 @@ The `Makefile` auto-detects whether it is running inside the devcontainer. Insid
 `TARGET_DIR` is mandatory for the workflow targets in `make`. The workflow runs Codex, git operations, repository recon, and implementation inside that target directory rather than inside the template repo. Relative spec paths are resolved from `TARGET_DIR`.
 If a relative spec path is not present under `TARGET_DIR`, the CLI falls back to the same relative path in the template repo.
 If the planning step needs clarification, `make run` now pauses and asks the questions directly in the terminal, then feeds the answers back into the planning loop.
-Inside the devcontainer, nested `codex exec` runs default to unsandboxed non-interactive execution because the devcontainer is the outer isolation boundary and Linux Landlock has proven unreliable for nested Codex sessions. Set `AINATIVE_CODEX_CONTAINER_SANDBOX` if you need to override that default. Ralph loop evidence files are staged under `TARGET_DIR/.ai-native/runs/<run-id>/...` so nested agents can write them, then mirrored back into the canonical `artifacts/<run-id>/...` directory.
+Every run now persists its state and artifacts under `TARGET_DIR/.ai-native/runs/<run-id>/`, so the execution record stays with the target repository instead of the template repo. If `TARGET_DIR` is not already a git repository, the workflow initializes one there on the configured base branch before agent execution starts.
+Inside the devcontainer, nested `codex exec` runs default to unsandboxed non-interactive execution because the devcontainer is the outer isolation boundary and Linux Landlock has proven unreliable for nested Codex sessions. Set `AINATIVE_CODEX_CONTAINER_SANDBOX` if you need to override that default.
 If planning fails after exhausting its current attempt budget, a resumed run now continues from the latest saved critique attempt rather than restarting grounding/intent/implementation, and the CLI can ask whether to grant additional planning attempts.
+`make run` now processes slices sequentially after planning: each slice goes through loop, verify, and commit before the next slice starts. The commit message is derived from the slice name, goal, acceptance criteria, and file impact so each commit explains the slice it captures.
 
 ## Core Targets
 

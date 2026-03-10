@@ -10,7 +10,6 @@ def test_load_config_resolves_paths_from_repo_root() -> None:
     config = AppConfig.load(repo_root / "ainative.yaml")
 
     assert config.repo_root == repo_root
-    assert config.workspace.artifacts_dir == repo_root / "artifacts"
+    assert config.workspace.artifacts_dir == Path(".ai-native/runs")
     assert config.workspace.specs_dir == repo_root / "specs"
     assert config.git.branch_prefix == "codex"
-

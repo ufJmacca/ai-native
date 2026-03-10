@@ -10,7 +10,7 @@ WORKSPACE_ARTIFACT_FILES = ("red.log", "green.log", "refactor-notes.md")
 
 
 def workspace_run_dir(state: RunState) -> Path:
-    return ensure_dir(Path(state.workspace_root) / ".ai-native" / "runs" / state.run_id)
+    return ensure_dir(Path(state.run_dir))
 
 
 def workspace_slice_dir(state: RunState, slice_id: str) -> Path:
@@ -24,6 +24,8 @@ def mirror_files(source_dir: Path, target_dir: Path, filenames: tuple[str, ...] 
         source = source_dir / name
         target = target_dir / name
         if not source.exists():
+            continue
+        if source.resolve() == target.resolve():
             continue
         shutil.copyfile(source, target)
         copied.append(target)

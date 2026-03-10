@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 
 class WorkspaceConfig(BaseModel):
-    artifacts_dir: Path = Path("artifacts")
+    artifacts_dir: Path = Path(".ai-native/runs")
     specs_dir: Path = Path("specs")
     base_branch: str = "main"
     question_budget_per_stage: int = 1
@@ -60,6 +60,11 @@ class AppConfig(BaseModel):
         config = cls.model_validate(raw)
         config.config_path = path
         config.repo_root = path.parent.resolve()
-        config.workspace.artifacts_dir = (config.repo_root / config.workspace.artifacts_dir).resolve()
         config.workspace.specs_dir = (config.repo_root / config.workspace.specs_dir).resolve()
         return config
+
+    def resolve_artifacts_dir(self, workspace_root: Path) -> Path:
+        root = self.workspace.artifacts_dir
+        if root.is_absolute():
+            return root.resolve()
+        return (workspace_root.resolve() / root).resolve()

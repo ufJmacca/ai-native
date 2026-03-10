@@ -1,5 +1,5 @@
 workspace:
-  artifacts_dir: artifacts
+  artifacts_dir: .ai-native/runs
   specs_dir: specs
   base_branch: main
   question_budget_per_stage: 3
