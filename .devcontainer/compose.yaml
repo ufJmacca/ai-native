@@ -5,5 +5,5 @@ services:
       - ${HOME}/.codex/config.toml:/home/vscode/.codex/config.toml:ro
       - ${HOME}/.ssh:/home/vscode/.ssh:ro
       - ${HOME}/.gitconfig:/home/vscode/.gitconfig:ro
-      - ${HOME}/.config:/mnt/host-config:ro
+      - ${HOME}/.config:/mnt/host-config
       - /var/run/docker.sock:/var/run/docker.sock
