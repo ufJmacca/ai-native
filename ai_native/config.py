@@ -11,6 +11,10 @@ class WorkspaceConfig(BaseModel):
     artifacts_dir: Path = Path(".ai-native/runs")
     specs_dir: Path = Path("specs")
     base_branch: str = "main"
+    parallel_mode: Literal["independent_only"] = "independent_only"
+    parallel_workers: int = 4
+    worktrees_dir: Path = Path(".ai-native/worktrees")
+    parallel_overlap_policy: Literal["path_prefix_block"] = "path_prefix_block"
     question_budget_per_stage: int = 1
     question_budget_per_run: int = 3
     plan_max_attempts: int = 3
@@ -65,6 +69,12 @@ class AppConfig(BaseModel):
 
     def resolve_artifacts_dir(self, workspace_root: Path) -> Path:
         root = self.workspace.artifacts_dir
+        if root.is_absolute():
+            return root.resolve()
+        return (workspace_root.resolve() / root).resolve()
+
+    def resolve_worktrees_dir(self, workspace_root: Path) -> Path:
+        root = self.workspace.worktrees_dir
         if root.is_absolute():
             return root.resolve()
         return (workspace_root.resolve() / root).resolve()

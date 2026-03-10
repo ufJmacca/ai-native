@@ -5,6 +5,7 @@ import shutil
 from pathlib import Path
 
 from ai_native.models import ReviewReport, RunState, SlicePlan
+from ai_native.slice_runtime import load_slice_plan, selected_slices
 from ai_native.stages.common import ExecutionContext, StageError, write_review
 from ai_native.utils import read_json, read_text, write_text
 from ai_native.workspace_artifacts import WORKSPACE_ARTIFACT_FILES, mirror_files, workspace_run_dir, workspace_slice_dir
@@ -16,14 +17,12 @@ def _slice_dir(state: RunState, slice_id: str) -> Path:
     return Path(state.run_dir) / "slices" / slice_id
 
 
-def _agent_slice_dir(state: RunState, slice_id: str) -> Path:
-    return workspace_slice_dir(state, slice_id)
+def _agent_slice_dir(context: ExecutionContext, state: RunState, slice_id: str) -> Path:
+    return workspace_slice_dir(state, slice_id, repo_root=context.repo_root)
 
 
-def _target_slices(state: RunState, slice_plan: SlicePlan) -> list:
-    if not state.active_slice:
-        return slice_plan.slices
-    return [slice_def for slice_def in slice_plan.slices if slice_def.id == state.active_slice]
+def _target_slices(context: ExecutionContext, state: RunState, slice_plan: SlicePlan) -> list:
+    return selected_slices(slice_plan, context.slice_id, state.active_slice)
 
 
 def _existing_attempt_numbers(slice_dir: Path) -> list[int]:
@@ -275,14 +274,14 @@ def _ask_to_continue_after_exhaustion(
 
 
 def run(context: ExecutionContext, state: RunState) -> list[Path]:
-    slice_plan = SlicePlan.model_validate(read_json(Path(state.run_dir) / "slice" / "slices.json"))
+    slice_plan = load_slice_plan(Path(state.run_dir))
     artifacts: list[Path] = []
     spec_text = read_text(context.spec_path)
     review_schema = context.template_root / "ai_native" / "schemas" / "review-report.json"
 
-    for slice_def in _target_slices(state, slice_plan):
+    for slice_def in _target_slices(context, state, slice_plan):
         slice_dir = _slice_dir(state, slice_def.id)
-        agent_slice_dir = _agent_slice_dir(state, slice_def.id)
+        agent_slice_dir = _agent_slice_dir(context, state, slice_def.id)
         slice_dir.mkdir(parents=True, exist_ok=True)
         mirror_files(slice_dir, agent_slice_dir)
         _materialize_legacy_attempt(slice_dir)
@@ -333,7 +332,7 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
                 context=context,
                 spec_text=spec_text,
                 slice_definition=slice_def.model_dump(mode="json"),
-                run_dir=str(workspace_run_dir(state)),
+                run_dir=str(workspace_run_dir(state, repo_root=context.repo_root)),
                 slice_dir=agent_slice_dir,
                 critique_history=critique_history,
                 blocker_ledger=blocker_ledger,

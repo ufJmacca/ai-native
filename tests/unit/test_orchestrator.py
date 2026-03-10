@@ -72,7 +72,7 @@ def test_run_until_emits_stage_progress(app_config, tmp_spec: Path) -> None:
     assert "[ainative] plan: completed" in events
 
 
-def test_run_all_processes_slices_sequentially(app_config, tmp_spec: Path, tmp_path: Path) -> None:
+def test_run_all_blocks_dependent_slices_until_prerequisites_merge_to_base(app_config, tmp_spec: Path, tmp_path: Path) -> None:
     workspace_root = tmp_path / "target-repo"
     workspace_root.mkdir()
     orchestrator = WorkflowOrchestrator(app_config)
@@ -152,9 +152,8 @@ def test_run_all_processes_slices_sequentially(app_config, tmp_spec: Path, tmp_p
         ("loop", "S001"),
         ("verify", "S001"),
         ("commit", "S001"),
-        ("loop", "S002"),
-        ("verify", "S002"),
-        ("commit", "S002"),
-        ("pr", "S002"),
+        ("pr", "S001"),
     ]
-    assert state.active_slice == "S002"
+    assert state.slice_states["S001"].status == "pr_opened"
+    assert state.slice_states["S002"].status == "blocked"
+    assert state.status == "in_progress"

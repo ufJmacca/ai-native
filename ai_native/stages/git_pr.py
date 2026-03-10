@@ -4,24 +4,20 @@ from pathlib import Path
 
 from ai_native.gitops import commit_all, create_pull_request, ensure_branch, has_changes, push_branch
 from ai_native.models import RunState, SliceDefinition, SlicePlan
+from ai_native.slice_runtime import branch_name_for_slice, load_slice_plan, selected_slices
 from ai_native.stages.common import ExecutionContext
 from ai_native.utils import read_json, read_text, write_text
 
 
-def _target_slice(state: RunState, slice_plan: SlicePlan) -> SliceDefinition:
-    if state.active_slice:
-        for slice_def in slice_plan.slices:
-            if slice_def.id == state.active_slice:
-                return slice_def
-    if not slice_plan.slices:
+def _target_slice(context: ExecutionContext, state: RunState, slice_plan: SlicePlan) -> SliceDefinition:
+    slices = selected_slices(slice_plan, context.slice_id, state.active_slice)
+    if not slices:
         raise RuntimeError("No slices were generated for this run.")
-    return slice_plan.slices[-1]
+    return slices[-1]
 
 
-def _target_slices(state: RunState, slice_plan: SlicePlan) -> list[SliceDefinition]:
-    if state.active_slice:
-        return [_target_slice(state, slice_plan)]
-    return slice_plan.slices
+def _target_slices(context: ExecutionContext, state: RunState, slice_plan: SlicePlan) -> list[SliceDefinition]:
+    return selected_slices(slice_plan, context.slice_id, state.active_slice)
 
 
 def _commit_artifact_path(context: ExecutionContext, state: RunState, slice_id: str) -> Path:
@@ -64,7 +60,7 @@ def commit_slice(context: ExecutionContext, state: RunState, slice_def: SliceDef
 
     slice_dir = Path(state.run_dir) / "slices" / slice_def.id
     subject, body = _commit_message(slice_def, slice_dir, context.config.git.conventional_prefix)
-    branch_name = f"{context.config.git.branch_prefix}/{state.feature_slug}-{slice_def.id}"
+    branch_name = branch_name_for_slice(context.config.git.branch_prefix, state.feature_slug, slice_def.id)
     ensure_branch(context.repo_root, branch_name)
     sha = commit_all(context.repo_root, subject, body)
     write_text(commit_path, f"{subject}\n\n{body}\n\n{sha}\n")
@@ -72,20 +68,20 @@ def commit_slice(context: ExecutionContext, state: RunState, slice_def: SliceDef
 
 
 def commit_run(context: ExecutionContext, state: RunState) -> list[Path]:
-    slice_plan = SlicePlan.model_validate(read_json(Path(state.run_dir) / "slice" / "slices.json"))
+    slice_plan = load_slice_plan(Path(state.run_dir))
     artifacts: list[Path] = []
-    for slice_def in _target_slices(state, slice_plan):
+    for slice_def in _target_slices(context, state, slice_plan):
         artifacts.extend(commit_slice(context, state, slice_def))
     return artifacts
 
 
 def create_prs(context: ExecutionContext, state: RunState, dry_run: bool = False) -> list[Path]:
     pr_dir = context.state_store.stage_dir(state, "pr")
-    slice_plan = SlicePlan.model_validate(read_json(Path(state.run_dir) / "slice" / "slices.json"))
-    slice_def = _target_slice(state, slice_plan)
+    slice_plan = load_slice_plan(Path(state.run_dir))
+    slice_def = _target_slice(context, state, slice_plan)
     prd = read_json(Path(state.run_dir) / "prd" / "prd.json")
     artifacts: list[Path] = []
-    branch_name = f"{context.config.git.branch_prefix}/{state.feature_slug}-{slice_def.id}"
+    branch_name = branch_name_for_slice(context.config.git.branch_prefix, state.feature_slug, slice_def.id)
     body_path = pr_dir / f"{slice_def.id}-body.md"
     body = "\n".join(
         [

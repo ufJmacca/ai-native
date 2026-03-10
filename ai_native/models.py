@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -17,6 +18,23 @@ StageName = Literal[
     "commit",
     "pr",
 ]
+
+SliceExecutionStatus = Literal[
+    "pending",
+    "blocked",
+    "ready",
+    "running",
+    "verified",
+    "committed",
+    "pr_opened",
+    "failed",
+]
+
+SliceStageName = Literal["loop", "verify", "commit", "pr"]
+
+
+def _timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 class ContextReport(BaseModel):
@@ -101,6 +119,20 @@ class StageSnapshot(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
+class SliceExecutionState(BaseModel):
+    slice_id: str
+    branch_name: str | None = None
+    worktree_path: str | None = None
+    status: SliceExecutionStatus = "pending"
+    current_stage: SliceStageName | None = None
+    block_reason: str | None = None
+    commit_sha: str | None = None
+    pr_url: str | None = None
+    attempt_counts: dict[str, int] = Field(default_factory=dict)
+    started_at: str | None = None
+    updated_at: str = Field(default_factory=_timestamp)
+
+
 class RunState(BaseModel):
     run_id: str
     feature_slug: str
@@ -114,4 +146,7 @@ class RunState(BaseModel):
     status: Literal["in_progress", "completed", "failed"] = "in_progress"
     stage_status: dict[str, StageSnapshot] = Field(default_factory=dict)
     active_slice: str | None = None
+    slice_states: dict[str, SliceExecutionState] = Field(default_factory=dict)
+    base_ref: str | None = None
+    scheduler_status: Literal["idle", "running", "failed", "completed"] = "idle"
     metadata: dict[str, Any] = Field(default_factory=dict)

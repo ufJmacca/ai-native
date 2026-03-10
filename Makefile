@@ -4,6 +4,7 @@ WORKSPACE ?= workspace
 SPEC ?= specs/examples/todo-api.md
 TARGET_DIR ?=
 RUN_DIR ?=
+SLICE ?=
 DOCKER_COMPOSE ?= docker compose
 RUN_ARGS ?=
 IN_CONTAINER := $(shell test -f /.dockerenv && echo 1 || echo 0)
@@ -27,10 +28,10 @@ help:
 	@printf "  make architect SPEC=... TARGET_DIR=/path/to/repo Run architecture stage and critique\n"
 	@printf "  make prd SPEC=... TARGET_DIR=/path/to/repo       Run PRD stage and critique\n"
 	@printf "  make slice SPEC=... TARGET_DIR=/path/to/repo     Generate implementation slices\n"
-	@printf "  make loop SPEC=... TARGET_DIR=/path/to/repo      Run Ralph loop for every slice\n"
-	@printf "  make verify SPEC=... TARGET_DIR=/path/to/repo    Verify all generated slices\n"
-	@printf "  make commit SPEC=... TARGET_DIR=/path/to/repo    Commit verified slice changes\n"
-	@printf "  make pr SPEC=... TARGET_DIR=/path/to/repo        Create a pull request\n"
+	@printf "  make loop SPEC=... TARGET_DIR=/path/to/repo SLICE=S001   Run Ralph loop for one slice or the sole remaining candidate\n"
+	@printf "  make verify SPEC=... TARGET_DIR=/path/to/repo SLICE=S001 Verify one slice or the sole remaining candidate\n"
+	@printf "  make commit SPEC=... TARGET_DIR=/path/to/repo SLICE=S001 Commit one slice or the sole remaining candidate\n"
+	@printf "  make pr SPEC=... TARGET_DIR=/path/to/repo SLICE=S001     Create a pull request for one slice or the sole remaining candidate\n"
 	@printf "  make run SPEC=... TARGET_DIR=/path/to/repo       Run the full workflow\n"
 	@printf "  make test               Run the full pytest suite in the current runtime\n"
 
@@ -61,16 +62,16 @@ slice: require-target-dir
 	$(UV_RUN) ainative stage --stage slice --spec $(SPEC) $(if $(TARGET_DIR),--workspace-dir $(TARGET_DIR),) $(if $(RUN_DIR),--run-dir $(RUN_DIR),)
 
 loop: require-target-dir
-	$(UV_RUN) ainative stage --stage loop --spec $(SPEC) $(if $(TARGET_DIR),--workspace-dir $(TARGET_DIR),) $(if $(RUN_DIR),--run-dir $(RUN_DIR),)
+	$(UV_RUN) ainative loop --spec $(SPEC) $(if $(TARGET_DIR),--workspace-dir $(TARGET_DIR),) $(if $(RUN_DIR),--run-dir $(RUN_DIR),) $(if $(SLICE),--slice-id $(SLICE),)
 
 verify: require-target-dir
-	$(UV_RUN) ainative stage --stage verify --spec $(SPEC) $(if $(TARGET_DIR),--workspace-dir $(TARGET_DIR),) $(if $(RUN_DIR),--run-dir $(RUN_DIR),)
+	$(UV_RUN) ainative verify --spec $(SPEC) $(if $(TARGET_DIR),--workspace-dir $(TARGET_DIR),) $(if $(RUN_DIR),--run-dir $(RUN_DIR),) $(if $(SLICE),--slice-id $(SLICE),)
 
 commit: require-target-dir
-	$(UV_RUN) ainative stage --stage commit --spec $(SPEC) $(if $(TARGET_DIR),--workspace-dir $(TARGET_DIR),) $(if $(RUN_DIR),--run-dir $(RUN_DIR),)
+	$(UV_RUN) ainative commit --spec $(SPEC) $(if $(TARGET_DIR),--workspace-dir $(TARGET_DIR),) $(if $(RUN_DIR),--run-dir $(RUN_DIR),) $(if $(SLICE),--slice-id $(SLICE),)
 
 pr: require-target-dir
-	$(UV_RUN) ainative pr --spec $(SPEC) $(if $(TARGET_DIR),--workspace-dir $(TARGET_DIR),) $(if $(RUN_DIR),--run-dir $(RUN_DIR),)
+	$(UV_RUN) ainative pr --spec $(SPEC) $(if $(TARGET_DIR),--workspace-dir $(TARGET_DIR),) $(if $(RUN_DIR),--run-dir $(RUN_DIR),) $(if $(SLICE),--slice-id $(SLICE),)
 
 run: require-target-dir
 	$(UV_RUN) ainative run --spec $(SPEC) $(if $(TARGET_DIR),--workspace-dir $(TARGET_DIR),) $(if $(RUN_DIR),--run-dir $(RUN_DIR),) $(RUN_ARGS)

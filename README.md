@@ -27,7 +27,8 @@ If the planning step needs clarification, `make run` now pauses and asks the que
 Every run now persists its state and artifacts under `TARGET_DIR/.ai-native/runs/<run-id>/`, so the execution record stays with the target repository instead of the template repo. If `TARGET_DIR` is not already a git repository, the workflow initializes one there on the configured base branch before agent execution starts.
 Inside the devcontainer, nested `codex exec` runs default to unsandboxed non-interactive execution because the devcontainer is the outer isolation boundary and Linux Landlock has proven unreliable for nested Codex sessions. Set `AINATIVE_CODEX_CONTAINER_SANDBOX` if you need to override that default.
 If planning fails after exhausting its current attempt budget, a resumed run now continues from the latest saved critique attempt rather than restarting grounding/intent/implementation, and the CLI can ask whether to grant additional planning attempts.
-`make run` now processes slices sequentially after planning: each slice goes through loop, verify, and commit before the next slice starts. The commit message is derived from the slice name, goal, acceptance criteria, and file impact so each commit explains the slice it captures.
+`make run` now schedules ready slices in parallel via git worktrees under `TARGET_DIR/.ai-native/worktrees/<run-id>/`. A slice is only runnable when its dependencies are already merged into the configured base branch and its `file_impact` does not overlap any currently running slice. Each runnable slice executes `loop -> verify -> commit -> pr` inside its own worktree, and dependent slices remain blocked until a later resumed run after prerequisite merges.
+Because the scheduler creates worktrees from the base branch, the target repository must be clean outside `.ai-native/` before `make run` starts the slice phase.
 
 ## Core Targets
 
@@ -37,10 +38,10 @@ If planning fails after exhausting its current attempt budget, a resumed run now
 - `make architect SPEC=... TARGET_DIR=...`
 - `make prd SPEC=... TARGET_DIR=...`
 - `make slice SPEC=... TARGET_DIR=...`
-- `make loop SPEC=... TARGET_DIR=...`
-- `make verify SPEC=... TARGET_DIR=...`
-- `make commit SPEC=... TARGET_DIR=...`
-- `make pr SPEC=... TARGET_DIR=...`
+- `make loop SPEC=... TARGET_DIR=... SLICE=S001`
+- `make verify SPEC=... TARGET_DIR=... SLICE=S001`
+- `make commit SPEC=... TARGET_DIR=... SLICE=S001`
+- `make pr SPEC=... TARGET_DIR=... SLICE=S001`
 - `make run SPEC=... TARGET_DIR=...`
 
 ## Auth Model

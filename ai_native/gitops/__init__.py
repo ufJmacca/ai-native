@@ -15,8 +15,16 @@ def _run_optional(command: list[str], cwd: Path) -> subprocess.CompletedProcess[
     return subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
 
 
+def _git_dir(cwd: Path) -> Path:
+    git_dir = _run(["git", "rev-parse", "--git-dir"], cwd)
+    path = Path(git_dir)
+    if path.is_absolute():
+        return path
+    return (cwd / path).resolve()
+
+
 def _ensure_local_ignore(cwd: Path) -> None:
-    info_dir = cwd / ".git" / "info"
+    info_dir = _git_dir(cwd) / "info"
     info_dir.mkdir(parents=True, exist_ok=True)
     exclude_path = info_dir / "exclude"
     existing = exclude_path.read_text(encoding="utf-8") if exclude_path.exists() else ""
@@ -53,6 +61,28 @@ def ensure_branch(cwd: Path, branch_name: str) -> str:
     return branch_name
 
 
+def ensure_base_commit(cwd: Path, base_branch: str) -> None:
+    if _run_optional(["git", "rev-parse", "--verify", "HEAD"], cwd).returncode == 0:
+        return
+    current_branch = _run_optional(["git", "symbolic-ref", "--short", "HEAD"], cwd)
+    if current_branch.returncode != 0 or current_branch.stdout.strip() != base_branch:
+        _run_optional(["git", "checkout", "-B", base_branch], cwd)
+    _run(
+        [
+            "git",
+            "-c",
+            "user.name=ai-native",
+            "-c",
+            "user.email=ai-native@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "chore: initialize repository for ai-native workflow",
+        ],
+        cwd,
+    )
+
+
 def has_changes(cwd: Path) -> bool:
     return bool(_run(["git", "status", "--porcelain"], cwd).strip())
 
@@ -75,3 +105,82 @@ def create_pull_request(cwd: Path, title: str, body_file: Path, draft: bool) -> 
     if draft:
         command.append("--draft")
     return _run(command, cwd)
+
+
+def resolve_base_ref(cwd: Path, base_branch: str) -> str:
+    remote = _run_optional(["git", "remote", "get-url", "origin"], cwd)
+    if remote.returncode == 0:
+        fetch = _run_optional(["git", "fetch", "origin", base_branch], cwd)
+        if fetch.returncode == 0:
+            return f"origin/{base_branch}"
+    remote_ref = f"refs/remotes/origin/{base_branch}"
+    if _run_optional(["git", "show-ref", "--verify", "--quiet", remote_ref], cwd).returncode == 0:
+        return f"origin/{base_branch}"
+    return base_branch
+
+
+def is_ancestor(cwd: Path, commit_sha: str, base_ref: str) -> bool:
+    return _run_optional(["git", "merge-base", "--is-ancestor", commit_sha, base_ref], cwd).returncode == 0
+
+
+def _parse_worktree_list(cwd: Path) -> dict[Path, str | None]:
+    worktrees: dict[Path, str | None] = {}
+    current_path: Path | None = None
+    for raw_line in _run(["git", "worktree", "list", "--porcelain"], cwd).splitlines():
+        if raw_line.startswith("worktree "):
+            current_path = Path(raw_line.split(" ", 1)[1]).resolve()
+            worktrees[current_path] = None
+        elif raw_line.startswith("branch ") and current_path is not None:
+            worktrees[current_path] = raw_line.split(" ", 1)[1].removeprefix("refs/heads/")
+        elif not raw_line:
+            current_path = None
+    return worktrees
+
+
+def create_worktree(cwd: Path, base_ref: str, branch_name: str, worktree_path: Path) -> Path:
+    worktree_path.parent.mkdir(parents=True, exist_ok=True)
+    _run(["git", "worktree", "add", "-b", branch_name, str(worktree_path), base_ref], cwd)
+    _ensure_local_ignore(worktree_path)
+    return worktree_path.resolve()
+
+
+def ensure_worktree(cwd: Path, branch_name: str, worktree_path: Path, base_ref: str) -> Path:
+    target_path = worktree_path.resolve()
+    known_worktrees = _parse_worktree_list(cwd)
+    for existing_path, existing_branch in known_worktrees.items():
+        if existing_branch == branch_name and existing_path.exists():
+            _ensure_local_ignore(existing_path)
+            return existing_path
+    if target_path.exists():
+        current_branch = _run_optional(["git", "branch", "--show-current"], target_path)
+        if current_branch.returncode == 0 and current_branch.stdout.strip() == branch_name:
+            _ensure_local_ignore(target_path)
+            return target_path
+    branch_exists = bool(_run(["git", "branch", "--list", branch_name], cwd).strip())
+    if branch_exists:
+        worktree_path.parent.mkdir(parents=True, exist_ok=True)
+        _run(["git", "worktree", "add", str(worktree_path), branch_name], cwd)
+    else:
+        create_worktree(cwd, base_ref, branch_name, worktree_path)
+    _ensure_local_ignore(worktree_path)
+    return worktree_path.resolve()
+
+
+def remove_worktree(worktree_path: Path) -> None:
+    _run(["git", "worktree", "remove", str(worktree_path)], worktree_path.parent)
+
+
+def non_ai_native_changes(cwd: Path) -> list[str]:
+    changes = _run(["git", "status", "--porcelain", "--untracked-files=all"], cwd).splitlines()
+    relevant: list[str] = []
+    for entry in changes:
+        path = entry[3:] if len(entry) > 3 else ""
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        normalized = path.strip()
+        if not normalized:
+            continue
+        if normalized == ".ai-native" or normalized.startswith(".ai-native/"):
+            continue
+        relevant.append(normalized)
+    return relevant

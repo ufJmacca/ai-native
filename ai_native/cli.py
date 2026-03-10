@@ -118,15 +118,26 @@ def command_stage(args: argparse.Namespace) -> int:
     config = _load_config()
     orchestrator = WorkflowOrchestrator(config, progress=_print_progress, question_responder=_ask_questions)
     workspace_root = _resolve_workspace_root(config, args.workspace_dir)
+    run_kwargs = {
+        "spec_path": _resolve_spec_path(config, args.spec, workspace_root),
+        "target_stage": args.stage,
+        "run_dir": Path(args.run_dir).resolve() if args.run_dir else None,
+        "dry_run_pr": args.dry_run_pr,
+        "workspace_root": workspace_root,
+    }
+    if getattr(args, "slice_id", None):
+        run_kwargs["slice_id"] = args.slice_id
     state = orchestrator.run_until(
-        spec_path=_resolve_spec_path(config, args.spec, workspace_root),
-        target_stage=args.stage,
-        run_dir=Path(args.run_dir).resolve() if args.run_dir else None,
-        dry_run_pr=args.dry_run_pr,
-        workspace_root=workspace_root,
+        **run_kwargs,
     )
     print(Path(state.run_dir))
     return 0
+
+
+def _run_slice_stage(args: argparse.Namespace, stage_name: str, *, dry_run_pr: bool = False) -> int:
+    args.stage = stage_name
+    args.dry_run_pr = dry_run_pr
+    return command_stage(args)
 
 
 def command_review(args: argparse.Namespace) -> int:
@@ -154,13 +165,16 @@ def command_pr(args: argparse.Namespace) -> int:
     config = _load_config()
     orchestrator = WorkflowOrchestrator(config, progress=_print_progress, question_responder=_ask_questions)
     workspace_root = _resolve_workspace_root(config, args.workspace_dir)
-    state = orchestrator.run_until(
-        spec_path=_resolve_spec_path(config, args.spec, workspace_root),
-        target_stage="pr",
-        run_dir=Path(args.run_dir).resolve() if args.run_dir else None,
-        dry_run_pr=args.dry_run,
-        workspace_root=workspace_root,
-    )
+    run_kwargs = {
+        "spec_path": _resolve_spec_path(config, args.spec, workspace_root),
+        "target_stage": "pr",
+        "run_dir": Path(args.run_dir).resolve() if args.run_dir else None,
+        "dry_run_pr": args.dry_run,
+        "workspace_root": workspace_root,
+    }
+    if args.slice_id:
+        run_kwargs["slice_id"] = args.slice_id
+    state = orchestrator.run_until(**run_kwargs)
     print(Path(state.run_dir) / "pr")
     return 0
 
@@ -185,7 +199,29 @@ def build_parser() -> argparse.ArgumentParser:
     stage.add_argument("--stage", required=True, choices=["plan", "architecture", "prd", "slice", "loop", "verify", "commit", "pr"])
     stage.add_argument("--run-dir")
     stage.add_argument("--dry-run-pr", action="store_true")
+    stage.add_argument("--slice-id")
     stage.set_defaults(func=command_stage)
+
+    loop = subparsers.add_parser("loop")
+    loop.add_argument("--spec", required=True)
+    loop.add_argument("--workspace-dir")
+    loop.add_argument("--run-dir")
+    loop.add_argument("--slice-id")
+    loop.set_defaults(func=lambda args: _run_slice_stage(args, "loop"))
+
+    verify = subparsers.add_parser("verify")
+    verify.add_argument("--spec", required=True)
+    verify.add_argument("--workspace-dir")
+    verify.add_argument("--run-dir")
+    verify.add_argument("--slice-id")
+    verify.set_defaults(func=lambda args: _run_slice_stage(args, "verify"))
+
+    commit = subparsers.add_parser("commit")
+    commit.add_argument("--spec", required=True)
+    commit.add_argument("--workspace-dir")
+    commit.add_argument("--run-dir")
+    commit.add_argument("--slice-id")
+    commit.set_defaults(func=lambda args: _run_slice_stage(args, "commit"))
 
     review = subparsers.add_parser("review")
     review.add_argument("--spec", required=True)
@@ -199,6 +235,7 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--workspace-dir")
     pr.add_argument("--run-dir")
     pr.add_argument("--dry-run", action="store_true")
+    pr.add_argument("--slice-id")
     pr.set_defaults(func=command_pr)
 
     return parser

@@ -5,6 +5,7 @@ import shutil
 from pathlib import Path
 
 from ai_native.models import RunState, SlicePlan, VerificationReport
+from ai_native.slice_runtime import load_slice_plan, selected_slices
 from ai_native.stages.common import ExecutionContext, StageError, dump_model, render_verification_markdown
 from ai_native.utils import read_json, read_text, write_text
 from ai_native.workspace_artifacts import mirror_files, workspace_slice_dir
@@ -203,22 +204,16 @@ def _ask_to_continue_after_exhaustion(
     return _parse_additional_attempts(responses[1] if len(responses) > 1 else "", current_limit)
 
 
-def _target_slices(state: RunState, slice_plan: SlicePlan) -> list:
-    if not state.active_slice:
-        return slice_plan.slices
-    return [slice_def for slice_def in slice_plan.slices if slice_def.id == state.active_slice]
-
-
 def run(context: ExecutionContext, state: RunState) -> list[Path]:
     verification_dir = context.state_store.stage_dir(state, "verify")
-    slice_plan = SlicePlan.model_validate(read_json(Path(state.run_dir) / "slice" / "slices.json"))
+    slice_plan = load_slice_plan(Path(state.run_dir))
     artifacts: list[Path] = []
     spec_text = read_text(context.spec_path)
     schema_path = context.template_root / "ai_native" / "schemas" / "verification-report.json"
 
-    for slice_def in _target_slices(state, slice_plan):
+    for slice_def in selected_slices(slice_plan, context.slice_id, state.active_slice):
         slice_dir = Path(state.run_dir) / "slices" / slice_def.id
-        agent_slice_dir = workspace_slice_dir(state, slice_def.id)
+        agent_slice_dir = workspace_slice_dir(state, slice_def.id, repo_root=context.repo_root)
         mirror_files(slice_dir, agent_slice_dir)
         _materialize_legacy_attempt(verification_dir, slice_def.id)
         artifacts.extend(_existing_slice_artifacts(verification_dir, slice_def.id))
