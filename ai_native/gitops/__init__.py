@@ -35,8 +35,15 @@ def _ensure_local_ignore(cwd: Path) -> None:
 
 
 def ensure_repo(cwd: Path, default_branch: str = "main") -> None:
+    cwd = cwd.resolve()
     probe = _run_optional(["git", "rev-parse", "--show-toplevel"], cwd)
     if probe.returncode == 0:
+        top_level = Path(probe.stdout.strip()).resolve()
+        if top_level != cwd:
+            raise RuntimeError(
+                f"Workspace root {cwd} is nested inside existing git repository {top_level}. "
+                "Use a standalone directory or the repository root as TARGET_DIR."
+            )
         _ensure_local_ignore(cwd)
         return
 
@@ -100,8 +107,10 @@ def push_branch(cwd: Path, branch_name: str) -> None:
     _run(["git", "push", "-u", "origin", branch_name], cwd)
 
 
-def create_pull_request(cwd: Path, title: str, body_file: Path, draft: bool) -> str:
+def create_pull_request(cwd: Path, title: str, body_file: Path, draft: bool, base_branch: str | None = None) -> str:
     command = ["gh", "pr", "create", "--title", title, "--body-file", str(body_file)]
+    if base_branch:
+        command.extend(["--base", base_branch])
     if draft:
         command.append("--draft")
     return _run(command, cwd)
@@ -164,6 +173,22 @@ def ensure_worktree(cwd: Path, branch_name: str, worktree_path: Path, base_ref: 
         create_worktree(cwd, base_ref, branch_name, worktree_path)
     _ensure_local_ignore(worktree_path)
     return worktree_path.resolve()
+
+
+def merge_commit(cwd: Path, commit_sha: str) -> None:
+    _run(
+        [
+            "git",
+            "-c",
+            "user.name=ai-native",
+            "-c",
+            "user.email=ai-native@example.invalid",
+            "merge",
+            "--no-edit",
+            commit_sha,
+        ],
+        cwd,
+    )
 
 
 def remove_worktree(worktree_path: Path) -> None:

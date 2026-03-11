@@ -14,6 +14,7 @@ class WorkspaceConfig(BaseModel):
     parallel_mode: Literal["independent_only"] = "independent_only"
     parallel_workers: int = 4
     worktrees_dir: Path = Path(".ai-native/worktrees")
+    dependency_policy: Literal["wait_for_base_merge", "assume_committed"] = "wait_for_base_merge"
     parallel_overlap_policy: Literal["path_prefix_block"] = "path_prefix_block"
     question_budget_per_stage: int = 1
     question_budget_per_run: int = 3

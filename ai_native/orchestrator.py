@@ -7,7 +7,7 @@ from typing import Callable
 
 from ai_native.adapters import build_role_adapters
 from ai_native.config import AppConfig
-from ai_native.gitops import ensure_base_commit, ensure_repo, ensure_worktree, is_ancestor, non_ai_native_changes, resolve_base_ref
+from ai_native.gitops import ensure_base_commit, ensure_repo, ensure_worktree, is_ancestor, merge_commit, non_ai_native_changes, resolve_base_ref
 from ai_native.models import RunState, SliceDefinition, SliceExecutionState
 from ai_native.prompting import PromptLibrary
 from ai_native.slice_runtime import (
@@ -66,6 +66,12 @@ class WorkflowOrchestrator:
 
     def _emit(self, message: str) -> None:
         self.progress(message)
+
+    def _ensure_workspace_repo(self, workspace_root: Path) -> None:
+        try:
+            ensure_repo(workspace_root, self.config.workspace.base_branch)
+        except RuntimeError as exc:
+            raise StageError(str(exc)) from exc
 
     def _state_store(self, workspace_root: Path | None = None, run_dir: Path | None = None) -> StateStore:
         if run_dir is not None:
@@ -149,10 +155,10 @@ class WorkflowOrchestrator:
         effective_workspace_root = workspace_root.resolve() if workspace_root is not None else self.config.repo_root
         if run_dir:
             state = self._state_store(run_dir=run_dir).load(run_dir.resolve())
-            ensure_repo(Path(state.workspace_root), self.config.workspace.base_branch)
+            self._ensure_workspace_repo(Path(state.workspace_root))
             return state
         effective_workspace_root.mkdir(parents=True, exist_ok=True)
-        ensure_repo(effective_workspace_root, self.config.workspace.base_branch)
+        self._ensure_workspace_repo(effective_workspace_root)
         state_store = self._state_store(workspace_root=effective_workspace_root)
         existing = state_store.find_latest_for_spec(spec_path.resolve(), effective_workspace_root)
         if existing and existing.status != "completed" and existing.spec_hash == sha256_file(spec_path.resolve()):
@@ -203,6 +209,9 @@ class WorkflowOrchestrator:
         if slice_state is None or not slice_state.worktree_path or not slice_state.branch_name:
             return repo_root
         worktree_path = ensure_worktree(repo_root, slice_state.branch_name, Path(slice_state.worktree_path), state.base_ref or self.config.workspace.base_branch)
+        slice_plan = load_slice_plan(Path(state.run_dir))
+        slice_def = slice_by_id(slice_plan, slice_id)
+        self._materialize_dependency_commits(state, slice_def, worktree_path)
         if str(worktree_path) != slice_state.worktree_path:
             self._mutate_state(state, lambda locked: setattr(locked.slice_states[slice_id], "worktree_path", str(worktree_path)))
         return worktree_path
@@ -269,14 +278,26 @@ class WorkflowOrchestrator:
     def _dependency_block_reason(self, state: RunState, slice_def: SliceDefinition) -> str | None:
         if not state.base_ref:
             return f"Waiting for base reference {self.config.workspace.base_branch} to be resolved."
+        wait_for_base_merge = self.config.workspace.dependency_policy == "wait_for_base_merge"
         repo_root = Path(state.workspace_root)
         for dependency_id in slice_def.dependencies:
             dependency_state = state.slice_states.get(dependency_id)
             if dependency_state is None or not dependency_state.commit_sha:
-                return f"Waiting for dependency {dependency_id} to merge into {self.config.workspace.base_branch}"
-            if not is_ancestor(repo_root, dependency_state.commit_sha, state.base_ref):
+                if wait_for_base_merge:
+                    return f"Waiting for dependency {dependency_id} to merge into {self.config.workspace.base_branch}"
+                return f"Waiting for dependency {dependency_id} to reach commit stage"
+            if wait_for_base_merge and not is_ancestor(repo_root, dependency_state.commit_sha, state.base_ref):
                 return f"Waiting for dependency {dependency_id} to merge into {self.config.workspace.base_branch}"
         return None
+
+    def _materialize_dependency_commits(self, state: RunState, slice_def: SliceDefinition, repo_root: Path) -> None:
+        if self.config.workspace.dependency_policy != "assume_committed":
+            return
+        for dependency_id in slice_def.dependencies:
+            dependency_state = state.slice_states.get(dependency_id)
+            if dependency_state is None or not dependency_state.commit_sha:
+                raise StageError(f"Dependency {dependency_id} is not yet committed.")
+            merge_commit(repo_root, dependency_state.commit_sha)
 
     def _evaluate_ready_slices(
         self,
