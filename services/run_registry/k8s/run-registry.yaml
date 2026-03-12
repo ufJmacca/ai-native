@@ -1,0 +1,113 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: run-registry-secrets
+type: Opaque
+stringData:
+  RUN_REGISTRY_DB_PASSWORD: change-me
+  RUN_REGISTRY_AUTH_TOKEN: change-me
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: run-registry-config
+data:
+  RUN_REGISTRY_HOST: "0.0.0.0"
+  RUN_REGISTRY_PORT: "8080"
+  RUN_REGISTRY_DB_HOST: "postgres"
+  RUN_REGISTRY_DB_PORT: "5432"
+  RUN_REGISTRY_DB_NAME: "run_registry"
+  RUN_REGISTRY_DB_USER: "run_registry"
+  RUN_REGISTRY_CORS_ORIGINS: "https://registry.example.com"
+  RUN_REGISTRY_RETENTION_DAYS: "30"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: run-registry
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: run-registry
+  template:
+    metadata:
+      labels:
+        app: run-registry
+    spec:
+      containers:
+        - name: run-registry
+          image: your-registry/run-registry:latest
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: run-registry-config
+            - secretRef:
+                name: run-registry-secrets
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: run-registry
+spec:
+  selector:
+    app: run-registry
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_DB
+              value: run_registry
+            - name: POSTGRES_USER
+              value: run_registry
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: run-registry-secrets
+                  key: RUN_REGISTRY_DB_PASSWORD
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
