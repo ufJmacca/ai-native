@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from ai_native.cli import _resolve_spec_path, main
+from ai_native.cli import _discover_config_path, _resolve_spec_path, _resolve_workspace_root, main
 from ai_native.models import RunState
 from ai_native.utils import utc_now
 
@@ -40,7 +40,7 @@ def test_cli_stage_command_invokes_orchestrator(monkeypatch, capsys, app_config,
                 updated_at=utc_now(),
             )
 
-    monkeypatch.setattr("ai_native.cli._load_config", lambda: app_config)
+    monkeypatch.setattr("ai_native.cli._load_config", lambda _config_path=None: app_config)
     monkeypatch.setattr("ai_native.cli.WorkflowOrchestrator", FakeOrchestrator)
     monkeypatch.setattr(
         sys,
@@ -85,3 +85,35 @@ def test_resolve_spec_path_raises_clear_error_when_missing(app_config, tmp_path:
 
     with pytest.raises(SystemExit, match="Spec file not found. Checked:"):
         _resolve_spec_path(app_config, "specs/missing.md", workspace_root)
+
+
+def test_discover_config_path_walks_up_to_parent_repo(monkeypatch, tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    nested = repo_root / "apps" / "web"
+    nested.mkdir(parents=True)
+    config_path = repo_root / "ainative.yaml"
+    config_path.write_text("git:\n  branch_prefix: codex\n", encoding="utf-8")
+    monkeypatch.chdir(nested)
+
+    discovered = _discover_config_path()
+
+    assert discovered == config_path.resolve()
+
+
+def test_discover_config_path_prefers_env_override(monkeypatch, tmp_path: Path) -> None:
+    custom_config = tmp_path / "custom.yaml"
+    monkeypatch.setenv("AINATIVE_CONFIG", str(custom_config))
+
+    discovered = _discover_config_path()
+
+    assert discovered == custom_config.resolve()
+
+
+def test_resolve_workspace_root_defaults_to_current_directory(app_config, monkeypatch, tmp_path: Path) -> None:
+    workspace_root = tmp_path / "target-repo"
+    workspace_root.mkdir()
+    monkeypatch.chdir(workspace_root)
+
+    resolved = _resolve_workspace_root(app_config, None)
+
+    assert resolved == workspace_root.resolve()

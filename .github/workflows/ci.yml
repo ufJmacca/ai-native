@@ -16,7 +16,6 @@ jobs:
       - name: Build workspace image
         run: docker compose build workspace
       - name: Bootstrap workspace
-        run: docker compose run --rm workspace uv sync
+        run: docker compose run --rm --user root workspace uv sync
       - name: Run test suite
-        run: docker compose run --rm workspace uv run pytest
-
+        run: docker compose run --rm --user root workspace uv run pytest

@@ -29,6 +29,7 @@ class ExecutionContext:
     critic: AgentAdapter
     verifier: AgentAdapter
     pr_reviewer: AgentAdapter | ReviewAdapter
+    slice_id: str | None = None
     emit_progress: Callable[[str], None] = field(default=lambda _message: None, repr=False)
     ask_questions: Callable[[str, list[str]], list[str]] = field(default=lambda _stage, questions: [""] * len(questions), repr=False)
 

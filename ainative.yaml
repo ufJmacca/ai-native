@@ -2,6 +2,11 @@ workspace:
   artifacts_dir: .ai-native/runs
   specs_dir: specs
   base_branch: main
+  parallel_mode: independent_only
+  parallel_workers: 4
+  worktrees_dir: .ai-native/worktrees
+  dependency_policy: assume_committed
+  parallel_overlap_policy: path_prefix_block
   question_budget_per_stage: 3
   question_budget_per_run: 9
   plan_max_attempts: 6

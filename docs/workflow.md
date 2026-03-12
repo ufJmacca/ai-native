@@ -28,6 +28,19 @@ The template repo holds the prompts, schemas, and orchestration code. The actual
 - If the target workspace is not already a git repository, the workflow initializes one there before stage execution begins.
 - Prompt and schema assets still come from the template repo.
 
+## Worktree Scheduler
+
+After `slice`, the workflow switches from serial artifact generation to a git worktree scheduler:
+
+- The scheduler resolves a single immutable `base_ref` for the run from the configured base branch.
+- Each ready slice gets its own branch and worktree under `TARGET_DIR/.ai-native/worktrees/<run-id>/<slice-id>/`.
+- A slice is ready only when all dependency slice commits are already merged into that `base_ref`.
+- Current-run slice completions do not unblock dependents. Dependents wait for prerequisite merges and a resumed run.
+- Slices with overlapping `file_impact` entries do not run at the same time.
+- The target repository must be clean outside `.ai-native/` before the scheduler starts.
+
+The scheduler records per-slice state in `state.json` and writes a summary under `scheduler/summary.{json,md}`.
+
 ## Plan-Mode Planning
 
 The `plan` stage is intentionally multi-pass. It first writes:
@@ -53,7 +66,7 @@ Each slice runs through the following sequence:
 5. Refactor and record the reasoning in `refactor-notes.md`.
 6. Run a separate verifier agent before allowing commit or PR stages.
 
-When using `make run`, slices are processed sequentially after slice generation rather than batching all loop work before verification. Each slice runs `loop -> verify -> commit` before the next slice begins, and the commit message is derived from that slice's contract and implementation summary.
+When using `make run`, each ready slice runs `loop -> verify -> commit -> pr` inside its own worktree. Commits remain slice-specific, and blocked slices stay pending until their dependencies are merged into the configured base branch.
 
 ## Critique Stages
 
@@ -68,3 +81,11 @@ The following artifacts require separate critiques:
 ## Run State
 
 Every run persists `state.json` so the workflow can be resumed without guessing which stages already completed.
+Manual recovery commands also support slice targeting:
+
+- `make loop SPEC=... TARGET_DIR=... SLICE=S001`
+- `make verify SPEC=... TARGET_DIR=... SLICE=S001`
+- `make commit SPEC=... TARGET_DIR=... SLICE=S001`
+- `make pr SPEC=... TARGET_DIR=... SLICE=S001`
+
+If `SLICE` is omitted, the CLI only proceeds when exactly one non-completed slice candidate remains for that stage.

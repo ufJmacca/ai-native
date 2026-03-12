@@ -17,7 +17,7 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
         plan=plan,
         prd=prd,
     )
-    schema_path = context.template_root / "ai_native" / "schemas" / "slice-plan.json"
+    schema_path = context.template_root / "schemas" / "slice-plan.json"
     response = context.builder.run(prompt, cwd=context.repo_root, schema_path=schema_path)
     slice_plan = SlicePlan.model_validate(response.json_data)
 

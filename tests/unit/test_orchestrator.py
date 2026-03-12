@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from ai_native.models import SlicePlan
 from ai_native.utils import write_json
 
 from ai_native.orchestrator import WorkflowOrchestrator
+from ai_native.stages.common import StageError
 
 
 def test_prepare_state_reuses_latest_matching_run(app_config, tmp_spec: Path) -> None:
@@ -52,6 +55,20 @@ def test_prepare_state_defaults_runs_to_target_repo_and_bootstraps_git(app_confi
     assert (workspace_root / ".git").exists()
 
 
+def test_prepare_state_rejects_nested_workspace_inside_existing_repo(app_config, tmp_spec: Path, tmp_path: Path) -> None:
+    orchestrator = WorkflowOrchestrator(app_config)
+    parent_repo = tmp_path / "parent-repo"
+    nested_workspace = parent_repo / "app"
+    nested_workspace.mkdir(parents=True)
+
+    import subprocess
+
+    subprocess.run(["git", "init", "-b", "main"], cwd=parent_repo, check=True, capture_output=True, text=True)
+
+    with pytest.raises(StageError, match="nested inside existing git repository"):
+        orchestrator.prepare_state(tmp_spec, workspace_root=nested_workspace)
+
+
 def test_run_until_emits_stage_progress(app_config, tmp_spec: Path) -> None:
     events: list[str] = []
     orchestrator = WorkflowOrchestrator(app_config, progress=events.append)
@@ -72,7 +89,111 @@ def test_run_until_emits_stage_progress(app_config, tmp_spec: Path) -> None:
     assert "[ainative] plan: completed" in events
 
 
-def test_run_all_processes_slices_sequentially(app_config, tmp_spec: Path, tmp_path: Path) -> None:
+def test_run_all_continues_with_committed_dependencies_when_policy_assumes_merge(app_config, tmp_spec: Path, tmp_path: Path, monkeypatch) -> None:
+    workspace_root = tmp_path / "target-repo"
+    workspace_root.mkdir()
+    orchestrator = WorkflowOrchestrator(app_config)
+    events: list[tuple[str, str | None]] = []
+    merged_dependencies: list[tuple[str, str]] = []
+    orchestrator.progress = lambda _message: None
+
+    def fake_ensure_worktree(_repo_root, _branch_name, worktree_path, _base_ref):  # type: ignore[no-untyped-def]
+        worktree_path.mkdir(parents=True, exist_ok=True)
+        return worktree_path.resolve()
+
+    def fake_merge_commit(repo_root, commit_sha):  # type: ignore[no-untyped-def]
+        merged_dependencies.append((Path(repo_root).name, commit_sha))
+
+    monkeypatch.setattr("ai_native.orchestrator.ensure_worktree", fake_ensure_worktree)
+    monkeypatch.setattr("ai_native.orchestrator.merge_commit", fake_merge_commit)
+
+    def fake_stage(context, state):  # type: ignore[no-untyped-def]
+        return []
+
+    def fake_slice(context, state):  # type: ignore[no-untyped-def]
+        stage_dir = context.state_store.stage_dir(state, "slice")
+        write_json(
+            stage_dir / "slices.json",
+            SlicePlan(
+                title="Slices",
+                summary="Summary",
+                slices=[
+                    {
+                        "id": "S001",
+                        "name": "First slice",
+                        "goal": "Ship slice one.",
+                        "acceptance_criteria": ["One"],
+                        "file_impact": ["a.ts"],
+                        "test_plan": ["test one"],
+                        "dependencies": [],
+                    },
+                    {
+                        "id": "S002",
+                        "name": "Second slice",
+                        "goal": "Ship slice two.",
+                        "acceptance_criteria": ["Two"],
+                        "file_impact": ["b.ts"],
+                        "test_plan": ["test two"],
+                        "dependencies": ["S001"],
+                    },
+                ],
+            ).model_dump(mode="json"),
+        )
+        return [stage_dir / "slices.json"]
+
+    def fake_loop(context, state):  # type: ignore[no-untyped-def]
+        events.append(("loop", state.active_slice))
+        return [Path(state.run_dir) / "slices" / str(state.active_slice) / "builder-summary.md"]
+
+    def fake_verify(context, state):  # type: ignore[no-untyped-def]
+        events.append(("verify", state.active_slice))
+        return [Path(state.run_dir) / "verify" / f"{state.active_slice}.md"]
+
+    def fake_commit(context, state):  # type: ignore[no-untyped-def]
+        events.append(("commit", state.active_slice))
+        commit_path = context.state_store.stage_dir(state, "commit") / f"{state.active_slice}.txt"
+        commit_path.write_text(f"sha-{state.active_slice}\n", encoding="utf-8")
+        return [commit_path]
+
+    def fake_pr(context, state, dry_run=False):  # type: ignore[no-untyped-def]
+        events.append(("pr", state.active_slice))
+        return []
+
+    orchestrator.stage_handlers.update(
+        {
+            "intake": fake_stage,
+            "recon": fake_stage,
+            "plan": fake_stage,
+            "architecture": fake_stage,
+            "prd": fake_stage,
+            "slice": fake_slice,
+            "loop": fake_loop,
+            "verify": fake_verify,
+            "commit": fake_commit,
+            "pr": fake_pr,
+        }
+    )
+
+    state = orchestrator.run_all(tmp_spec, workspace_root=workspace_root, dry_run_pr=True)
+
+    assert events == [
+        ("loop", "S001"),
+        ("verify", "S001"),
+        ("commit", "S001"),
+        ("pr", "S001"),
+        ("loop", "S002"),
+        ("verify", "S002"),
+        ("commit", "S002"),
+        ("pr", "S002"),
+    ]
+    assert merged_dependencies == [("S002", "sha-S001")]
+    assert state.slice_states["S001"].status == "pr_opened"
+    assert state.slice_states["S002"].status == "pr_opened"
+    assert state.status == "completed"
+
+
+def test_run_all_blocks_dependent_slices_until_prerequisites_merge_to_base_when_configured(app_config, tmp_spec: Path, tmp_path: Path) -> None:
+    app_config.workspace.dependency_policy = "wait_for_base_merge"
     workspace_root = tmp_path / "target-repo"
     workspace_root.mkdir()
     orchestrator = WorkflowOrchestrator(app_config)
@@ -152,9 +273,8 @@ def test_run_all_processes_slices_sequentially(app_config, tmp_spec: Path, tmp_p
         ("loop", "S001"),
         ("verify", "S001"),
         ("commit", "S001"),
-        ("loop", "S002"),
-        ("verify", "S002"),
-        ("commit", "S002"),
-        ("pr", "S002"),
+        ("pr", "S001"),
     ]
-    assert state.active_slice == "S002"
+    assert state.slice_states["S001"].status == "pr_opened"
+    assert state.slice_states["S002"].status == "blocked"
+    assert state.status == "in_progress"

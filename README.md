@@ -22,12 +22,29 @@
 
 The `Makefile` auto-detects whether it is running inside the devcontainer. Inside the devcontainer it runs `uv` commands directly. On the host it shells out through `docker compose run`.
 `TARGET_DIR` is mandatory for the workflow targets in `make`. The workflow runs Codex, git operations, repository recon, and implementation inside that target directory rather than inside the template repo. Relative spec paths are resolved from `TARGET_DIR`.
+`TARGET_DIR` must be either a standalone directory that ai-native can initialize as a git repository or an existing repository root. Nested directories inside another repository are rejected to avoid binding worktrees, branches, and PRs to the wrong git root.
 If a relative spec path is not present under `TARGET_DIR`, the CLI falls back to the same relative path in the template repo.
 If the planning step needs clarification, `make run` now pauses and asks the questions directly in the terminal, then feeds the answers back into the planning loop.
 Every run now persists its state and artifacts under `TARGET_DIR/.ai-native/runs/<run-id>/`, so the execution record stays with the target repository instead of the template repo. If `TARGET_DIR` is not already a git repository, the workflow initializes one there on the configured base branch before agent execution starts.
 Inside the devcontainer, nested `codex exec` runs default to unsandboxed non-interactive execution because the devcontainer is the outer isolation boundary and Linux Landlock has proven unreliable for nested Codex sessions. Set `AINATIVE_CODEX_CONTAINER_SANDBOX` if you need to override that default.
 If planning fails after exhausting its current attempt budget, a resumed run now continues from the latest saved critique attempt rather than restarting grounding/intent/implementation, and the CLI can ask whether to grant additional planning attempts.
-`make run` now processes slices sequentially after planning: each slice goes through loop, verify, and commit before the next slice starts. The commit message is derived from the slice name, goal, acceptance criteria, and file impact so each commit explains the slice it captures.
+`make run` now schedules ready slices in parallel via git worktrees under `TARGET_DIR/.ai-native/worktrees/<run-id>/`. A slice is only runnable when its dependencies satisfy the configured `workspace.dependency_policy` and its `file_impact` does not overlap any currently running slice. With `dependency_policy: wait_for_base_merge`, dependent slices wait until prerequisite commits land on the configured base branch. With `dependency_policy: assume_committed`, dependent slices become runnable once prerequisite slices reach the commit stage, and their worktrees merge those dependency commits locally before execution continues.
+When `dependency_policy: assume_committed` is enabled, downstream branches may temporarily contain upstream slice changes until the earlier slices are actually merged to the base branch.
+PR creation also stacks when possible: if a slice has a single deepest dependency branch, its PR targets that dependency branch instead of `main`. Slices with multiple incomparable dependencies still fall back to the configured base branch.
+Because the scheduler creates worktrees from the base branch, the target repository must be clean outside `.ai-native/` before `make run` starts the slice phase.
+
+## Install As A CLI
+
+You can also install `ai-native-base` as a reusable CLI and run it from other repositories:
+
+1. Install it with `uv tool install /path/to/ai-native-base` for local development, or publish it and install with `uv tool install ai-native-base`.
+2. From the target repository, run `ainative doctor` to confirm the runtime and auth setup.
+3. Run the workflow directly from that repository, for example `ainative run --spec specs/my-feature.md`.
+
+The installed CLI now loads prompts and schemas from the package itself, so it does not need this template checkout at runtime.
+If `ainative.yaml` exists in the current repository or one of its parent directories, the CLI uses it automatically.
+If no config file is present, the CLI falls back to built-in defaults that mirror the template's current agent setup.
+If you want to share a single config across repositories, pass `--config /path/to/ainative.yaml` or set `AINATIVE_CONFIG=/path/to/ainative.yaml`.
 
 ## Core Targets
 
@@ -37,10 +54,10 @@ If planning fails after exhausting its current attempt budget, a resumed run now
 - `make architect SPEC=... TARGET_DIR=...`
 - `make prd SPEC=... TARGET_DIR=...`
 - `make slice SPEC=... TARGET_DIR=...`
-- `make loop SPEC=... TARGET_DIR=...`
-- `make verify SPEC=... TARGET_DIR=...`
-- `make commit SPEC=... TARGET_DIR=...`
-- `make pr SPEC=... TARGET_DIR=...`
+- `make loop SPEC=... TARGET_DIR=... SLICE=S001`
+- `make verify SPEC=... TARGET_DIR=... SLICE=S001`
+- `make commit SPEC=... TARGET_DIR=... SLICE=S001`
+- `make pr SPEC=... TARGET_DIR=... SLICE=S001`
 - `make run SPEC=... TARGET_DIR=...`
 
 ## Auth Model
