@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from ai_native import gitops
 from ai_native.gitops import ensure_repo
 
 
@@ -35,3 +36,17 @@ def test_ensure_repo_rejects_nested_directory_inside_existing_repo(tmp_path: Pat
 
     with pytest.raises(RuntimeError, match="nested inside existing git repository"):
         ensure_repo(nested_workspace, "main")
+
+
+def test_git_commands_mark_explicit_directory_safe(monkeypatch, tmp_path: Path) -> None:
+    recorded: list[list[str]] = []
+
+    def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
+        recorded.append(list(command))
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(gitops.subprocess, "run", fake_run)
+
+    gitops._run_optional(["git", "status", "--short"], tmp_path)
+
+    assert recorded == [["git", "-c", "safe.directory=*", "status", "--short"]]

@@ -4,15 +4,21 @@ import subprocess
 from pathlib import Path
 
 
+def _prepare_command(command: list[str]) -> list[str]:
+    if command and command[0] == "git":
+        return ["git", "-c", "safe.directory=*"] + command[1:]
+    return command
+
+
 def _run(command: list[str], cwd: Path) -> str:
-    completed = subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
+    completed = subprocess.run(_prepare_command(command), cwd=cwd, capture_output=True, text=True, check=False)
     if completed.returncode != 0:
         raise RuntimeError(completed.stderr.strip() or completed.stdout.strip() or "command failed")
     return completed.stdout.strip()
 
 
 def _run_optional(command: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
+    return subprocess.run(_prepare_command(command), cwd=cwd, capture_output=True, text=True, check=False)
 
 
 def _git_dir(cwd: Path) -> Path:
