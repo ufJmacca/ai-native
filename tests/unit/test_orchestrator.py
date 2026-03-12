@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from ai_native.config import TelemetryDestination
 from ai_native.models import SlicePlan
 from ai_native.utils import write_json
 
@@ -278,3 +279,31 @@ def test_run_all_blocks_dependent_slices_until_prerequisites_merge_to_base_when_
     assert state.slice_states["S001"].status == "pr_opened"
     assert state.slice_states["S002"].status == "blocked"
     assert state.status == "in_progress"
+
+
+def test_context_resolves_active_telemetry_profile(app_config, tmp_spec: Path) -> None:
+    app_config.telemetry.enabled = True
+    app_config.telemetry.profile = "default"
+    app_config.telemetry.destinations = {
+        "default": TelemetryDestination(url="https://telemetry.example.com/events")
+    }
+    orchestrator = WorkflowOrchestrator(app_config)
+    state = orchestrator.prepare_state(tmp_spec)
+
+    orchestrator._context(tmp_spec.resolve(), state)
+
+    assert orchestrator.telemetry_destination is not None
+    profile_name, destination = orchestrator.telemetry_destination
+    assert profile_name == "default"
+    assert destination.url == "https://telemetry.example.com/events"
+
+
+def test_context_raises_when_active_telemetry_profile_is_missing(app_config, tmp_spec: Path) -> None:
+    app_config.telemetry.enabled = True
+    app_config.telemetry.profile = "missing"
+    app_config.telemetry.destinations = {}
+    orchestrator = WorkflowOrchestrator(app_config)
+    state = orchestrator.prepare_state(tmp_spec)
+
+    with pytest.raises(StageError, match="Telemetry profile 'missing' is not configured"):
+        orchestrator._context(tmp_spec.resolve(), state)

@@ -117,3 +117,57 @@ def test_resolve_workspace_root_defaults_to_current_directory(app_config, monkey
     resolved = _resolve_workspace_root(app_config, None)
 
     assert resolved == workspace_root.resolve()
+
+
+def test_cli_telemetry_profile_add_use_and_list(monkeypatch, capsys, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text("workspace:\n  artifacts_dir: .ai-native/runs\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ainative",
+            "telemetry",
+            "--config",
+            str(config_path),
+            "profile",
+            "add",
+            "prod",
+            "--url",
+            "https://example.com/events",
+            "--auth-type",
+            "bearer",
+            "--credentials-ref",
+            "env:TELEMETRY_TOKEN",
+            "--header",
+            "x-team=platform",
+        ],
+    )
+    assert main() == 0
+
+    monkeypatch.setattr(sys, "argv", ["ainative", "telemetry", "--config", str(config_path), "profile", "use", "prod"])
+    assert main() == 0
+
+    monkeypatch.setattr(sys, "argv", ["ainative", "telemetry", "--config", str(config_path), "profile", "list"])
+    assert main() == 0
+
+    output = capsys.readouterr().out
+    assert "Added telemetry profile 'prod'" in output
+    assert "Using telemetry profile 'prod'" in output
+    assert "* prod: https://example.com/events" in output
+
+    payload = config_path.read_text(encoding="utf-8")
+    assert "enabled: true" in payload
+    assert "profile: prod" in payload
+    assert "credentials_ref: env:TELEMETRY_TOKEN" in payload
+
+
+def test_cli_telemetry_profile_use_fails_for_unknown_profile(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text("telemetry:\n  enabled: false\n  destinations: {}\n", encoding="utf-8")
+
+    monkeypatch.setattr(sys, "argv", ["ainative", "telemetry", "--config", str(config_path), "profile", "use", "missing"])
+
+    with pytest.raises(SystemExit, match="Telemetry profile 'missing' is not configured"):
+        main()

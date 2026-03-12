@@ -51,6 +51,19 @@ class QualityGates(BaseModel):
     require_red_green_refactor: bool = True
 
 
+class TelemetryDestination(BaseModel):
+    url: str
+    auth_type: Literal["none", "bearer", "basic", "api_key"] = "none"
+    credentials_ref: str | None = None
+    headers: dict[str, str] = Field(default_factory=dict)
+
+
+class TelemetryConfig(BaseModel):
+    enabled: bool = False
+    profile: str | None = None
+    destinations: dict[str, TelemetryDestination] = Field(default_factory=dict)
+
+
 def default_agents() -> dict[str, AgentProfile]:
     return {
         "builder": AgentProfile(
@@ -85,6 +98,7 @@ class AppConfig(BaseModel):
     agents: dict[str, AgentProfile] = Field(default_factory=default_agents)
     git: GitConfig = Field(default_factory=GitConfig)
     quality_gates: QualityGates = Field(default_factory=QualityGates)
+    telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     config_path: Path = Field(default=Path("ainative.yaml"), exclude=True)
     repo_root: Path = Field(default=Path.cwd(), exclude=True)
     package_root: Path = Field(default_factory=lambda: Path(__file__).resolve().parent, exclude=True)

@@ -5,6 +5,8 @@ import json
 import os
 import shutil
 import sys
+
+import yaml
 from pathlib import Path
 
 from ai_native.config import AppConfig
@@ -34,6 +36,32 @@ def _discover_config_path(explicit: str | None = None) -> Path:
 
 def _load_config(config_path: str | None = None) -> AppConfig:
     return AppConfig.load(_discover_config_path(config_path))
+
+
+def _load_raw_config(config_path: str | None = None) -> tuple[Path, dict]:
+    resolved_path = _discover_config_path(config_path)
+    raw: dict = {}
+    if resolved_path.exists():
+        raw = yaml.safe_load(resolved_path.read_text(encoding="utf-8")) or {}
+    return resolved_path, raw
+
+
+def _write_raw_config(config_path: Path, raw_config: dict) -> None:
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(yaml.safe_dump(raw_config, sort_keys=False), encoding="utf-8")
+
+
+def _parse_header(values: list[str]) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    for value in values:
+        if "=" not in value:
+            raise SystemExit(f"Invalid --header value '{value}'. Expected KEY=VALUE format.")
+        key, header_value = value.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise SystemExit("Header key cannot be empty.")
+        headers[key] = header_value
+    return headers
 
 
 def _state_store(config: AppConfig, workspace_root: Path | None = None, run_dir: Path | None = None) -> StateStore:
@@ -198,6 +226,50 @@ def command_pr(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_telemetry_profile_add(args: argparse.Namespace) -> int:
+    config_path, raw = _load_raw_config(args.config)
+    telemetry = raw.setdefault("telemetry", {})
+    destinations = telemetry.setdefault("destinations", {})
+    destination = {
+        "url": args.url,
+        "auth_type": args.auth_type,
+        "headers": _parse_header(args.header),
+    }
+    if args.credentials_ref:
+        destination["credentials_ref"] = args.credentials_ref
+    destinations[args.name] = destination
+    _write_raw_config(config_path, raw)
+    print(f"Added telemetry profile '{args.name}' in {config_path}")
+    return 0
+
+
+def command_telemetry_profile_use(args: argparse.Namespace) -> int:
+    config_path, raw = _load_raw_config(args.config)
+    telemetry = raw.setdefault("telemetry", {})
+    destinations = telemetry.get("destinations", {})
+    if args.name not in destinations:
+        raise SystemExit(f"Telemetry profile '{args.name}' is not configured. Add it with `telemetry profile add`.")
+    telemetry["profile"] = args.name
+    telemetry["enabled"] = True
+    _write_raw_config(config_path, raw)
+    print(f"Using telemetry profile '{args.name}' in {config_path}")
+    return 0
+
+
+def command_telemetry_profile_list(args: argparse.Namespace) -> int:
+    _config_path, raw = _load_raw_config(args.config)
+    telemetry = raw.get("telemetry", {})
+    destinations = telemetry.get("destinations", {})
+    active = telemetry.get("profile")
+    if not destinations:
+        print("No telemetry profiles configured.")
+        return 0
+    for name, destination in sorted(destinations.items()):
+        marker = "*" if name == active else " "
+        print(f"{marker} {name}: {destination.get('url', '<missing-url>')}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ainative")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -258,6 +330,26 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--dry-run", action="store_true")
     pr.add_argument("--slice-id")
     pr.set_defaults(func=command_pr)
+
+    telemetry = subparsers.add_parser("telemetry", parents=[common])
+    telemetry_subparsers = telemetry.add_subparsers(dest="telemetry_command", required=True)
+    profile = telemetry_subparsers.add_parser("profile")
+    profile_subparsers = profile.add_subparsers(dest="profile_command", required=True)
+
+    profile_add = profile_subparsers.add_parser("add")
+    profile_add.add_argument("name")
+    profile_add.add_argument("--url", required=True)
+    profile_add.add_argument("--auth-type", choices=["none", "bearer", "basic", "api_key"], default="none")
+    profile_add.add_argument("--credentials-ref")
+    profile_add.add_argument("--header", action="append", default=[])
+    profile_add.set_defaults(func=command_telemetry_profile_add)
+
+    profile_use = profile_subparsers.add_parser("use")
+    profile_use.add_argument("name")
+    profile_use.set_defaults(func=command_telemetry_profile_use)
+
+    profile_list = profile_subparsers.add_parser("list")
+    profile_list.set_defaults(func=command_telemetry_profile_list)
 
     return parser
 

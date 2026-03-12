@@ -63,3 +63,8 @@ quality_gates:
   require_prd_approval: true
   require_test_critique: true
   require_red_green_refactor: true
+
+telemetry:
+  enabled: false
+  profile: null
+  destinations: {}
