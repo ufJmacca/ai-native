@@ -25,3 +25,31 @@ def test_load_config_uses_defaults_when_file_is_missing(tmp_path: Path) -> None:
     assert config.repo_root == tmp_path.resolve()
     assert config.workspace.specs_dir == (tmp_path / "specs").resolve()
     assert set(config.agents) == {"builder", "critic", "verifier", "pr_reviewer"}
+
+
+def test_load_config_applies_telemetry_environment_overrides(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text(
+        """
+telemetry:
+  enabled: false
+  url: https://old.example.com
+  auth_type: none
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("AINATIVE_TELEMETRY_URL", "https://telemetry.example.com")
+    monkeypatch.setenv("AINATIVE_TELEMETRY_AUTH_TYPE", "bearer")
+    monkeypatch.setenv("AINATIVE_TELEMETRY_TOKEN", "secret-token")
+    monkeypatch.setenv("AINATIVE_TELEMETRY_TENANT", "demo")
+    monkeypatch.setenv("AINATIVE_TELEMETRY_ENABLED", "true")
+
+    config = AppConfig.load(config_path)
+
+    assert config.telemetry.enabled is True
+    assert config.telemetry.url == "https://telemetry.example.com"
+    assert config.telemetry.auth_type == "bearer"
+    assert config.telemetry.token == "secret-token"
+    assert config.telemetry.tenant == "demo"

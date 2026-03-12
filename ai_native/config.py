@@ -51,6 +51,17 @@ class QualityGates(BaseModel):
     require_red_green_refactor: bool = True
 
 
+class TelemetryConfig(BaseModel):
+    enabled: bool = False
+    url: str | None = None
+    auth_type: Literal["api_key", "bearer", "basic", "none"] = "none"
+    api_key: str | None = None
+    token: str | None = None
+    username: str | None = None
+    password: str | None = None
+    tenant: str | None = None
+
+
 def default_agents() -> dict[str, AgentProfile]:
     return {
         "builder": AgentProfile(
@@ -85,6 +96,7 @@ class AppConfig(BaseModel):
     agents: dict[str, AgentProfile] = Field(default_factory=default_agents)
     git: GitConfig = Field(default_factory=GitConfig)
     quality_gates: QualityGates = Field(default_factory=QualityGates)
+    telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     config_path: Path = Field(default=Path("ainative.yaml"), exclude=True)
     repo_root: Path = Field(default=Path.cwd(), exclude=True)
     package_root: Path = Field(default_factory=lambda: Path(__file__).resolve().parent, exclude=True)
@@ -100,7 +112,39 @@ class AppConfig(BaseModel):
         config.repo_root = resolved_path.parent.resolve()
         config.package_root = Path(__file__).resolve().parent
         config.workspace.specs_dir = (config.repo_root / config.workspace.specs_dir).resolve()
+        config._apply_environment_overrides()
         return config
+
+    def _apply_environment_overrides(self) -> None:
+        if env_url := _read_env("AINATIVE_TELEMETRY_URL"):
+            self.telemetry.url = env_url
+            self.telemetry.enabled = True
+
+        if env_auth_type := _read_env("AINATIVE_TELEMETRY_AUTH_TYPE"):
+            self.telemetry.auth_type = env_auth_type
+
+        if env_api_key := _read_env("AINATIVE_TELEMETRY_API_KEY"):
+            self.telemetry.api_key = env_api_key
+            self.telemetry.enabled = True
+
+        if env_token := _read_env("AINATIVE_TELEMETRY_TOKEN"):
+            self.telemetry.token = env_token
+            self.telemetry.enabled = True
+
+        if env_username := _read_env("AINATIVE_TELEMETRY_USERNAME"):
+            self.telemetry.username = env_username
+            self.telemetry.enabled = True
+
+        if env_password := _read_env("AINATIVE_TELEMETRY_PASSWORD"):
+            self.telemetry.password = env_password
+            self.telemetry.enabled = True
+
+        if env_tenant := _read_env("AINATIVE_TELEMETRY_TENANT"):
+            self.telemetry.tenant = env_tenant
+            self.telemetry.enabled = True
+
+        if env_enabled := _read_env("AINATIVE_TELEMETRY_ENABLED"):
+            self.telemetry.enabled = env_enabled.lower() in {"1", "true", "yes", "on"}
 
     def resolve_artifacts_dir(self, workspace_root: Path) -> Path:
         root = self.workspace.artifacts_dir
@@ -113,3 +157,13 @@ class AppConfig(BaseModel):
         if root.is_absolute():
             return root.resolve()
         return (workspace_root.resolve() / root).resolve()
+
+
+def _read_env(name: str) -> str | None:
+    from os import environ
+
+    value = environ.get(name)
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped if stripped else None

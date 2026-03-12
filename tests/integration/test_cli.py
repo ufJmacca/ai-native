@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 from ai_native.cli import _discover_config_path, _resolve_spec_path, _resolve_workspace_root, main
 from ai_native.models import RunState
@@ -117,3 +119,68 @@ def test_resolve_workspace_root_defaults_to_current_directory(app_config, monkey
     resolved = _resolve_workspace_root(app_config, None)
 
     assert resolved == workspace_root.resolve()
+
+
+def test_telemetry_configure_writes_config_and_masks_output(monkeypatch, tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text("workspace:\n  specs_dir: specs\n", encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ainative",
+            "telemetry",
+            "--config",
+            str(config_path),
+            "configure",
+            "--url",
+            "https://telemetry.example.com/ingest",
+            "--auth-type",
+            "api_key",
+            "--api-key",
+            "very-secret-key",
+            "--tenant",
+            "proj-a",
+        ],
+    )
+
+    assert main() == 0
+    output = capsys.readouterr().out
+    assert "very-secret-key" not in output
+
+    persisted = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert persisted["telemetry"]["url"] == "https://telemetry.example.com/ingest"
+    assert persisted["telemetry"]["auth_type"] == "api_key"
+    assert persisted["telemetry"]["api_key"] == "very-secret-key"
+    assert persisted["telemetry"]["tenant"] == "proj-a"
+
+
+def test_telemetry_show_masks_secrets(monkeypatch, tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text(
+        """
+telemetry:
+  enabled: true
+  url: https://telemetry.example.com
+  auth_type: bearer
+  token: super-secret-token
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sys, "argv", ["ainative", "telemetry", "--config", str(config_path), "show"])
+
+    assert main() == 0
+    output = capsys.readouterr().out
+    assert "super-secret-token" not in output
+    payload = json.loads(output)
+    assert payload["token"] != "super-secret-token"
+
+
+def test_telemetry_test_returns_error_without_url(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text("telemetry:\n  auth_type: none\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["ainative", "telemetry", "--config", str(config_path), "test"])
+
+    with pytest.raises(SystemExit, match="Telemetry URL is not configured"):
+        main()
