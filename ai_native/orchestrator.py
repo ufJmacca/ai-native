@@ -46,7 +46,7 @@ class WorkflowOrchestrator:
         question_responder: Callable[[str, list[str]], list[str]] | None = None,
     ):
         self.config = config
-        self.prompt_library = PromptLibrary(config.repo_root / "ai_native" / "prompts")
+        self.prompt_library = PromptLibrary(config.package_root / "prompts")
         self.progress = progress or (lambda _message: None)
         self.question_responder = question_responder or (lambda _stage, questions: [""] * len(questions))
         self._state_sync_lock = threading.Lock()
@@ -92,7 +92,7 @@ class WorkflowOrchestrator:
             config=self.config,
             prompt_library=self.prompt_library,
             state_store=state_store,
-            template_root=self.config.repo_root,
+            template_root=self.config.package_root,
             repo_root=(repo_root or Path(state.workspace_root)).resolve(),
             spec_path=spec_path,
             run_dir=Path(state.run_dir),

@@ -51,20 +51,54 @@ class QualityGates(BaseModel):
     require_red_green_refactor: bool = True
 
 
+def default_agents() -> dict[str, AgentProfile]:
+    return {
+        "builder": AgentProfile(
+            type="codex-exec",
+            model="gpt-5.4",
+            sandbox="workspace-write",
+            extra_args=["--full-auto", "-c", 'model_reasoning_effort="xhigh"'],
+        ),
+        "critic": AgentProfile(
+            type="codex-exec",
+            model="gpt-5.4",
+            sandbox="workspace-write",
+            extra_args=["--full-auto", "-c", 'model_reasoning_effort="xhigh"'],
+        ),
+        "verifier": AgentProfile(
+            type="codex-exec",
+            model="gpt-5.4",
+            sandbox="workspace-write",
+            extra_args=["--full-auto", "-c", 'model_reasoning_effort="xhigh"'],
+        ),
+        "pr_reviewer": AgentProfile(
+            type="codex-review",
+            model="gpt-5.4",
+            base_branch="main",
+            extra_args=["-c", 'model_reasoning_effort="xhigh"'],
+        ),
+    }
+
+
 class AppConfig(BaseModel):
     workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig)
-    agents: dict[str, AgentProfile]
+    agents: dict[str, AgentProfile] = Field(default_factory=default_agents)
     git: GitConfig = Field(default_factory=GitConfig)
     quality_gates: QualityGates = Field(default_factory=QualityGates)
     config_path: Path = Field(default=Path("ainative.yaml"), exclude=True)
     repo_root: Path = Field(default=Path.cwd(), exclude=True)
+    package_root: Path = Field(default_factory=lambda: Path(__file__).resolve().parent, exclude=True)
 
     @classmethod
     def load(cls, path: Path) -> "AppConfig":
-        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        resolved_path = path.resolve()
+        raw = {}
+        if resolved_path.exists():
+            raw = yaml.safe_load(resolved_path.read_text(encoding="utf-8")) or {}
         config = cls.model_validate(raw)
-        config.config_path = path
-        config.repo_root = path.parent.resolve()
+        config.config_path = resolved_path
+        config.repo_root = resolved_path.parent.resolve()
+        config.package_root = Path(__file__).resolve().parent
         config.workspace.specs_dir = (config.repo_root / config.workspace.specs_dir).resolve()
         return config
 

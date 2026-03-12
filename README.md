@@ -33,6 +33,19 @@ When `dependency_policy: assume_committed` is enabled, downstream branches may t
 PR creation also stacks when possible: if a slice has a single deepest dependency branch, its PR targets that dependency branch instead of `main`. Slices with multiple incomparable dependencies still fall back to the configured base branch.
 Because the scheduler creates worktrees from the base branch, the target repository must be clean outside `.ai-native/` before `make run` starts the slice phase.
 
+## Install As A CLI
+
+You can also install `ai-native-base` as a reusable CLI and run it from other repositories:
+
+1. Install it with `uv tool install /path/to/ai-native-base` for local development, or publish it and install with `uv tool install ai-native-base`.
+2. From the target repository, run `ainative doctor` to confirm the runtime and auth setup.
+3. Run the workflow directly from that repository, for example `ainative run --spec specs/my-feature.md`.
+
+The installed CLI now loads prompts and schemas from the package itself, so it does not need this template checkout at runtime.
+If `ainative.yaml` exists in the current repository or one of its parent directories, the CLI uses it automatically.
+If no config file is present, the CLI falls back to built-in defaults that mirror the template's current agent setup.
+If you want to share a single config across repositories, pass `--config /path/to/ainative.yaml` or set `AINATIVE_CONFIG=/path/to/ainative.yaml`.
+
 ## Core Targets
 
 - `make doctor`

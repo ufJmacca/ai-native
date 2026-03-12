@@ -209,7 +209,7 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
     slice_plan = load_slice_plan(Path(state.run_dir))
     artifacts: list[Path] = []
     spec_text = read_text(context.spec_path)
-    schema_path = context.template_root / "ai_native" / "schemas" / "verification-report.json"
+    schema_path = context.template_root / "schemas" / "verification-report.json"
 
     for slice_def in selected_slices(slice_plan, context.slice_id, state.active_slice):
         slice_dir = Path(state.run_dir) / "slices" / slice_def.id

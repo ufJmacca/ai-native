@@ -235,8 +235,8 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
     blocker_ledger = _render_blocker_ledger(_collect_blocker_ledger(review_history))
     artifacts.extend(_write_guidance_artifacts(stage_dir, critique_history, blocker_ledger))
 
-    schema_path = context.template_root / "ai_native" / "schemas" / "prd-artifact.json"
-    review_schema = context.template_root / "ai_native" / "schemas" / "review-report.json"
+    schema_path = context.template_root / "schemas" / "prd-artifact.json"
+    review_schema = context.template_root / "schemas" / "review-report.json"
     attempt_limit = max(1, context.config.workspace.prd_max_attempts)
     prd = PRDArtifact.model_validate(resume_state["prior_prd"]) if resume_state else None
     review = ReviewReport.model_validate(resume_state["prior_review"]) if resume_state else None

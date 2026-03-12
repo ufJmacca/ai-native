@@ -117,7 +117,7 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
             spec_text=read_text(context.spec_path),
             scan_summary=scan,
         )
-        schema_path = context.template_root / "ai_native" / "schemas" / "context-report.json"
+        schema_path = context.template_root / "schemas" / "context-report.json"
         response = context.builder.run(prompt, cwd=context.repo_root, schema_path=schema_path)
         report = ContextReport.model_validate(response.json_data)
 

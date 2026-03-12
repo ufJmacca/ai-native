@@ -277,7 +277,7 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
     slice_plan = load_slice_plan(Path(state.run_dir))
     artifacts: list[Path] = []
     spec_text = read_text(context.spec_path)
-    review_schema = context.template_root / "ai_native" / "schemas" / "review-report.json"
+    review_schema = context.template_root / "schemas" / "review-report.json"
 
     for slice_def in _target_slices(context, state, slice_plan):
         slice_dir = _slice_dir(state, slice_def.id)

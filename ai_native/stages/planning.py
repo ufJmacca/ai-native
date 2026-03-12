@@ -317,7 +317,7 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
             grounding_notes=grounding_notes,
             max_questions=min(3, remaining_run_budget),
         )
-        question_schema = context.template_root / "ai_native" / "schemas" / "question-batch.json"
+        question_schema = context.template_root / "schemas" / "question-batch.json"
         question_response = context.builder.run(question_prompt, cwd=context.repo_root, schema_path=question_schema)
         question_batch = QuestionBatch.model_validate(question_response.json_data)
         if question_batch.needs_user_input and question_batch.questions:
@@ -384,8 +384,8 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
     blocker_ledger = _render_blocker_ledger(_collect_blocker_ledger(review_history))
     artifacts.extend(_write_guidance_artifacts(stage_dir, approval_checklist, critique_history, blocker_ledger))
 
-    schema_path = context.template_root / "ai_native" / "schemas" / "plan-artifact.json"
-    review_schema = context.template_root / "ai_native" / "schemas" / "review-report.json"
+    schema_path = context.template_root / "schemas" / "plan-artifact.json"
+    review_schema = context.template_root / "schemas" / "review-report.json"
     attempt_limit = max(1, context.config.workspace.plan_max_attempts)
     plan = PlanArtifact.model_validate(resume_state["prior_plan"]) if resume_state else None
     review = ReviewReport.model_validate(resume_state["prior_review"]) if resume_state else None
