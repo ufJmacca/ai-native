@@ -19,7 +19,6 @@ jobs:
       - name: Build workspace image
         run: docker compose build workspace
       - name: Install dependencies
-        run: docker compose run --rm workspace uv sync
+        run: docker compose run --rm --user root workspace uv sync
       - name: Run smoke test
-        run: docker compose run --rm workspace uv run pytest tests/e2e/test_run_smoke.py -q
-
+        run: docker compose run --rm --user root workspace uv run pytest tests/e2e/test_run_smoke.py -q
