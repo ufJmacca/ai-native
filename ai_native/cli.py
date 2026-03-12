@@ -160,6 +160,18 @@ def _prompt_if_missing(current: str | None, prompt: str, *, secret: bool = False
     return entered or None
 
 
+def _validate_telemetry_auth_credentials(auth_type: str, telemetry_data: dict[str, Any]) -> None:
+    if auth_type == "api_key" and not telemetry_data.get("api_key"):
+        raise SystemExit("Telemetry auth_type=api_key requires --api-key (or an existing stored api_key).")
+    if auth_type == "bearer" and not telemetry_data.get("token"):
+        raise SystemExit("Telemetry auth_type=bearer requires --token (or an existing stored token).")
+    if auth_type == "basic":
+        if not telemetry_data.get("username") or not telemetry_data.get("password"):
+            raise SystemExit(
+                "Telemetry auth_type=basic requires --username and --password (or existing stored credentials)."
+            )
+
+
 def command_telemetry_configure(args: argparse.Namespace) -> int:
     config_path = _discover_config_path(args.config)
     raw_config = _load_raw_config_file(config_path)
@@ -201,6 +213,8 @@ def command_telemetry_configure(args: argparse.Namespace) -> int:
         telemetry_data["token"] = None
         telemetry_data["username"] = None
         telemetry_data["password"] = None
+
+    _validate_telemetry_auth_credentials(auth_type, telemetry_data)
 
     has_remote = bool(telemetry_data.get("url"))
     telemetry_data["enabled"] = args.enabled if args.enabled is not None else has_remote

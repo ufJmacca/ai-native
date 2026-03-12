@@ -177,6 +177,37 @@ telemetry:
     assert payload["token"] != "super-secret-token"
 
 
+
+
+def test_telemetry_configure_rejects_missing_bearer_token(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text(
+        """
+telemetry:
+  url: https://telemetry.example.com
+  auth_type: none
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ainative",
+            "telemetry",
+            "--config",
+            str(config_path),
+            "configure",
+            "--auth-type",
+            "bearer",
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="Telemetry auth_type=bearer requires --token"):
+        main()
+
+
 def test_telemetry_test_returns_error_without_url(monkeypatch, tmp_path: Path) -> None:
     config_path = tmp_path / "ainative.yaml"
     config_path.write_text("telemetry:\n  auth_type: none\n", encoding="utf-8")
