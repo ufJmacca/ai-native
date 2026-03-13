@@ -50,3 +50,47 @@ def test_git_commands_mark_explicit_directory_safe(monkeypatch, tmp_path: Path) 
     gitops._run_optional(["git", "status", "--short"], tmp_path)
 
     assert recorded == [["git", "-c", "safe.directory=*", "status", "--short"]]
+
+
+def test_create_worktree_disables_auto_tracking_config(monkeypatch, tmp_path: Path) -> None:
+    recorded: list[list[str]] = []
+    worktree_path = tmp_path / "worktrees" / "S001"
+
+    def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
+        recorded.append(list(command))
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(gitops.subprocess, "run", fake_run)
+    monkeypatch.setattr(gitops, "_ensure_local_ignore", lambda cwd: None)
+
+    gitops.create_worktree(tmp_path, "origin/main", "codex/example-S001", worktree_path)
+
+    assert recorded == [
+        [
+            "git",
+            "-c",
+            "safe.directory=*",
+            "-c",
+            "branch.autoSetupMerge=false",
+            "worktree",
+            "add",
+            "-b",
+            "codex/example-S001",
+            str(worktree_path),
+            "origin/main",
+        ]
+    ]
+
+
+def test_push_branch_avoids_setting_upstream_tracking(monkeypatch, tmp_path: Path) -> None:
+    recorded: list[list[str]] = []
+
+    def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
+        recorded.append(list(command))
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(gitops.subprocess, "run", fake_run)
+
+    gitops.push_branch(tmp_path, "codex/example-S001")
+
+    assert recorded == [["git", "-c", "safe.directory=*", "push", "origin", "codex/example-S001"]]
