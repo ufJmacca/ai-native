@@ -67,8 +67,10 @@ class WorkflowOrchestrator:
 
     def _resolve_active_telemetry_destination(self) -> tuple[str, TelemetryDestination] | None:
         telemetry = self.config.telemetry
-        if not telemetry.enabled or not telemetry.profile:
+        if not telemetry.enabled:
             return None
+        if not telemetry.profile:
+            raise StageError("Telemetry is enabled, but no telemetry profile is selected.")
         destination = telemetry.destinations.get(telemetry.profile)
         if destination is None:
             raise StageError(f"Telemetry profile '{telemetry.profile}' is not configured.")

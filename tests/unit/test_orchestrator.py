@@ -307,3 +307,14 @@ def test_context_raises_when_active_telemetry_profile_is_missing(app_config, tmp
 
     with pytest.raises(StageError, match="Telemetry profile 'missing' is not configured"):
         orchestrator._context(tmp_spec.resolve(), state)
+
+
+def test_context_raises_when_telemetry_enabled_without_profile(app_config, tmp_spec: Path) -> None:
+    app_config.telemetry.enabled = True
+    app_config.telemetry.profile = None
+    app_config.telemetry.destinations = {}
+    orchestrator = WorkflowOrchestrator(app_config)
+    state = orchestrator.prepare_state(tmp_spec)
+
+    with pytest.raises(StageError, match="Telemetry is enabled, but no telemetry profile is selected"):
+        orchestrator._context(tmp_spec.resolve(), state)
