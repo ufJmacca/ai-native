@@ -196,3 +196,54 @@ telemetry:
     assert main() == 0
     output = capsys.readouterr().out
     assert "* prod: https://example.com/events" in output
+
+
+def test_cli_telemetry_profile_add_recovers_from_null_mappings(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text("telemetry: null\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ainative",
+            "telemetry",
+            "profile",
+            "add",
+            "--config",
+            str(config_path),
+            "prod",
+            "--url",
+            "https://example.com/events",
+        ],
+    )
+
+    assert main() == 0
+    payload = config_path.read_text(encoding="utf-8")
+    assert "telemetry:" in payload
+    assert "destinations:" in payload
+    assert "prod:" in payload
+
+
+def test_cli_telemetry_profile_use_recovers_from_null_destinations(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text("""
+telemetry:
+  enabled: false
+  destinations: null
+""".strip() + "\n", encoding="utf-8")
+
+    monkeypatch.setattr(sys, "argv", ["ainative", "telemetry", "profile", "use", "--config", str(config_path), "prod"])
+
+    with pytest.raises(SystemExit, match="Telemetry profile 'prod' is not configured"):
+        main()
+
+
+def test_cli_telemetry_profile_commands_reject_non_mapping_telemetry(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text("telemetry: true\n", encoding="utf-8")
+
+    monkeypatch.setattr(sys, "argv", ["ainative", "telemetry", "profile", "list", "--config", str(config_path)])
+
+    with pytest.raises(SystemExit, match="Invalid telemetry config: expected mapping at 'telemetry'"):
+        main()

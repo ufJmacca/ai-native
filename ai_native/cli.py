@@ -51,6 +51,26 @@ def _write_raw_config(config_path: Path, raw_config: dict) -> None:
     config_path.write_text(yaml.safe_dump(raw_config, sort_keys=False), encoding="utf-8")
 
 
+def _normalize_telemetry_mappings(raw_config: dict, *, mutate: bool) -> tuple[dict, dict]:
+    telemetry = raw_config.get("telemetry")
+    if telemetry is None:
+        telemetry = {}
+        if mutate:
+            raw_config["telemetry"] = telemetry
+    elif not isinstance(telemetry, dict):
+        raise SystemExit("Invalid telemetry config: expected mapping at 'telemetry'.")
+
+    destinations = telemetry.get("destinations") if isinstance(telemetry, dict) else None
+    if destinations is None:
+        destinations = {}
+        if mutate:
+            telemetry["destinations"] = destinations
+    elif not isinstance(destinations, dict):
+        raise SystemExit("Invalid telemetry config: expected mapping at 'telemetry.destinations'.")
+
+    return telemetry, destinations
+
+
 def _parse_header(values: list[str]) -> dict[str, str]:
     headers: dict[str, str] = {}
     for value in values:
@@ -228,8 +248,7 @@ def command_pr(args: argparse.Namespace) -> int:
 
 def command_telemetry_profile_add(args: argparse.Namespace) -> int:
     config_path, raw = _load_raw_config(args.config)
-    telemetry = raw.setdefault("telemetry", {})
-    destinations = telemetry.setdefault("destinations", {})
+    telemetry, destinations = _normalize_telemetry_mappings(raw, mutate=True)
     destination = {
         "url": args.url,
         "auth_type": args.auth_type,
@@ -245,8 +264,7 @@ def command_telemetry_profile_add(args: argparse.Namespace) -> int:
 
 def command_telemetry_profile_use(args: argparse.Namespace) -> int:
     config_path, raw = _load_raw_config(args.config)
-    telemetry = raw.setdefault("telemetry", {})
-    destinations = telemetry.get("destinations", {})
+    telemetry, destinations = _normalize_telemetry_mappings(raw, mutate=True)
     if args.name not in destinations:
         raise SystemExit(f"Telemetry profile '{args.name}' is not configured. Add it with `telemetry profile add`.")
     telemetry["profile"] = args.name
@@ -258,8 +276,7 @@ def command_telemetry_profile_use(args: argparse.Namespace) -> int:
 
 def command_telemetry_profile_list(args: argparse.Namespace) -> int:
     _config_path, raw = _load_raw_config(args.config)
-    telemetry = raw.get("telemetry", {})
-    destinations = telemetry.get("destinations", {})
+    telemetry, destinations = _normalize_telemetry_mappings(raw, mutate=False)
     active = telemetry.get("profile")
     if not destinations:
         print("No telemetry profiles configured.")
