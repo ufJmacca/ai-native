@@ -160,6 +160,26 @@ def _prompt_if_missing(current: str | None, prompt: str, *, secret: bool = False
     return entered or None
 
 
+
+
+def _coerce_optional_bool(value: Any, *, field_name: str) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        if value in {0, 1}:
+            return bool(value)
+        raise SystemExit(f"Telemetry {field_name} must be a boolean value (true/false).")
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+        raise SystemExit(f"Telemetry {field_name} must be a boolean value (true/false).")
+    raise SystemExit(f"Telemetry {field_name} must be a boolean value (true/false).")
+
 def _validate_telemetry_auth_credentials(auth_type: str, telemetry_data: dict[str, Any]) -> None:
     if auth_type == "api_key" and not telemetry_data.get("api_key"):
         raise SystemExit("Telemetry auth_type=api_key requires --api-key (or an existing stored api_key).")
@@ -217,10 +237,11 @@ def command_telemetry_configure(args: argparse.Namespace) -> int:
     _validate_telemetry_auth_credentials(auth_type, telemetry_data)
 
     has_remote = bool(telemetry_data.get("url"))
+    existing_enabled = _coerce_optional_bool(telemetry_data.get("enabled"), field_name="enabled")
     if args.enabled is not None:
         telemetry_data["enabled"] = args.enabled
-    elif "enabled" in telemetry_data and telemetry_data.get("enabled") is not None:
-        telemetry_data["enabled"] = bool(telemetry_data.get("enabled"))
+    elif existing_enabled is not None:
+        telemetry_data["enabled"] = existing_enabled
     else:
         telemetry_data["enabled"] = has_remote
 
@@ -475,6 +496,7 @@ def build_parser() -> argparse.ArgumentParser:
     telemetry_subparsers = telemetry.add_subparsers(dest="telemetry_command", required=True)
 
     telemetry_configure = telemetry_subparsers.add_parser("configure")
+    telemetry_configure.add_argument("--config", default=argparse.SUPPRESS)
     telemetry_configure.add_argument("--url")
     telemetry_configure.add_argument("--auth-type", choices=_AUTH_TYPES)
     telemetry_configure.add_argument("--api-key")
@@ -486,9 +508,11 @@ def build_parser() -> argparse.ArgumentParser:
     telemetry_configure.set_defaults(func=command_telemetry_configure)
 
     telemetry_show = telemetry_subparsers.add_parser("show")
+    telemetry_show.add_argument("--config", default=argparse.SUPPRESS)
     telemetry_show.set_defaults(func=command_telemetry_show)
 
     telemetry_test = telemetry_subparsers.add_parser("test")
+    telemetry_test.add_argument("--config", default=argparse.SUPPRESS)
     telemetry_test.add_argument("--timeout", type=float, default=10.0)
     telemetry_test.set_defaults(func=command_telemetry_test)
 

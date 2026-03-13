@@ -243,6 +243,47 @@ telemetry:
     assert persisted["telemetry"]["tenant"] == "new-tenant"
 
 
+def test_telemetry_show_accepts_config_flag_after_subcommand(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text("telemetry:\n  auth_type: none\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["ainative", "telemetry", "show", "--config", str(config_path)])
+
+    assert main() == 0
+
+
+def test_telemetry_configure_preserves_string_false_enabled_state(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text(
+        """
+telemetry:
+  enabled: "false"
+  url: https://telemetry.example.com/ingest
+  auth_type: bearer
+  token: existing-token
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ainative",
+            "telemetry",
+            "--config",
+            str(config_path),
+            "configure",
+            "--tenant",
+            "new-tenant",
+        ],
+    )
+
+    assert main() == 0
+
+    persisted = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert persisted["telemetry"]["enabled"] is False
+
+
 def test_telemetry_test_returns_error_without_url(monkeypatch, tmp_path: Path) -> None:
     config_path = tmp_path / "ainative.yaml"
     config_path.write_text("telemetry:\n  auth_type: none\n", encoding="utf-8")
