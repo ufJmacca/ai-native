@@ -7,6 +7,9 @@ import yaml
 from pydantic import BaseModel, Field
 
 
+
+_TELEMETRY_AUTH_TYPES = {"api_key", "bearer", "basic", "none"}
+
 class WorkspaceConfig(BaseModel):
     artifacts_dir: Path = Path(".ai-native/runs")
     specs_dir: Path = Path("specs")
@@ -121,7 +124,13 @@ class AppConfig(BaseModel):
             self.telemetry.enabled = True
 
         if env_auth_type := _read_env("AINATIVE_TELEMETRY_AUTH_TYPE"):
-            self.telemetry.auth_type = env_auth_type
+            normalized_auth_type = env_auth_type.lower()
+            if normalized_auth_type not in _TELEMETRY_AUTH_TYPES:
+                allowed = ", ".join(sorted(_TELEMETRY_AUTH_TYPES))
+                raise ValueError(
+                    f"Invalid AINATIVE_TELEMETRY_AUTH_TYPE={env_auth_type!r}. Expected one of: {allowed}."
+                )
+            self.telemetry.auth_type = normalized_auth_type
 
         if env_api_key := _read_env("AINATIVE_TELEMETRY_API_KEY"):
             self.telemetry.api_key = env_api_key
