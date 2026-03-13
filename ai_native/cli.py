@@ -217,7 +217,12 @@ def command_telemetry_configure(args: argparse.Namespace) -> int:
     _validate_telemetry_auth_credentials(auth_type, telemetry_data)
 
     has_remote = bool(telemetry_data.get("url"))
-    telemetry_data["enabled"] = args.enabled if args.enabled is not None else has_remote
+    if args.enabled is not None:
+        telemetry_data["enabled"] = args.enabled
+    elif "enabled" in telemetry_data and telemetry_data.get("enabled") is not None:
+        telemetry_data["enabled"] = bool(telemetry_data.get("enabled"))
+    else:
+        telemetry_data["enabled"] = has_remote
 
     raw_config["telemetry"] = telemetry_data
     _write_raw_config_file(config_path, raw_config)
