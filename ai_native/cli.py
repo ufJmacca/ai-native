@@ -198,6 +198,24 @@ def command_pr(args: argparse.Namespace) -> int:
     return 0
 
 
+
+
+def command_runs_list(args: argparse.Namespace) -> int:
+    config = _load_config(args.config)
+    workspace_root = _resolve_workspace_root(config, args.workspace_dir)
+    store = _state_store(config, workspace_root=workspace_root)
+    payload = [run.model_dump(mode="json") for run in store.list_runs(config.registry)]
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
+def command_runs_detail(args: argparse.Namespace) -> int:
+    config = _load_config(args.config)
+    workspace_root = _resolve_workspace_root(config, args.workspace_dir)
+    store = _state_store(config, workspace_root=workspace_root)
+    detail = store.get_run_detail(Path(args.run_dir).resolve(), config.registry)
+    print(json.dumps(detail.model_dump(mode="json"), indent=2, sort_keys=True))
+    return 0
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ainative")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -250,6 +268,18 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument("--target", required=True, choices=["plan", "architecture", "prd", "slice", "verify", "pr"])
     review.add_argument("--run-dir")
     review.set_defaults(func=command_review)
+
+    runs = subparsers.add_parser("runs", parents=[common])
+    runs_subparsers = runs.add_subparsers(dest="runs_command", required=True)
+
+    runs_list = runs_subparsers.add_parser("list", parents=[common])
+    runs_list.add_argument("--workspace-dir")
+    runs_list.set_defaults(func=command_runs_list)
+
+    runs_detail = runs_subparsers.add_parser("detail", parents=[common])
+    runs_detail.add_argument("--workspace-dir")
+    runs_detail.add_argument("--run-dir", required=True)
+    runs_detail.set_defaults(func=command_runs_detail)
 
     pr = subparsers.add_parser("pr", parents=[common])
     pr.add_argument("--spec", required=True)

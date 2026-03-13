@@ -4,11 +4,12 @@ import fcntl
 import os
 import tempfile
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Callable, TypeVar
 
-from ai_native.models import RunState, StageName, StageSnapshot
+from ai_native.config import RegistryConfig
+from ai_native.models import RunDetailView, RunHeartbeat, RunLiveness, RunState, RunView, StageName, StageSnapshot
 from ai_native.utils import ensure_dir, read_json, read_text, sha256_file, slugify, utc_now, write_json, write_text
 
 T = TypeVar("T")
@@ -74,7 +75,7 @@ class StateStore:
 
     def create_run(self, spec_path: Path, workspace_root: Path) -> RunState:
         feature_slug = slugify(spec_path.stem)
-        run_stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        run_stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
         run_id = f"{run_stamp}-{feature_slug}"
         run_dir = ensure_dir(self.artifacts_root / run_id)
         copied_spec = run_dir / "spec.md"
@@ -174,3 +175,79 @@ class StateStore:
 
         locked_state, _ = self.mutate(Path(state.run_dir), mutate_state)
         return locked_state
+
+    def record_heartbeat(self, run_dir: Path, heartbeat: RunHeartbeat) -> RunState:
+        def mutate_state(locked: RunState) -> None:
+            locked.metadata["heartbeat"] = heartbeat.model_dump(mode="json")
+
+        locked_state, _ = self.mutate(run_dir, mutate_state)
+        return locked_state
+
+    @staticmethod
+    def _parse_timestamp(timestamp: str | None) -> datetime | None:
+        if not timestamp:
+            return None
+        normalized = timestamp.replace("Z", "+00:00")
+        try:
+            return datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+
+    @classmethod
+    def classify_liveness(cls, state: RunState, registry: RegistryConfig, now: datetime | None = None) -> RunLiveness:
+        if state.status in {"completed", "failed"}:
+            return "stopped"
+        now_utc = now or datetime.now(UTC)
+        heartbeat = RunHeartbeat.model_validate(state.metadata.get("heartbeat", {})) if state.metadata.get("heartbeat") else None
+        observed = cls._parse_timestamp(heartbeat.updated_at) if heartbeat else cls._parse_timestamp(state.updated_at)
+        if observed is None:
+            return "stopped"
+        age_seconds = (now_utc - observed).total_seconds()
+        if age_seconds <= registry.liveness_ttl_seconds:
+            return "active"
+        if age_seconds <= registry.liveness_ttl_seconds + registry.liveness_grace_period_seconds:
+            return "stale"
+        return "stopped"
+
+    def list_runs(self, registry: RegistryConfig) -> list[RunView]:
+        states: list[RunState] = []
+        for state_file in self.artifacts_root.glob("*/state.json"):
+            try:
+                states.append(RunState.model_validate(read_json(state_file)))
+            except Exception:
+                continue
+        states.sort(key=lambda item: item.created_at, reverse=True)
+        return [
+            RunView(
+                run_id=state.run_id,
+                feature_slug=state.feature_slug,
+                spec_path=state.spec_path,
+                workspace_root=state.workspace_root,
+                run_dir=state.run_dir,
+                created_at=state.created_at,
+                updated_at=state.updated_at,
+                status=state.status,
+                liveness=self.classify_liveness(state, registry),
+            )
+            for state in states
+        ]
+
+    def get_run_detail(self, run_dir: Path, registry: RegistryConfig) -> RunDetailView:
+        state = self.load(run_dir)
+        return RunDetailView(
+            run_id=state.run_id,
+            feature_slug=state.feature_slug,
+            spec_path=state.spec_path,
+            workspace_root=state.workspace_root,
+            run_dir=state.run_dir,
+            created_at=state.created_at,
+            updated_at=state.updated_at,
+            status=state.status,
+            liveness=self.classify_liveness(state, registry),
+            current_stage=state.current_stage,
+            scheduler_status=state.scheduler_status,
+            active_slice=state.active_slice,
+            slice_states=state.slice_states,
+            stage_status=state.stage_status,
+            metadata=state.metadata,
+        )

@@ -6,6 +6,9 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
+RunStatus = Literal["in_progress", "completed", "failed"]
+RunLiveness = Literal["active", "stale", "stopped"]
+
 StageName = Literal[
     "intake",
     "recon",
@@ -143,10 +146,38 @@ class RunState(BaseModel):
     created_at: str
     updated_at: str
     current_stage: StageName = "intake"
-    status: Literal["in_progress", "completed", "failed"] = "in_progress"
+    status: RunStatus = "in_progress"
     stage_status: dict[str, StageSnapshot] = Field(default_factory=dict)
     active_slice: str | None = None
     slice_states: dict[str, SliceExecutionState] = Field(default_factory=dict)
     base_ref: str | None = None
     scheduler_status: Literal["idle", "running", "failed", "completed"] = "idle"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RunHeartbeat(BaseModel):
+    run_id: str
+    updated_at: str
+    status: RunStatus
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RunView(BaseModel):
+    run_id: str
+    feature_slug: str
+    spec_path: str
+    workspace_root: str
+    run_dir: str
+    created_at: str
+    updated_at: str
+    status: RunStatus
+    liveness: RunLiveness
+
+
+class RunDetailView(RunView):
+    current_stage: StageName
+    scheduler_status: Literal["idle", "running", "failed", "completed"]
+    active_slice: str | None = None
+    slice_states: dict[str, SliceExecutionState] = Field(default_factory=dict)
+    stage_status: dict[str, StageSnapshot] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)

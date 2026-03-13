@@ -117,3 +117,42 @@ def test_resolve_workspace_root_defaults_to_current_directory(app_config, monkey
     resolved = _resolve_workspace_root(app_config, None)
 
     assert resolved == workspace_root.resolve()
+
+
+def test_cli_runs_list_and_detail(monkeypatch, capsys, app_config, tmp_path: Path) -> None:
+    workspace_root = tmp_path / "target-repo"
+    workspace_root.mkdir()
+    artifacts_root = workspace_root / ".ai-native" / "runs"
+    artifacts_root.mkdir(parents=True)
+
+    spec = workspace_root / "feature.md"
+    spec.write_text("# Feature\n", encoding="utf-8")
+
+    from ai_native.state import StateStore
+
+    store = StateStore(artifacts_root)
+    state = store.create_run(spec, workspace_root)
+
+    app_config.workspace.artifacts_dir = Path(".ai-native/runs")
+    monkeypatch.setattr("ai_native.cli._load_config", lambda _config_path=None: app_config)
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ainative", "runs", "list", "--workspace-dir", str(workspace_root)],
+    )
+    assert main() == 0
+    list_output = capsys.readouterr().out
+    assert '"status": "in_progress"' in list_output
+    assert '"liveness": "active"' in list_output
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ainative", "runs", "detail", "--workspace-dir", str(workspace_root), "--run-dir", str(state.run_dir)],
+    )
+    assert main() == 0
+    detail_output = capsys.readouterr().out
+    assert f'"run_id": "{state.run_id}"' in detail_output
+    assert '"status": "in_progress"' in detail_output
+    assert '"liveness": "active"' in detail_output
