@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from urllib.parse import quote
 
 
 @dataclass(frozen=True)
@@ -19,9 +20,11 @@ class Settings:
 
     @property
     def database_dsn(self) -> str:
+        encoded_user = quote(self.database_user, safe="")
+        encoded_password = quote(self.database_password, safe="")
         return (
             "postgresql://"
-            f"{self.database_user}:{self.database_password}@"
+            f"{encoded_user}:{encoded_password}@"
             f"{self.database_host}:{self.database_port}/{self.database_name}"
         )
 

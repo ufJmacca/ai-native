@@ -15,4 +15,4 @@ COPY migrations ./migrations
 
 EXPOSE 8080
 
-CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["sh", "-c", "uv run uvicorn app.main:app --host ${RUN_REGISTRY_HOST:-0.0.0.0} --port ${RUN_REGISTRY_PORT:-8080}"]
