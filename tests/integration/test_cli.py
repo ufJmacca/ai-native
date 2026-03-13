@@ -171,3 +171,28 @@ def test_cli_telemetry_profile_use_fails_for_unknown_profile(monkeypatch, tmp_pa
 
     with pytest.raises(SystemExit, match="Telemetry profile 'missing' is not configured"):
         main()
+
+
+def test_cli_telemetry_profile_list_accepts_nested_config_flag(monkeypatch, capsys, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text(
+        """
+telemetry:
+  enabled: true
+  profile: prod
+  destinations:
+    prod:
+      url: https://example.com/events
+""".strip() + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ainative", "telemetry", "profile", "list", "--config", str(config_path)],
+    )
+
+    assert main() == 0
+    output = capsys.readouterr().out
+    assert "* prod: https://example.com/events" in output

@@ -334,9 +334,11 @@ def build_parser() -> argparse.ArgumentParser:
     telemetry = subparsers.add_parser("telemetry", parents=[common])
     telemetry_subparsers = telemetry.add_subparsers(dest="telemetry_command", required=True)
     profile = telemetry_subparsers.add_parser("profile")
+    profile.add_argument("--config", default=argparse.SUPPRESS)
     profile_subparsers = profile.add_subparsers(dest="profile_command", required=True)
 
     profile_add = profile_subparsers.add_parser("add")
+    profile_add.add_argument("--config", default=argparse.SUPPRESS)
     profile_add.add_argument("name")
     profile_add.add_argument("--url", required=True)
     profile_add.add_argument("--auth-type", choices=["none", "bearer", "basic", "api_key"], default="none")
@@ -345,10 +347,12 @@ def build_parser() -> argparse.ArgumentParser:
     profile_add.set_defaults(func=command_telemetry_profile_add)
 
     profile_use = profile_subparsers.add_parser("use")
+    profile_use.add_argument("--config", default=argparse.SUPPRESS)
     profile_use.add_argument("name")
     profile_use.set_defaults(func=command_telemetry_profile_use)
 
     profile_list = profile_subparsers.add_parser("list")
+    profile_list.add_argument("--config", default=argparse.SUPPRESS)
     profile_list.set_defaults(func=command_telemetry_profile_list)
 
     return parser
