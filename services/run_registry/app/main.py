@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -132,7 +132,7 @@ def get_run(run_id: UUID) -> RunResponse:
     response_model=list[RunResponse],
     dependencies=[Depends(require_auth)],
 )
-def list_runs(limit: int = 50) -> list[RunResponse]:
+def list_runs(limit: int = Query(default=50, ge=1)) -> list[RunResponse]:
     with database.connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
