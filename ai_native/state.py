@@ -44,6 +44,9 @@ class StateStore:
         run_dir = Path(state.run_dir)
         ensure_dir(run_dir)
         state.updated_at = utc_now()
+        from ai_native.run_projection import build_run_projection
+
+        state.run_projection = build_run_projection(state)
         state_path = self._state_path(run_dir)
         fd, temp_name = tempfile.mkstemp(prefix="state-", suffix=".json", dir=run_dir)
         os.close(fd)
