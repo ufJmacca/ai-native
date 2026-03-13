@@ -85,4 +85,5 @@ The root `compose.yaml` does not require host auth mounts so CI and headless smo
 9. `commit`
 10. `pr`
 
-See [docs/workflow.md](/Users/jonmcmillin/ai-native-base/docs/workflow.md) for the full stage contract and [docs/prompts.md](/Users/jonmcmillin/ai-native-base/docs/prompts.md) for prompt design guidance.
+See [docs/workflow.md](docs/workflow.md) for the full stage contract and [docs/prompts.md](docs/prompts.md) for prompt design guidance.
+For self-hosted runtime hardening guidance (auth modes, isolation, validation, audit logging, secret handling, and production topology), see [docs/self-hosted-runtime-security.md](docs/self-hosted-runtime-security.md).

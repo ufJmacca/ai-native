@@ -49,7 +49,7 @@ We need an agent that can:
 
 - The vector database is already provisioned and contains chunked, embedded, and indexed company disclosures.
 - The SQL database is already provisioned and contains normalized financial statement data.
-- Authentication, permissions, and network connectivity for both sources are already handled outside this project.
+- Runtime authentication, tenant isolation, and network controls are explicitly configured for each deployment environment.
 - The SQL schema includes company identifiers, fiscal periods, statements, line items, units, and enough metadata to disambiguate reported values.
 - The first release is read-only and does not write to any database or invoke external brokerage or trading systems.
 - The initial focus is public-company financial analysis rather than private company data, macroeconomic forecasting, or alternative data.
@@ -149,6 +149,31 @@ The implementation should use Google ADK as the primary framework for:
   Converts SQL-backed result sets into A2UI-compatible structures.
 
 ## Functional Requirements
+
+### FR0. Self-Hosted Runtime Security Controls
+
+- The runtime must support explicit authentication modes for ingest and read APIs:
+  - API key authentication.
+  - Bearer token or JWT authentication.
+  - Optional no-auth mode only for local development and explicitly disabled by default in non-local environments.
+- Authentication mode must be configurable per environment and surfaced in operator-facing configuration docs.
+- Read and ingest routes must fail closed when auth is misconfigured.
+- The runtime must support tenant and project isolation controls when enabled via configuration:
+  - Enforce tenant and project scope on every read/write operation.
+  - Deny cross-tenant and cross-project access by default.
+  - Include effective tenant/project scope in audit records.
+- Ingest and read APIs must validate requests before execution, including:
+  - Required field checks and type validation.
+  - Allowed-value and format validation for tenant/project identifiers.
+  - Payload size limits with deterministic rejection behavior when limits are exceeded.
+- The runtime must emit audit logs for both writes and reads, including:
+  - Timestamp, request identifier, caller identity (or local-dev no-auth marker), and tenant/project scope.
+  - Operation type, resource target, and outcome (allow/deny/error).
+  - Sufficient metadata to trace why a request was accepted or rejected without logging raw secrets.
+- Sensitive values must be protected end-to-end:
+  - Secrets are sourced from environment variables or a managed secret store.
+  - Secrets are never returned in API responses.
+  - Sensitive payload fields are redacted before persistence or long-term log storage.
 
 ### FR1. Query Understanding
 
