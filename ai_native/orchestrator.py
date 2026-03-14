@@ -7,7 +7,16 @@ from typing import Callable
 
 from ai_native.adapters import build_role_adapters
 from ai_native.config import AppConfig, TelemetryDestination
-from ai_native.gitops import ensure_base_commit, ensure_repo, ensure_worktree, is_ancestor, merge_commit, non_ai_native_changes, resolve_base_ref
+from ai_native.gitops import (
+    MergeConflictError,
+    ensure_base_commit,
+    ensure_repo,
+    ensure_worktree,
+    is_ancestor,
+    merge_commit,
+    non_ai_native_changes,
+    resolve_base_ref,
+)
 from ai_native.models import RunHeartbeat, RunState, SliceDefinition, SliceExecutionState
 from ai_native.prompting import PromptLibrary
 from ai_native.slice_runtime import (
@@ -295,9 +304,14 @@ class WorkflowOrchestrator:
                     if resolved_slice_id is None:
                         resolved_slice_id = self._resolve_slice_id(state, target_stage, None)
                     stage_slice_id = resolved_slice_id if stage in SLICE_SPECIFIC_STAGES else None
-                    repo_root = self._slice_repo_root(state, stage_slice_id) if stage_slice_id else Path(state.workspace_root)
-                    stage_context = self._context(spec_path.resolve(), state, repo_root=repo_root, slice_id=stage_slice_id)
                     state.active_slice = stage_slice_id
+                    try:
+                        repo_root = self._slice_repo_root(state, stage_slice_id) if stage_slice_id else Path(state.workspace_root)
+                        stage_context = self._context(spec_path.resolve(), state, repo_root=repo_root, slice_id=stage_slice_id)
+                    except Exception as exc:
+                        if stage_slice_id:
+                            self._record_slice_failure_once(state, stage_slice_id, stage, str(exc))
+                        raise
                     skip_completed = False
                 self._run_stage(stage_context, state, stage, dry_run_pr=dry_run_pr, skip_completed=skip_completed)
                 if stage == target_stage:
@@ -355,7 +369,10 @@ class WorkflowOrchestrator:
             dependency_state = state.slice_states.get(dependency_id)
             if dependency_state is None or not dependency_state.commit_sha:
                 raise StageError(f"Dependency {dependency_id} is not yet committed.")
-            merge_commit(repo_root, dependency_state.commit_sha)
+            try:
+                merge_commit(repo_root, dependency_state.commit_sha)
+            except MergeConflictError as exc:
+                raise StageError(self._dependency_merge_conflict_message(slice_def, dependency_id, exc)) from exc
 
     def _evaluate_ready_slices(
         self,
@@ -374,9 +391,12 @@ class WorkflowOrchestrator:
                 continue
             if slice_def.id in running_slice_ids:
                 continue
-            if stop_launching and slice_state.status not in {"failed", "committed", "pr_opened"}:
-                blocked[slice_def.id] = "Scheduler stopped after another slice failure."
-                continue
+            if stop_launching:
+                if slice_state.status == "failed":
+                    continue
+                if slice_state.status not in {"committed", "pr_opened"}:
+                    blocked[slice_def.id] = "Scheduler stopped after another slice failure."
+                    continue
             dependency_reason = self._dependency_block_reason(state, slice_def)
             if dependency_reason:
                 blocked[slice_def.id] = dependency_reason
@@ -405,7 +425,7 @@ class WorkflowOrchestrator:
 
         def mutate(locked: RunState) -> None:
             for slice_id, slice_state in locked.slice_states.items():
-                if slice_id in running_slice_ids or slice_state.status in {"committed", "pr_opened", "verified"}:
+                if slice_id in running_slice_ids or slice_state.status in {"committed", "pr_opened", "verified", "failed"}:
                     continue
                 if slice_id in ready_ids:
                     slice_state.status = "ready"
@@ -465,6 +485,43 @@ class WorkflowOrchestrator:
 
         self._mutate_state(state, mutate)
 
+    def _fallback_slice_stage(self, slice_state: SliceExecutionState) -> str:
+        pipeline = self._slice_pipeline_stages(slice_state)
+        if pipeline:
+            return pipeline[0]
+        return slice_state.current_stage or "loop"
+
+    def _record_slice_failure_once(self, state: RunState, slice_id: str, stage: str, error: str) -> None:
+        slice_state = state.slice_states[slice_id]
+        if slice_state.status == "failed" and slice_state.current_stage == stage and slice_state.block_reason == error:
+            return
+        if slice_state.status != "failed":
+            self._mark_slice_failure(state, slice_id, stage, error)
+        self._emit(f"[ainative] slice {slice_id}: failed - {error}")
+
+    def _dependency_merge_conflict_message(
+        self,
+        slice_def: SliceDefinition,
+        dependency_id: str,
+        error: MergeConflictError,
+    ) -> str:
+        lines = [
+            (
+                f"Dependency {dependency_id} (commit {error.commit_sha[:12]}) conflicts with "
+                f"slice {slice_def.id} when merged into its worktree."
+            ),
+            (
+                "The conflicted worktree merge was aborted automatically so the slice can be retried."
+                if error.merge_aborted
+                else "Git could not automatically abort the conflicted merge; inspect the worktree before retrying."
+            ),
+        ]
+        if error.conflicted_files:
+            lines.append("Conflicted files:")
+            lines.extend(f"- {path}" for path in error.conflicted_files)
+        lines.append("Resolve the overlap or update the slice boundaries before retrying this slice.")
+        return "\n".join(lines)
+
     def _slice_pipeline_stages(self, slice_state: SliceExecutionState) -> tuple[str, ...]:
         if slice_state.status == "pr_opened":
             return ()
@@ -477,12 +534,18 @@ class WorkflowOrchestrator:
         return SLICE_PIPELINE_STAGES
 
     def _run_slice_pipeline(self, state: RunState, spec_path: Path, slice_def: SliceDefinition, dry_run_pr: bool) -> dict[str, list[Path]]:
-        local_state = self._copy_state(state)
-        local_state.active_slice = slice_def.id
-        repo_root = self._slice_repo_root(state, slice_def.id)
-        local_context = self._context(spec_path, local_state, repo_root=repo_root, slice_id=slice_def.id)
-        self._emit(f"[ainative] slice {slice_def.id}: worktree ready at {repo_root}")
         slice_state = state.slice_states[slice_def.id]
+        fallback_stage = self._fallback_slice_stage(slice_state)
+        try:
+            local_state = self._copy_state(state)
+            local_state.active_slice = slice_def.id
+            repo_root = self._slice_repo_root(state, slice_def.id)
+            local_context = self._context(spec_path, local_state, repo_root=repo_root, slice_id=slice_def.id)
+        except Exception as exc:
+            self._record_slice_failure_once(state, slice_def.id, fallback_stage, str(exc))
+            raise
+
+        self._emit(f"[ainative] slice {slice_def.id}: worktree ready at {repo_root}")
         artifacts: dict[str, list[Path]] = {stage: [] for stage in SLICE_PIPELINE_STAGES}
         for stage in self._slice_pipeline_stages(slice_state):
             self._emit(f"[ainative] slice {slice_def.id}: {stage} started")
@@ -598,12 +661,24 @@ class WorkflowOrchestrator:
                             result = future.result()
                             for stage, paths in result.items():
                                 collected[stage].extend(paths)
-                        except StageError:
+                        except StageError as exc:
                             stop_launching = True
+                            slice_state = state.slice_states[slice_id]
+                            if slice_state.status != "failed":
+                                self._record_slice_failure_once(
+                                    state,
+                                    slice_id,
+                                    self._fallback_slice_stage(slice_state),
+                                    str(exc),
+                                )
                         except Exception as exc:  # pragma: no cover - defensive fallback
                             stop_launching = True
-                            self._mark_slice_failure(state, slice_id, state.slice_states[slice_id].current_stage or "loop", str(exc))
-                            self._emit(f"[ainative] slice {slice_id}: failed - {exc}")
+                            self._record_slice_failure_once(
+                                state,
+                                slice_id,
+                                self._fallback_slice_stage(state.slice_states[slice_id]),
+                                str(exc),
+                            )
 
             refreshed = self._state_store(run_dir=Path(state.run_dir)).load(Path(state.run_dir))
             self._sync_state(state, refreshed)

@@ -4,6 +4,14 @@ import subprocess
 from pathlib import Path
 
 
+class MergeConflictError(RuntimeError):
+    def __init__(self, message: str, *, commit_sha: str, conflicted_files: list[str], merge_aborted: bool) -> None:
+        super().__init__(message)
+        self.commit_sha = commit_sha
+        self.conflicted_files = conflicted_files
+        self.merge_aborted = merge_aborted
+
+
 def _prepare_command(command: list[str]) -> list[str]:
     if command and command[0] == "git":
         return ["git", "-c", "safe.directory=*"] + command[1:]
@@ -183,7 +191,7 @@ def ensure_worktree(cwd: Path, branch_name: str, worktree_path: Path, base_ref: 
 
 
 def merge_commit(cwd: Path, commit_sha: str) -> None:
-    _run(
+    completed = _run_optional(
         [
             "git",
             "-c",
@@ -195,6 +203,34 @@ def merge_commit(cwd: Path, commit_sha: str) -> None:
             commit_sha,
         ],
         cwd,
+    )
+    if completed.returncode == 0:
+        return
+
+    conflicted_probe = _run_optional(["git", "diff", "--name-only", "--diff-filter=U"], cwd)
+    conflicted_files = [line.strip() for line in conflicted_probe.stdout.splitlines() if line.strip()]
+    details = "\n".join(part for part in [completed.stderr.strip(), completed.stdout.strip()] if part)
+    is_conflict = bool(conflicted_files) or "conflict" in details.lower() or "unmerged files" in details.lower()
+    if not is_conflict:
+        raise RuntimeError(details or "command failed")
+
+    abort = _run_optional(["git", "merge", "--abort"], cwd)
+    merge_aborted = abort.returncode == 0
+    file_lines = "\n".join(f"- {path}" for path in conflicted_files) if conflicted_files else "- unknown files"
+    cleanup = (
+        "The worktree merge was aborted so the slice can be retried."
+        if merge_aborted
+        else "Git could not automatically abort the conflicted merge; inspect the worktree before retrying."
+    )
+    raise MergeConflictError(
+        (
+            f"Merge conflict while applying dependency commit {commit_sha[:12]}.\n"
+            f"{cleanup}\n"
+            f"Conflicted files:\n{file_lines}"
+        ),
+        commit_sha=commit_sha,
+        conflicted_files=conflicted_files,
+        merge_aborted=merge_aborted,
     )
 
 
