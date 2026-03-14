@@ -1,17 +1,24 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import shutil
 import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Any
 
 import yaml
-from pathlib import Path
 
 from ai_native.config import AppConfig
 from ai_native.orchestrator import WorkflowOrchestrator
 from ai_native.state import StateStore
+
+_AUTH_TYPES = ("api_key", "bearer", "basic", "none")
+_SECRET_KEYS = {"api_key", "token", "password"}
 
 
 def _config_path() -> Path:
@@ -135,6 +142,230 @@ def _ask_questions(stage: str, questions: list[str]) -> list[str]:
         print(question, flush=True)
         answers.append(input("> ").strip())
     return answers
+
+
+def _mask_secret(value: str | None) -> str | None:
+    if not value:
+        return None
+    if len(value) <= 4:
+        return "*" * len(value)
+    return f"{value[:2]}{'*' * (len(value) - 4)}{value[-2:]}"
+
+
+def _masked_telemetry_payload(config: AppConfig) -> dict[str, Any]:
+    telemetry = config.telemetry
+    payload = telemetry.model_dump()
+    for key in _SECRET_KEYS:
+        payload[key] = _mask_secret(payload.get(key))
+    return payload
+
+
+def _build_auth_header(auth_type: str, telemetry: dict[str, Any]) -> dict[str, str]:
+    if auth_type == "api_key":
+        key = telemetry.get("api_key")
+        if not key:
+            raise SystemExit("Telemetry auth_type=api_key requires an api_key.")
+        return {"X-API-Key": key}
+    if auth_type == "bearer":
+        token = telemetry.get("token")
+        if not token:
+            raise SystemExit("Telemetry auth_type=bearer requires a token.")
+        return {"Authorization": f"Bearer {token}"}
+    if auth_type == "basic":
+        username = telemetry.get("username")
+        password = telemetry.get("password")
+        if not username or not password:
+            raise SystemExit("Telemetry auth_type=basic requires both username and password.")
+        encoded = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+        return {"Authorization": f"Basic {encoded}"}
+    return {}
+
+
+def _load_raw_config_file(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+def _write_raw_config_file(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+
+def _prompt_if_missing(current: str | None, prompt: str, *, secret: bool = False) -> str | None:
+    if current is not None:
+        return current
+    if not sys.stdin.isatty():
+        return None
+    if secret:
+        import getpass
+
+        entered = getpass.getpass(f"{prompt}: ").strip()
+    else:
+        entered = input(f"{prompt}: ").strip()
+    return entered or None
+
+
+
+
+def _coerce_optional_bool(value: Any, *, field_name: str) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        if value in {0, 1}:
+            return bool(value)
+        raise SystemExit(f"Telemetry {field_name} must be a boolean value (true/false).")
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+        raise SystemExit(f"Telemetry {field_name} must be a boolean value (true/false).")
+    raise SystemExit(f"Telemetry {field_name} must be a boolean value (true/false).")
+
+def _validate_telemetry_auth_credentials(auth_type: str, telemetry_data: dict[str, Any]) -> None:
+    if auth_type == "api_key" and not telemetry_data.get("api_key"):
+        raise SystemExit("Telemetry auth_type=api_key requires --api-key (or an existing stored api_key).")
+    if auth_type == "bearer" and not telemetry_data.get("token"):
+        raise SystemExit("Telemetry auth_type=bearer requires --token (or an existing stored token).")
+    if auth_type == "basic":
+        if not telemetry_data.get("username") or not telemetry_data.get("password"):
+            raise SystemExit(
+                "Telemetry auth_type=basic requires --username and --password (or existing stored credentials)."
+            )
+
+
+def command_telemetry_configure(args: argparse.Namespace) -> int:
+    config_path = _discover_config_path(args.config)
+    raw_config = _load_raw_config_file(config_path)
+    telemetry_data: dict[str, Any] = dict((raw_config.get("telemetry") or {}))
+
+    url = _prompt_if_missing(args.url, "Telemetry URL")
+    auth_type = args.auth_type
+    if auth_type is None and sys.stdin.isatty():
+        auth_type = _prompt_if_missing(None, f"Auth type ({', '.join(_AUTH_TYPES)})")
+    auth_type = auth_type or telemetry_data.get("auth_type") or "none"
+    if auth_type not in _AUTH_TYPES:
+        raise SystemExit(f"Invalid auth type: {auth_type}")
+
+    telemetry_data["url"] = url or telemetry_data.get("url")
+    telemetry_data["auth_type"] = auth_type
+    telemetry_data["tenant"] = args.tenant if args.tenant is not None else telemetry_data.get("tenant")
+
+    if auth_type == "api_key":
+        api_key = _prompt_if_missing(args.api_key, "API key", secret=True)
+        telemetry_data["api_key"] = api_key or telemetry_data.get("api_key")
+        telemetry_data["token"] = None
+        telemetry_data["username"] = None
+        telemetry_data["password"] = None
+    elif auth_type == "bearer":
+        token = _prompt_if_missing(args.token, "Bearer token", secret=True)
+        telemetry_data["token"] = token or telemetry_data.get("token")
+        telemetry_data["api_key"] = None
+        telemetry_data["username"] = None
+        telemetry_data["password"] = None
+    elif auth_type == "basic":
+        username = _prompt_if_missing(args.username, "Username")
+        password = _prompt_if_missing(args.password, "Password", secret=True)
+        telemetry_data["username"] = username or telemetry_data.get("username")
+        telemetry_data["password"] = password or telemetry_data.get("password")
+        telemetry_data["api_key"] = None
+        telemetry_data["token"] = None
+    else:
+        telemetry_data["api_key"] = None
+        telemetry_data["token"] = None
+        telemetry_data["username"] = None
+        telemetry_data["password"] = None
+
+    _validate_telemetry_auth_credentials(auth_type, telemetry_data)
+
+    has_remote = bool(telemetry_data.get("url"))
+    existing_enabled = _coerce_optional_bool(telemetry_data.get("enabled"), field_name="enabled")
+    if args.enabled is not None:
+        telemetry_data["enabled"] = args.enabled
+    elif existing_enabled is not None:
+        telemetry_data["enabled"] = existing_enabled
+    else:
+        telemetry_data["enabled"] = has_remote
+
+    raw_config["telemetry"] = telemetry_data
+    _write_raw_config_file(config_path, raw_config)
+
+    loaded = AppConfig.load(config_path)
+    masked = _masked_telemetry_payload(loaded)
+    print(f"[ainative] telemetry configuration saved to {config_path}")
+    print(json.dumps(masked, indent=2, sort_keys=True))
+    return 0
+
+
+def command_telemetry_show(args: argparse.Namespace) -> int:
+    config = _load_config(args.config)
+    print(json.dumps(_masked_telemetry_payload(config), indent=2, sort_keys=True))
+    return 0
+
+
+def command_telemetry_test(args: argparse.Namespace) -> int:
+    config = _load_config(args.config)
+    telemetry = config.telemetry
+    if not telemetry.url:
+        raise SystemExit("Telemetry URL is not configured. Set it with `ainative telemetry configure --url ...`.")
+
+    headers = {"User-Agent": "ai-native/telemetry-test", "Accept": "application/json"}
+    headers.update(_build_auth_header(telemetry.auth_type, telemetry.model_dump()))
+    if telemetry.tenant:
+        headers["X-Tenant"] = telemetry.tenant
+
+    request = urllib.request.Request(telemetry.url, method="GET", headers=headers)
+    timeout = args.timeout
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read(512).decode("utf-8", errors="replace")
+            print(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "status": response.status,
+                        "url": telemetry.url,
+                        "tenant": telemetry.tenant,
+                        "body_preview": body,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 0
+    except urllib.error.HTTPError as exc:
+        preview = exc.read(512).decode("utf-8", errors="replace")
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "status": exc.code,
+                    "url": telemetry.url,
+                    "error": str(exc),
+                    "body_preview": preview,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 1
+    except urllib.error.URLError as exc:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "url": telemetry.url,
+                    "error": str(exc.reason),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 1
 
 
 def command_doctor(args: argparse.Namespace) -> int:
@@ -371,6 +602,27 @@ def build_parser() -> argparse.ArgumentParser:
     profile_list = profile_subparsers.add_parser("list")
     profile_list.add_argument("--config", default=argparse.SUPPRESS)
     profile_list.set_defaults(func=command_telemetry_profile_list)
+
+    telemetry_configure = telemetry_subparsers.add_parser("configure")
+    telemetry_configure.add_argument("--config", default=argparse.SUPPRESS)
+    telemetry_configure.add_argument("--url")
+    telemetry_configure.add_argument("--auth-type", choices=_AUTH_TYPES)
+    telemetry_configure.add_argument("--api-key")
+    telemetry_configure.add_argument("--token")
+    telemetry_configure.add_argument("--username")
+    telemetry_configure.add_argument("--password")
+    telemetry_configure.add_argument("--tenant")
+    telemetry_configure.add_argument("--enabled", action=argparse.BooleanOptionalAction, default=None)
+    telemetry_configure.set_defaults(func=command_telemetry_configure)
+
+    telemetry_show = telemetry_subparsers.add_parser("show")
+    telemetry_show.add_argument("--config", default=argparse.SUPPRESS)
+    telemetry_show.set_defaults(func=command_telemetry_show)
+
+    telemetry_test = telemetry_subparsers.add_parser("test")
+    telemetry_test.add_argument("--config", default=argparse.SUPPRESS)
+    telemetry_test.add_argument("--timeout", type=float, default=10.0)
+    telemetry_test.set_defaults(func=command_telemetry_test)
 
     return parser
 

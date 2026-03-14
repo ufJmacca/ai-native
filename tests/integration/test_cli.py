@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 from ai_native.cli import _discover_config_path, _resolve_spec_path, _resolve_workspace_root, main
 from ai_native.models import RunState
@@ -183,7 +185,8 @@ telemetry:
   destinations:
     prod:
       url: https://example.com/events
-""".strip() + "\n",
+""".strip()
+        + "\n",
         encoding="utf-8",
     )
 
@@ -227,11 +230,15 @@ def test_cli_telemetry_profile_add_recovers_from_null_mappings(monkeypatch, tmp_
 
 def test_cli_telemetry_profile_use_recovers_from_null_destinations(monkeypatch, tmp_path: Path) -> None:
     config_path = tmp_path / "ainative.yaml"
-    config_path.write_text("""
+    config_path.write_text(
+        """
 telemetry:
   enabled: false
   destinations: null
-""".strip() + "\n", encoding="utf-8")
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
 
     monkeypatch.setattr(sys, "argv", ["ainative", "telemetry", "profile", "use", "--config", str(config_path), "prod"])
 
@@ -246,4 +253,174 @@ def test_cli_telemetry_profile_commands_reject_non_mapping_telemetry(monkeypatch
     monkeypatch.setattr(sys, "argv", ["ainative", "telemetry", "profile", "list", "--config", str(config_path)])
 
     with pytest.raises(SystemExit, match="Invalid telemetry config: expected mapping at 'telemetry'"):
+        main()
+
+
+def test_telemetry_configure_writes_config_and_masks_output(monkeypatch, tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text("workspace:\n  specs_dir: specs\n", encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ainative",
+            "telemetry",
+            "--config",
+            str(config_path),
+            "configure",
+            "--url",
+            "https://telemetry.example.com/ingest",
+            "--auth-type",
+            "api_key",
+            "--api-key",
+            "very-secret-key",
+            "--tenant",
+            "proj-a",
+        ],
+    )
+
+    assert main() == 0
+    output = capsys.readouterr().out
+    assert "very-secret-key" not in output
+
+    persisted = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert persisted["telemetry"]["url"] == "https://telemetry.example.com/ingest"
+    assert persisted["telemetry"]["auth_type"] == "api_key"
+    assert persisted["telemetry"]["api_key"] == "very-secret-key"
+    assert persisted["telemetry"]["tenant"] == "proj-a"
+
+
+def test_telemetry_show_masks_secrets(monkeypatch, tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text(
+        """
+telemetry:
+  enabled: true
+  url: https://telemetry.example.com
+  auth_type: bearer
+  token: super-secret-token
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sys, "argv", ["ainative", "telemetry", "--config", str(config_path), "show"])
+
+    assert main() == 0
+    output = capsys.readouterr().out
+    assert "super-secret-token" not in output
+    payload = json.loads(output)
+    assert payload["token"] != "super-secret-token"
+
+
+def test_telemetry_configure_rejects_missing_bearer_token(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text(
+        """
+telemetry:
+  url: https://telemetry.example.com
+  auth_type: none
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ainative",
+            "telemetry",
+            "--config",
+            str(config_path),
+            "configure",
+            "--auth-type",
+            "bearer",
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="Telemetry auth_type=bearer requires --token"):
+        main()
+
+
+def test_telemetry_configure_preserves_existing_enabled_state(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text(
+        """
+telemetry:
+  enabled: false
+  url: https://telemetry.example.com/ingest
+  auth_type: bearer
+  token: existing-token
+  tenant: old-tenant
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ainative",
+            "telemetry",
+            "--config",
+            str(config_path),
+            "configure",
+            "--tenant",
+            "new-tenant",
+        ],
+    )
+
+    assert main() == 0
+
+    persisted = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert persisted["telemetry"]["enabled"] is False
+    assert persisted["telemetry"]["tenant"] == "new-tenant"
+
+
+def test_telemetry_show_accepts_config_flag_after_subcommand(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text("telemetry:\n  auth_type: none\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["ainative", "telemetry", "show", "--config", str(config_path)])
+
+    assert main() == 0
+
+
+def test_telemetry_configure_preserves_string_false_enabled_state(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text(
+        """
+telemetry:
+  enabled: "false"
+  url: https://telemetry.example.com/ingest
+  auth_type: bearer
+  token: existing-token
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ainative",
+            "telemetry",
+            "--config",
+            str(config_path),
+            "configure",
+            "--tenant",
+            "new-tenant",
+        ],
+    )
+
+    assert main() == 0
+
+    persisted = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert persisted["telemetry"]["enabled"] is False
+
+
+def test_telemetry_test_returns_error_without_url(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text("telemetry:\n  auth_type: none\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["ainative", "telemetry", "--config", str(config_path), "test"])
+
+    with pytest.raises(SystemExit, match="Telemetry URL is not configured"):
         main()

@@ -110,7 +110,7 @@ def commit_all(cwd: Path, subject: str, body: str | None = None) -> str:
 
 
 def push_branch(cwd: Path, branch_name: str) -> None:
-    _run(["git", "push", "-u", "origin", branch_name], cwd)
+    _run(["git", "push", "origin", branch_name], cwd)
 
 
 def create_pull_request(cwd: Path, title: str, body_file: Path, draft: bool, base_branch: str | None = None) -> str:
@@ -154,7 +154,8 @@ def _parse_worktree_list(cwd: Path) -> dict[Path, str | None]:
 
 def create_worktree(cwd: Path, base_ref: str, branch_name: str, worktree_path: Path) -> Path:
     worktree_path.parent.mkdir(parents=True, exist_ok=True)
-    _run(["git", "worktree", "add", "-b", branch_name, str(worktree_path), base_ref], cwd)
+    # Avoid branch tracking config writes in the shared parent repo during parallel worktree creation.
+    _run(["git", "-c", "branch.autoSetupMerge=false", "worktree", "add", "-b", branch_name, str(worktree_path), base_ref], cwd)
     _ensure_local_ignore(worktree_path)
     return worktree_path.resolve()
 
