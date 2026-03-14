@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   run-registry:
     build:
@@ -18,9 +16,21 @@ services:
       RUN_REGISTRY_AUTH_TOKEN: change-me
       RUN_REGISTRY_CORS_ORIGINS: http://localhost:3000
       RUN_REGISTRY_RETENTION_DAYS: 30
+      RUN_REGISTRY_LIVENESS_TTL_SECONDS: 60
+      RUN_REGISTRY_LIVENESS_GRACE_PERIOD_SECONDS: 120
     depends_on:
       postgres:
         condition: service_healthy
+
+  run-registry-ui:
+    build:
+      context: ../run_registry_ui
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      run-registry:
+        condition: service_started
 
   postgres:
     image: postgres:16-alpine

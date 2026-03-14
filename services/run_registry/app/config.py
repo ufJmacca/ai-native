@@ -17,6 +17,8 @@ class Settings:
     auth_token: str
     cors_origins: list[str]
     retention_days: int
+    liveness_ttl_seconds: int
+    liveness_grace_period_seconds: int
 
     @property
     def database_dsn(self) -> str:
@@ -29,13 +31,11 @@ class Settings:
         )
 
 
-
 def _required(name: str) -> str:
     value = os.getenv(name)
     if not value:
         raise RuntimeError(f"Missing required environment variable: {name}")
     return value
-
 
 
 def load_settings() -> Settings:
@@ -54,4 +54,6 @@ def load_settings() -> Settings:
         auth_token=_required("RUN_REGISTRY_AUTH_TOKEN"),
         cors_origins=cors_origins,
         retention_days=retention_days,
+        liveness_ttl_seconds=int(os.getenv("RUN_REGISTRY_LIVENESS_TTL_SECONDS", "60")),
+        liveness_grace_period_seconds=int(os.getenv("RUN_REGISTRY_LIVENESS_GRACE_PERIOD_SECONDS", "120")),
     )

@@ -6,20 +6,29 @@ import tempfile
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable, TypeVar
+from typing import Callable, TypeVar, cast
 
 from ai_native.config import RegistryConfig
 from ai_native.models import RunDetailView, RunHeartbeat, RunLiveness, RunState, RunView, StageName, StageSnapshot
+from ai_native.run_registry import publish_run_snapshot
 from ai_native.utils import ensure_dir, read_json, read_text, sha256_file, slugify, utc_now, write_json, write_text
 
 T = TypeVar("T")
 _LOCKS: dict[Path, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
+_MISSING = object()
 
 
 class StateStore:
-    def __init__(self, artifacts_root: Path):
+    def __init__(
+        self,
+        artifacts_root: Path,
+        registry: RegistryConfig | None = None,
+        emit_warning: Callable[[str], None] | None = None,
+    ):
         self.artifacts_root = artifacts_root
+        self.registry = registry
+        self.emit_warning = emit_warning or (lambda _message: None)
         ensure_dir(self.artifacts_root)
 
     def _state_path(self, run_dir: Path) -> Path:
@@ -59,12 +68,22 @@ class StateStore:
             if temp_path.exists():
                 temp_path.unlink()
 
+    def _publish_snapshot(self, state: RunState) -> None:
+        if self.registry is None or not self.registry.remote_url or not self.registry.auth_token:
+            return
+        try:
+            publish_run_snapshot(self.registry, state)
+        except Exception as exc:
+            self.emit_warning(f"[ainative] registry: warning - failed to publish run snapshot for {state.run_id}: {exc}")
+
     def mutate(self, run_dir: Path, mutator: Callable[[RunState], T]) -> tuple[RunState, T]:
         resolved = run_dir.resolve()
         ensure_dir(resolved)
         lock_path = self._lock_path(resolved)
         ensure_dir(lock_path.parent)
         lock_path.touch(exist_ok=True)
+        published_state: RunState | None = None
+        result: T | object = _MISSING
         with self._thread_lock(resolved):
             with lock_path.open("r+", encoding="utf-8") as handle:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
@@ -72,9 +91,13 @@ class StateStore:
                     state = self._load_unlocked(resolved)
                     result = mutator(state)
                     self._save_unlocked(state)
-                    return state, result
+                    published_state = state
                 finally:
                     fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        if published_state is None or result is _MISSING:
+            raise RuntimeError("State mutation did not produce a result.")
+        self._publish_snapshot(published_state)
+        return published_state, cast(T, result)
 
     def create_run(self, spec_path: Path, workspace_root: Path) -> RunState:
         feature_slug = slugify(spec_path.stem)
@@ -109,6 +132,7 @@ class StateStore:
                     self._save_unlocked(state)
                 finally:
                     fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        self._publish_snapshot(state)
 
     def load(self, run_dir: Path) -> RunState:
         resolved = run_dir.resolve()
@@ -250,6 +274,7 @@ class StateStore:
             current_stage=state.current_stage,
             scheduler_status=state.scheduler_status,
             active_slice=state.active_slice,
+            run_projection=state.run_projection,
             slice_states=state.slice_states,
             stage_status=state.stage_status,
             metadata=state.metadata,

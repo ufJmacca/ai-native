@@ -16,6 +16,8 @@ This document describes how to operate the standalone Run Registry service packa
 | `RUN_REGISTRY_PORT` | No | Bind port for the web server (default `8080`). |
 | `RUN_REGISTRY_CORS_ORIGINS` | No | Comma-separated allowed origins (default `*`). |
 | `RUN_REGISTRY_RETENTION_DAYS` | No | Days before records expire and are purged (default `30`). |
+| `RUN_REGISTRY_LIVENESS_TTL_SECONDS` | No | Age in seconds before a non-terminal run becomes `stale` (default `60`). |
+| `RUN_REGISTRY_LIVENESS_GRACE_PERIOD_SECONDS` | No | Extra age in seconds before a `stale` run becomes `stopped` (default `120`). |
 
 ## Deployment artifacts
 
@@ -23,6 +25,39 @@ This document describes how to operate the standalone Run Registry service packa
 - Container image definition: `services/run_registry/Dockerfile`
 - Local stack: `services/run_registry/docker-compose.yml` (service + PostgreSQL)
 - Kubernetes sample manifests: `services/run_registry/k8s/run-registry.yaml`
+- Operator dashboard SPA: `services/run_registry_ui`
+
+## What the service exposes
+
+The registry backend stores both summary data for fast lists and a rich snapshot for detailed inspection.
+
+- `GET /v1/runs` returns run summaries for dashboard tables.
+- `GET /v1/runs/{run_id}` returns the full published snapshot, including `run_projection`, `stage_status`, and `slice_states`.
+- `PUT /v1/runs/{run_id}` is the idempotent producer write endpoint used by `ai_native`.
+- Liveness is computed server-side from `last_heartbeat_at`, terminal status, and the configured TTL/grace values.
+
+## Local development flow
+
+1. Start the full local stack:
+
+```bash
+docker compose -f services/run_registry/docker-compose.yml up --build
+```
+
+2. Open `http://localhost:3000`, enter `http://localhost:8080` as the API base URL, and use the configured bearer token.
+
+Notes:
+- The first UI release is read-only.
+- The sample backend Compose file already sets `RUN_REGISTRY_CORS_ORIGINS=http://localhost:3000`.
+- The UI is deployed separately as static assets; it is not bundled into the FastAPI container.
+
+If you prefer to run the UI outside Docker during development:
+
+```bash
+cd services/run_registry_ui
+npm install
+npm run dev
+```
 
 ## Upgrade and migration flow
 
@@ -69,6 +104,7 @@ Recommended proxy settings:
 - Apply request size and rate limits.
 - Restrict CORS via `RUN_REGISTRY_CORS_ORIGINS` to trusted origins.
 - Rotate `RUN_REGISTRY_AUTH_TOKEN` regularly and distribute through a secret manager.
+- Publish a separate UI origin and add that origin explicitly to `RUN_REGISTRY_CORS_ORIGINS`.
 
 Example NGINX location forwarding:
 

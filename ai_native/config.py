@@ -57,6 +57,9 @@ class RegistryConfig(BaseModel):
     heartbeat_interval_seconds: int = 15
     liveness_ttl_seconds: int = 60
     liveness_grace_period_seconds: int = 120
+    remote_url: str | None = None
+    auth_token: str | None = None
+    timeout_seconds: float = 5.0
 
 
 class TelemetryDestination(BaseModel):
@@ -134,6 +137,21 @@ class AppConfig(BaseModel):
         return config
 
     def _apply_environment_overrides(self) -> None:
+        if env_registry_url := _read_env("AINATIVE_RUN_REGISTRY_URL"):
+            self.registry.remote_url = env_registry_url
+
+        if env_registry_auth_token := _read_env("AINATIVE_RUN_REGISTRY_AUTH_TOKEN"):
+            self.registry.auth_token = env_registry_auth_token
+
+        if env_registry_timeout := _read_env("AINATIVE_RUN_REGISTRY_TIMEOUT_SECONDS"):
+            try:
+                self.registry.timeout_seconds = float(env_registry_timeout)
+            except ValueError as exc:
+                raise ValueError(
+                    "Invalid AINATIVE_RUN_REGISTRY_TIMEOUT_SECONDS="
+                    f"{env_registry_timeout!r}. Expected a numeric timeout in seconds."
+                ) from exc
+
         if env_url := _read_env("AINATIVE_TELEMETRY_URL"):
             self.telemetry.url = env_url
             self.telemetry.enabled = True
