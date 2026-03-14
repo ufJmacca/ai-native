@@ -53,6 +53,12 @@ class QualityGates(BaseModel):
     require_red_green_refactor: bool = True
 
 
+class RegistryConfig(BaseModel):
+    heartbeat_interval_seconds: int = 15
+    liveness_ttl_seconds: int = 60
+    liveness_grace_period_seconds: int = 120
+
+
 class TelemetryDestination(BaseModel):
     url: str
     auth_type: Literal["none", "bearer", "basic", "api_key"] = "none"
@@ -107,6 +113,7 @@ class AppConfig(BaseModel):
     agents: dict[str, AgentProfile] = Field(default_factory=default_agents)
     git: GitConfig = Field(default_factory=GitConfig)
     quality_gates: QualityGates = Field(default_factory=QualityGates)
+    registry: RegistryConfig = Field(default_factory=RegistryConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     config_path: Path = Field(default=Path("ainative.yaml"), exclude=True)
     repo_root: Path = Field(default=Path.cwd(), exclude=True)

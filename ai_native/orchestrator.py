@@ -8,7 +8,7 @@ from typing import Callable
 from ai_native.adapters import build_role_adapters
 from ai_native.config import AppConfig, TelemetryDestination
 from ai_native.gitops import ensure_base_commit, ensure_repo, ensure_worktree, is_ancestor, merge_commit, non_ai_native_changes, resolve_base_ref
-from ai_native.models import RunState, SliceDefinition, SliceExecutionState
+from ai_native.models import RunHeartbeat, RunState, SliceDefinition, SliceExecutionState
 from ai_native.prompting import PromptLibrary
 from ai_native.slice_runtime import (
     SLICE_SPECIFIC_STAGES,
@@ -18,14 +18,13 @@ from ai_native.slice_runtime import (
     read_loop_review_verdict,
     read_pr_url,
     read_verify_verdict,
-    selected_slices,
     slice_by_id,
     slice_conflict_reason,
 )
 from ai_native.state import StateStore
 from ai_native.stages import ORDERED_STAGES, commit_run, create_prs, run_architecture, run_intake, run_loop, run_plan, run_prd, run_recon, run_slice, run_verify
 from ai_native.stages.common import ExecutionContext, StageError
-from ai_native.utils import read_json, sha256_file, utc_now, write_json, write_text
+from ai_native.utils import sha256_file, utc_now, write_json, write_text
 
 PRE_SLICE_STAGES = ("intake", "recon", "plan", "architecture", "prd", "slice")
 SLICE_PIPELINE_STAGES = ("loop", "verify", "commit", "pr")
@@ -37,6 +36,33 @@ SLICE_STAGE_TERMINAL_STATUSES = {
     "pr": {"pr_opened"},
 }
 
+
+
+
+class _HeartbeatEmitter:
+    def __init__(self, orchestrator: "WorkflowOrchestrator", state: RunState):
+        self.orchestrator = orchestrator
+        self.state = state
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def __enter__(self) -> "_HeartbeatEmitter":
+        interval = max(1, self.orchestrator.config.registry.heartbeat_interval_seconds)
+
+        def _run() -> None:
+            while not self._stop.wait(interval):
+                self.orchestrator._emit_heartbeat(self.state)
+
+        self.orchestrator._emit_heartbeat(self.state)
+        self._thread = threading.Thread(target=_run, daemon=True, name=f"heartbeat-{self.state.run_id}")
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1)
+        self.orchestrator._emit_heartbeat(self.state)
 
 class WorkflowOrchestrator:
     def __init__(
@@ -78,6 +104,24 @@ class WorkflowOrchestrator:
 
     def _emit(self, message: str) -> None:
         self.progress(message)
+
+    def _emit_heartbeat(self, state: RunState) -> None:
+        run_dir = Path(state.run_dir)
+        latest = self._state_store(run_dir=run_dir).load(run_dir)
+        heartbeat = RunHeartbeat(
+            run_id=latest.run_id,
+            updated_at=utc_now(),
+            status=latest.status,
+            metadata={
+                "agent": "ainative",
+                "session": latest.run_id,
+                "scheduler_status": latest.scheduler_status,
+                "current_stage": latest.current_stage,
+                "active_slice": latest.active_slice,
+            },
+        )
+        refreshed = self._state_store(run_dir=run_dir).record_heartbeat(run_dir, heartbeat)
+        self._sync_state(state, refreshed)
 
     def _ensure_workspace_repo(self, workspace_root: Path) -> None:
         try:
@@ -239,25 +283,26 @@ class WorkflowOrchestrator:
         slice_id: str | None = None,
     ) -> RunState:
         state = self.prepare_state(spec_path, workspace_root=workspace_root, run_dir=run_dir)
-        self._emit(f"[ainative] run-dir: {state.run_dir}")
-        self._emit(f"[ainative] workspace-dir: {state.workspace_root}")
-        resolved_slice_id = slice_id
-        context = self._context(spec_path.resolve(), state)
-        for stage in ORDERED_STAGES:
-            stage_context = context
-            skip_completed = True
-            if stage in SLICE_SPECIFIC_STAGES:
-                if resolved_slice_id is None:
-                    resolved_slice_id = self._resolve_slice_id(state, target_stage, None)
-                stage_slice_id = resolved_slice_id if stage in SLICE_SPECIFIC_STAGES else None
-                repo_root = self._slice_repo_root(state, stage_slice_id) if stage_slice_id else Path(state.workspace_root)
-                stage_context = self._context(spec_path.resolve(), state, repo_root=repo_root, slice_id=stage_slice_id)
-                state.active_slice = stage_slice_id
-                skip_completed = False
-            self._run_stage(stage_context, state, stage, dry_run_pr=dry_run_pr, skip_completed=skip_completed)
-            if stage == target_stage:
-                return state
-        return state
+        with _HeartbeatEmitter(self, state):
+            self._emit(f"[ainative] run-dir: {state.run_dir}")
+            self._emit(f"[ainative] workspace-dir: {state.workspace_root}")
+            resolved_slice_id = slice_id
+            context = self._context(spec_path.resolve(), state)
+            for stage in ORDERED_STAGES:
+                stage_context = context
+                skip_completed = True
+                if stage in SLICE_SPECIFIC_STAGES:
+                    if resolved_slice_id is None:
+                        resolved_slice_id = self._resolve_slice_id(state, target_stage, None)
+                    stage_slice_id = resolved_slice_id if stage in SLICE_SPECIFIC_STAGES else None
+                    repo_root = self._slice_repo_root(state, stage_slice_id) if stage_slice_id else Path(state.workspace_root)
+                    stage_context = self._context(spec_path.resolve(), state, repo_root=repo_root, slice_id=stage_slice_id)
+                    state.active_slice = stage_slice_id
+                    skip_completed = False
+                self._run_stage(stage_context, state, stage, dry_run_pr=dry_run_pr, skip_completed=skip_completed)
+                if stage == target_stage:
+                    return state
+            return state
 
     def _initialize_slice_states(self, state: RunState, slice_plan) -> RunState:
         worktrees_root = self.config.resolve_worktrees_dir(Path(state.workspace_root))
@@ -509,81 +554,82 @@ class WorkflowOrchestrator:
         workspace_root: Path | None = None,
     ) -> RunState:
         state = self.prepare_state(spec_path, workspace_root=workspace_root, run_dir=run_dir)
-        self._emit(f"[ainative] run-dir: {state.run_dir}")
-        self._emit(f"[ainative] workspace-dir: {state.workspace_root}")
-        context = self._context(spec_path.resolve(), state)
+        with _HeartbeatEmitter(self, state):
+            self._emit(f"[ainative] run-dir: {state.run_dir}")
+            self._emit(f"[ainative] workspace-dir: {state.workspace_root}")
+            context = self._context(spec_path.resolve(), state)
 
-        for stage in PRE_SLICE_STAGES:
-            self._run_stage(context, state, stage, skip_completed=True)
+            for stage in PRE_SLICE_STAGES:
+                self._run_stage(context, state, stage, skip_completed=True)
 
-        slice_plan = load_slice_plan(Path(state.run_dir))
-        self._ensure_parallel_preflight(state)
-        ensure_base_commit(Path(state.workspace_root), self.config.workspace.base_branch)
-        self._initialize_slice_states(state, slice_plan)
+            slice_plan = load_slice_plan(Path(state.run_dir))
+            self._ensure_parallel_preflight(state)
+            ensure_base_commit(Path(state.workspace_root), self.config.workspace.base_branch)
+            self._initialize_slice_states(state, slice_plan)
 
-        collected: dict[str, list[Path]] = {stage: [] for stage in SLICE_PIPELINE_STAGES}
-        stop_launching = False
-        running: dict[Future[dict[str, list[Path]]], str] = {}
-        running_ids: set[str] = set()
+            collected: dict[str, list[Path]] = {stage: [] for stage in SLICE_PIPELINE_STAGES}
+            stop_launching = False
+            running: dict[Future[dict[str, list[Path]]], str] = {}
+            running_ids: set[str] = set()
 
-        with ThreadPoolExecutor(max_workers=max(1, self.config.workspace.parallel_workers)) as executor:
-            while True:
-                refreshed = self._state_store(run_dir=Path(state.run_dir)).load(Path(state.run_dir))
-                self._sync_state(state, refreshed)
-                ready_slices, blocked_reasons = self._evaluate_ready_slices(state, slice_plan, running_ids, stop_launching=stop_launching)
-                self._persist_queue_state(state, ready_slices, blocked_reasons, running_ids)
-                if ready_slices:
-                    self._emit(f"[ainative] scheduler: ready slices {','.join(slice_def.id for slice_def in ready_slices)}")
-                for slice_def in ready_slices:
-                    if stop_launching or len(running) >= max(1, self.config.workspace.parallel_workers):
+            with ThreadPoolExecutor(max_workers=max(1, self.config.workspace.parallel_workers)) as executor:
+                while True:
+                    refreshed = self._state_store(run_dir=Path(state.run_dir)).load(Path(state.run_dir))
+                    self._sync_state(state, refreshed)
+                    ready_slices, blocked_reasons = self._evaluate_ready_slices(state, slice_plan, running_ids, stop_launching=stop_launching)
+                    self._persist_queue_state(state, ready_slices, blocked_reasons, running_ids)
+                    if ready_slices:
+                        self._emit(f"[ainative] scheduler: ready slices {','.join(slice_def.id for slice_def in ready_slices)}")
+                    for slice_def in ready_slices:
+                        if stop_launching or len(running) >= max(1, self.config.workspace.parallel_workers):
+                            break
+                        if slice_def.id in running_ids:
+                            continue
+                        running_ids.add(slice_def.id)
+                        future = executor.submit(self._run_slice_pipeline, state, spec_path.resolve(), slice_def, dry_run_pr)
+                        running[future] = slice_def.id
+                    if not running:
                         break
-                    if slice_def.id in running_ids:
-                        continue
-                    running_ids.add(slice_def.id)
-                    future = executor.submit(self._run_slice_pipeline, state, spec_path.resolve(), slice_def, dry_run_pr)
-                    running[future] = slice_def.id
-                if not running:
-                    break
-                done, _ = wait(set(running), return_when=FIRST_COMPLETED)
-                for future in done:
-                    slice_id = running.pop(future)
-                    running_ids.discard(slice_id)
-                    try:
-                        result = future.result()
-                        for stage, paths in result.items():
-                            collected[stage].extend(paths)
-                    except StageError:
-                        stop_launching = True
-                    except Exception as exc:  # pragma: no cover - defensive fallback
-                        stop_launching = True
-                        self._mark_slice_failure(state, slice_id, state.slice_states[slice_id].current_stage or "loop", str(exc))
-                        self._emit(f"[ainative] slice {slice_id}: failed - {exc}")
+                    done, _ = wait(set(running), return_when=FIRST_COMPLETED)
+                    for future in done:
+                        slice_id = running.pop(future)
+                        running_ids.discard(slice_id)
+                        try:
+                            result = future.result()
+                            for stage, paths in result.items():
+                                collected[stage].extend(paths)
+                        except StageError:
+                            stop_launching = True
+                        except Exception as exc:  # pragma: no cover - defensive fallback
+                            stop_launching = True
+                            self._mark_slice_failure(state, slice_id, state.slice_states[slice_id].current_stage or "loop", str(exc))
+                            self._emit(f"[ainative] slice {slice_id}: failed - {exc}")
 
-        refreshed = self._state_store(run_dir=Path(state.run_dir)).load(Path(state.run_dir))
-        self._sync_state(state, refreshed)
+            refreshed = self._state_store(run_dir=Path(state.run_dir)).load(Path(state.run_dir))
+            self._sync_state(state, refreshed)
 
-        if any(slice_state.status == "failed" for slice_state in state.slice_states.values()):
-            state.scheduler_status = "failed"
-            state.status = "failed"
-            self._mutate_state(state, lambda locked: (setattr(locked, "scheduler_status", "failed"), setattr(locked, "status", "failed")))
-        elif all(slice_state.status == "pr_opened" for slice_state in state.slice_states.values()):
-            state.scheduler_status = "completed"
-            self._mutate_state(state, lambda locked: setattr(locked, "scheduler_status", "completed"))
-        else:
-            state.scheduler_status = "running"
-            self._mutate_state(state, lambda locked: setattr(locked, "scheduler_status", "running"))
+            if any(slice_state.status == "failed" for slice_state in state.slice_states.values()):
+                state.scheduler_status = "failed"
+                state.status = "failed"
+                self._mutate_state(state, lambda locked: (setattr(locked, "scheduler_status", "failed"), setattr(locked, "status", "failed")))
+            elif all(slice_state.status == "pr_opened" for slice_state in state.slice_states.values()):
+                state.scheduler_status = "completed"
+                self._mutate_state(state, lambda locked: setattr(locked, "scheduler_status", "completed"))
+            else:
+                state.scheduler_status = "running"
+                self._mutate_state(state, lambda locked: setattr(locked, "scheduler_status", "running"))
 
-        summary_artifacts = self._scheduler_summary_artifacts(state, slice_plan)
-        loop_artifacts = self._aggregate_stage_artifacts(state, "loop", collected)
-        verify_artifacts = self._aggregate_stage_artifacts(state, "verify", collected)
-        commit_artifacts = self._aggregate_stage_artifacts(state, "commit", collected)
-        pr_artifacts = self._aggregate_stage_artifacts(state, "pr", collected) + summary_artifacts
+            summary_artifacts = self._scheduler_summary_artifacts(state, slice_plan)
+            loop_artifacts = self._aggregate_stage_artifacts(state, "loop", collected)
+            verify_artifacts = self._aggregate_stage_artifacts(state, "verify", collected)
+            commit_artifacts = self._aggregate_stage_artifacts(state, "commit", collected)
+            pr_artifacts = self._aggregate_stage_artifacts(state, "pr", collected) + summary_artifacts
 
-        self._state_store(run_dir=Path(state.run_dir)).update_stage(state, stage="loop", status="completed", artifacts=loop_artifacts)
-        self._state_store(run_dir=Path(state.run_dir)).update_stage(state, stage="verify", status="completed", artifacts=verify_artifacts)
-        self._state_store(run_dir=Path(state.run_dir)).update_stage(state, stage="commit", status="completed", artifacts=commit_artifacts)
-        self._state_store(run_dir=Path(state.run_dir)).update_stage(state, stage="pr", status="completed", artifacts=list(dict.fromkeys(pr_artifacts)))
+            self._state_store(run_dir=Path(state.run_dir)).update_stage(state, stage="loop", status="completed", artifacts=loop_artifacts)
+            self._state_store(run_dir=Path(state.run_dir)).update_stage(state, stage="verify", status="completed", artifacts=verify_artifacts)
+            self._state_store(run_dir=Path(state.run_dir)).update_stage(state, stage="commit", status="completed", artifacts=commit_artifacts)
+            self._state_store(run_dir=Path(state.run_dir)).update_stage(state, stage="pr", status="completed", artifacts=list(dict.fromkeys(pr_artifacts)))
 
-        refreshed = self._state_store(run_dir=Path(state.run_dir)).load(Path(state.run_dir))
-        self._sync_state(state, refreshed)
-        return state
+            refreshed = self._state_store(run_dir=Path(state.run_dir)).load(Path(state.run_dir))
+            self._sync_state(state, refreshed)
+            return state
