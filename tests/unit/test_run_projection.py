@@ -80,3 +80,34 @@ def test_state_store_persists_projection_in_state_json(tmp_path: Path) -> None:
     assert reloaded.run_projection is not None
     assert reloaded.run_projection.schema_version == PROJECTION_SCHEMA_VERSION
     assert "recon" in reloaded.run_projection.next_executable_steps
+
+
+def test_build_run_projection_retries_failed_slice_from_failed_stage(tmp_path: Path) -> None:
+    state = _base_state(tmp_path)
+    state.stage_status["intake"] = StageSnapshot(stage="intake", status="completed")
+    state.stage_status["recon"] = StageSnapshot(stage="recon", status="completed")
+    state.stage_status["plan"] = StageSnapshot(stage="plan", status="completed")
+    state.stage_status["architecture"] = StageSnapshot(stage="architecture", status="completed")
+    state.stage_status["prd"] = StageSnapshot(stage="prd", status="completed")
+    state.stage_status["slice"] = StageSnapshot(stage="slice", status="completed")
+
+    plan = SlicePlan(
+        title="t",
+        summary="s",
+        slices=[SliceDefinition(id="a", name="A", goal="A")],
+    )
+    state.slice_states = {
+        "a": SliceExecutionState(
+            slice_id="a",
+            status="failed",
+            current_stage="commit",
+            block_reason="commit command failed",
+        )
+    }
+
+    projection = build_run_projection(state, plan)
+
+    assert "a:loop" in projection.completed_steps
+    assert "a:verify" in projection.completed_steps
+    assert "a:commit" in projection.next_executable_steps
+    assert "a:loop" not in projection.next_executable_steps

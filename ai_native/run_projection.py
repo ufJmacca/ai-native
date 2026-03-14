@@ -27,6 +27,16 @@ def _is_stage_completed(state: RunState, stage: str) -> bool:
     return bool(snapshot and snapshot.status == "completed")
 
 
+
+
+def _slice_stage_prefix(slice_id: str, stage: str) -> list[str]:
+    completed: list[str] = []
+    for pipeline_stage in SLICE_PIPELINE:
+        if pipeline_stage == stage:
+            break
+        completed.append(f"{slice_id}:{pipeline_stage}")
+    return completed
+
 def _dependency_reason(state: RunState, dependency_ids: list[str]) -> str | None:
     for dependency_id in dependency_ids:
         dependency_state = state.slice_states.get(dependency_id)
@@ -91,10 +101,12 @@ def build_run_projection(state: RunState, slice_plan: SlicePlan | None = None) -
 
         if slice_state.status == "running" and slice_state.current_stage:
             in_progress_steps.append(f"{slice_def.id}:{slice_state.current_stage}")
-            for stage in SLICE_PIPELINE:
-                if stage == slice_state.current_stage:
-                    break
-                completed_steps.append(f"{slice_def.id}:{stage}")
+            completed_steps.extend(_slice_stage_prefix(slice_def.id, slice_state.current_stage))
+            continue
+
+        if slice_state.status == "failed" and slice_state.current_stage in SLICE_PIPELINE:
+            completed_steps.extend(_slice_stage_prefix(slice_def.id, slice_state.current_stage))
+            next_executable_steps.append(f"{slice_def.id}:{slice_state.current_stage}")
             continue
 
         if not pre_slice_gate_open:
