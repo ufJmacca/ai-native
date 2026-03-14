@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from ai_native.config import AppConfig
 
 
@@ -25,3 +27,50 @@ def test_load_config_uses_defaults_when_file_is_missing(tmp_path: Path) -> None:
     assert config.repo_root == tmp_path.resolve()
     assert config.workspace.specs_dir == (tmp_path / "specs").resolve()
     assert set(config.agents) == {"builder", "critic", "verifier", "pr_reviewer"}
+
+
+def test_load_config_applies_telemetry_environment_overrides(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text(
+        """
+telemetry:
+  enabled: false
+  url: https://old.example.com
+  auth_type: none
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("AINATIVE_TELEMETRY_URL", "https://telemetry.example.com")
+    monkeypatch.setenv("AINATIVE_TELEMETRY_AUTH_TYPE", "bearer")
+    monkeypatch.setenv("AINATIVE_TELEMETRY_TOKEN", "secret-token")
+    monkeypatch.setenv("AINATIVE_TELEMETRY_TENANT", "demo")
+    monkeypatch.setenv("AINATIVE_TELEMETRY_ENABLED", "true")
+
+    config = AppConfig.load(config_path)
+
+    assert config.telemetry.enabled is True
+    assert config.telemetry.url == "https://telemetry.example.com"
+    assert config.telemetry.auth_type == "bearer"
+    assert config.telemetry.token == "secret-token"
+    assert config.telemetry.tenant == "demo"
+
+
+def test_load_config_normalizes_telemetry_auth_type_environment_override(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text("telemetry:\n  auth_type: none\n", encoding="utf-8")
+    monkeypatch.setenv("AINATIVE_TELEMETRY_AUTH_TYPE", "Bearer")
+
+    config = AppConfig.load(config_path)
+
+    assert config.telemetry.auth_type == "bearer"
+
+
+def test_load_config_rejects_invalid_telemetry_auth_type_environment_override(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text("telemetry:\n  auth_type: none\n", encoding="utf-8")
+    monkeypatch.setenv("AINATIVE_TELEMETRY_AUTH_TYPE", "invalid")
+
+    with pytest.raises(ValueError, match="Invalid AINATIVE_TELEMETRY_AUTH_TYPE"):
+        AppConfig.load(config_path)

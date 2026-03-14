@@ -46,6 +46,10 @@ If `ainative.yaml` exists in the current repository or one of its parent directo
 If no config file is present, the CLI falls back to built-in defaults that mirror the template's current agent setup.
 If you want to share a single config across repositories, pass `--config /path/to/ainative.yaml` or set `AINATIVE_CONFIG=/path/to/ainative.yaml`.
 
+Telemetry settings can be managed directly from the CLI with `ainative telemetry configure`, inspected with `ainative telemetry show`, and validated with `ainative telemetry test`.
+Telemetry secrets are masked in CLI output, and remote settings can also be overridden with `AINATIVE_TELEMETRY_*` environment variables.
+See [docs/configuration.md](docs/configuration.md) for details.
+
 ## Core Targets
 
 - `make doctor`
