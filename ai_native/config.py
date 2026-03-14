@@ -6,9 +6,8 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, Field
 
-
-
 _TELEMETRY_AUTH_TYPES = {"api_key", "bearer", "basic", "none"}
+
 
 class WorkspaceConfig(BaseModel):
     artifacts_dir: Path = Path(".ai-native/runs")
@@ -54,8 +53,17 @@ class QualityGates(BaseModel):
     require_red_green_refactor: bool = True
 
 
+class TelemetryDestination(BaseModel):
+    url: str
+    auth_type: Literal["none", "bearer", "basic", "api_key"] = "none"
+    credentials_ref: str | None = None
+    headers: dict[str, str] = Field(default_factory=dict)
+
+
 class TelemetryConfig(BaseModel):
     enabled: bool = False
+    profile: str | None = None
+    destinations: dict[str, TelemetryDestination] = Field(default_factory=dict)
     url: str | None = None
     auth_type: Literal["api_key", "bearer", "basic", "none"] = "none"
     api_key: str | None = None

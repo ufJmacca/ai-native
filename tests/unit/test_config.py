@@ -29,6 +29,43 @@ def test_load_config_uses_defaults_when_file_is_missing(tmp_path: Path) -> None:
     assert set(config.agents) == {"builder", "critic", "verifier", "pr_reviewer"}
 
 
+def test_telemetry_defaults_to_disabled() -> None:
+    config = AppConfig.load(Path(__file__).resolve().parents[2] / "ainative.yaml")
+
+    assert config.telemetry.enabled is False
+    assert config.telemetry.profile is None
+    assert config.telemetry.destinations == {}
+
+
+def test_load_config_parses_named_telemetry_destinations(tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text(
+        """
+telemetry:
+  enabled: true
+  profile: datadog
+  destinations:
+    datadog:
+      url: https://example.com/ingest
+      auth_type: bearer
+      credentials_ref: env:DATADOG_TOKEN
+      headers:
+        x-env: dev
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    config = AppConfig.load(config_path)
+
+    assert config.telemetry.enabled is True
+    assert config.telemetry.profile == "datadog"
+    assert config.telemetry.destinations["datadog"].url == "https://example.com/ingest"
+    assert config.telemetry.destinations["datadog"].auth_type == "bearer"
+    assert config.telemetry.destinations["datadog"].credentials_ref == "env:DATADOG_TOKEN"
+    assert config.telemetry.destinations["datadog"].headers == {"x-env": "dev"}
+
+
 def test_load_config_applies_telemetry_environment_overrides(monkeypatch, tmp_path: Path) -> None:
     config_path = tmp_path / "ainative.yaml"
     config_path.write_text(

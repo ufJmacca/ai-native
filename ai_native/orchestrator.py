@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Callable
 
 from ai_native.adapters import build_role_adapters
-from ai_native.config import AppConfig
+from ai_native.config import AppConfig, TelemetryDestination
 from ai_native.gitops import ensure_base_commit, ensure_repo, ensure_worktree, is_ancestor, merge_commit, non_ai_native_changes, resolve_base_ref
 from ai_native.models import RunState, SliceDefinition, SliceExecutionState
 from ai_native.prompting import PromptLibrary
@@ -51,6 +51,7 @@ class WorkflowOrchestrator:
         self.question_responder = question_responder or (lambda _stage, questions: [""] * len(questions))
         self._state_sync_lock = threading.Lock()
         self.adapters = build_role_adapters(config)
+        self.telemetry_destination: tuple[str, TelemetryDestination] | None = None
         self.stage_handlers: dict[str, Callable[..., list[Path]]] = {
             "intake": run_intake,
             "recon": run_recon,
@@ -63,6 +64,17 @@ class WorkflowOrchestrator:
             "commit": commit_run,
             "pr": create_prs,
         }
+
+    def _resolve_active_telemetry_destination(self) -> tuple[str, TelemetryDestination] | None:
+        telemetry = self.config.telemetry
+        if not telemetry.enabled:
+            return None
+        if not telemetry.profile:
+            raise StageError("Telemetry is enabled, but no telemetry profile is selected.")
+        destination = telemetry.destinations.get(telemetry.profile)
+        if destination is None:
+            raise StageError(f"Telemetry profile '{telemetry.profile}' is not configured.")
+        return telemetry.profile, destination
 
     def _emit(self, message: str) -> None:
         self.progress(message)
@@ -88,6 +100,7 @@ class WorkflowOrchestrator:
         slice_id: str | None = None,
     ) -> ExecutionContext:
         state_store = self._state_store(run_dir=Path(state.run_dir))
+        self.telemetry_destination = self._resolve_active_telemetry_destination()
         return ExecutionContext(
             config=self.config,
             prompt_library=self.prompt_library,
