@@ -136,6 +136,19 @@ class SliceExecutionState(BaseModel):
     updated_at: str = Field(default_factory=_timestamp)
 
 
+class RunProjectionBlockedStep(BaseModel):
+    step: str
+    reason: str
+
+
+class RunProjection(BaseModel):
+    schema_version: int = 1
+    completed_steps: list[str] = Field(default_factory=list)
+    in_progress_steps: list[str] = Field(default_factory=list)
+    blocked_steps: list[RunProjectionBlockedStep] = Field(default_factory=list)
+    next_executable_steps: list[str] = Field(default_factory=list)
+
+
 class RunState(BaseModel):
     run_id: str
     feature_slug: str
@@ -152,6 +165,7 @@ class RunState(BaseModel):
     slice_states: dict[str, SliceExecutionState] = Field(default_factory=dict)
     base_ref: str | None = None
     scheduler_status: Literal["idle", "running", "failed", "completed"] = "idle"
+    run_projection: RunProjection | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
