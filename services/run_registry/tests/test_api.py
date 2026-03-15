@@ -221,6 +221,56 @@ def test_legacy_post_run_create_remains_supported() -> None:
     assert payload["metadata"] == {"source": "test"}
 
 
+def test_create_run_rejects_non_url_safe_run_id() -> None:
+    database = FakeDatabase()
+    client = TestClient(create_app(settings=_settings(), database=database))
+
+    response = client.post(
+        "/v1/runs",
+        headers=_auth_headers(),
+        json={
+            "run_id": "invalid/run-id",
+            "workflow": "legacy-client",
+            "status": "in_progress",
+            "metadata": {},
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_put_run_rejects_non_url_safe_path_run_id() -> None:
+    database = FakeDatabase()
+    client = TestClient(create_app(settings=_settings(), database=database))
+    created_at = datetime.now(UTC) - timedelta(minutes=1)
+    updated_at = datetime.now(UTC)
+
+    response = client.put(
+        "/v1/runs/invalid%20run",
+        headers=_auth_headers(),
+        json={
+            "workflow": "ai-native",
+            "feature_slug": "task-management",
+            "spec_path": "/workspace/specs/task.md",
+            "workspace_root": "/workspace/app",
+            "run_dir": "/workspace/.ai-native/runs/run-1",
+            "status": "in_progress",
+            "current_stage": "verify",
+            "scheduler_status": "running",
+            "active_slice": "S002",
+            "metadata": {},
+            "run_projection": None,
+            "stage_status": {},
+            "slice_states": {},
+            "created_at": created_at.isoformat(),
+            "updated_at": updated_at.isoformat(),
+            "last_heartbeat_at": updated_at.isoformat(),
+        },
+    )
+
+    assert response.status_code == 422
+
+
 def test_delete_run_removes_registry_entry() -> None:
     database = FakeDatabase()
     client = TestClient(create_app(settings=_settings(), database=database))

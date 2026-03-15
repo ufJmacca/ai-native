@@ -4,16 +4,20 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from .config import Settings, load_settings
 from .db import Database
 
+RUN_ID_PATTERN = r"^[A-Za-z0-9._~-]+$"
+RunId = Annotated[str, StringConstraints(min_length=1, max_length=255, pattern=RUN_ID_PATTERN)]
+RunIdPath = Annotated[str, Path(min_length=1, max_length=255, pattern=RUN_ID_PATTERN)]
+
 
 class RunCreateRequest(BaseModel):
-    run_id: str = Field(min_length=1, max_length=255)
+    run_id: RunId
     workflow: str = Field(min_length=1, max_length=128)
     status: str = Field(min_length=1, max_length=64)
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -186,7 +190,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         response_model=RunDetailResponse,
         dependencies=[Depends(require_auth)],
     )
-    def upsert_run(run_id: str, request: RunSnapshotRequest) -> RunDetailResponse:
+    def upsert_run(run_id: RunIdPath, request: RunSnapshotRequest) -> RunDetailResponse:
         row = app_database.upsert_run(
             run_id,
             workflow=request.workflow,
@@ -214,7 +218,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         response_model=RunDetailResponse,
         dependencies=[Depends(require_auth)],
     )
-    def get_run(run_id: str) -> RunDetailResponse:
+    def get_run(run_id: RunIdPath) -> RunDetailResponse:
         row = app_database.get_run(run_id)
         if row is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
@@ -235,7 +239,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         response_class=Response,
         dependencies=[Depends(require_auth)],
     )
-    def delete_run(run_id: str) -> Response:
+    def delete_run(run_id: RunIdPath) -> Response:
         app_database.delete_run(run_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
