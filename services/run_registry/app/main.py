@@ -3,7 +3,6 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
-from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,7 +13,7 @@ from .db import Database
 
 
 class RunCreateRequest(BaseModel):
-    run_id: UUID
+    run_id: str = Field(min_length=1, max_length=255)
     workflow: str = Field(min_length=1, max_length=128)
     status: str = Field(min_length=1, max_length=64)
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -40,7 +39,7 @@ class RunSnapshotRequest(BaseModel):
 
 
 class RunSummaryResponse(BaseModel):
-    run_id: UUID
+    run_id: str
     workflow: str
     feature_slug: str | None = None
     spec_path: str | None = None
@@ -187,7 +186,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         response_model=RunDetailResponse,
         dependencies=[Depends(require_auth)],
     )
-    def upsert_run(run_id: UUID, request: RunSnapshotRequest) -> RunDetailResponse:
+    def upsert_run(run_id: str, request: RunSnapshotRequest) -> RunDetailResponse:
         row = app_database.upsert_run(
             run_id,
             workflow=request.workflow,
@@ -215,7 +214,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         response_model=RunDetailResponse,
         dependencies=[Depends(require_auth)],
     )
-    def get_run(run_id: UUID) -> RunDetailResponse:
+    def get_run(run_id: str) -> RunDetailResponse:
         row = app_database.get_run(run_id)
         if row is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
@@ -236,7 +235,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         response_class=Response,
         dependencies=[Depends(require_auth)],
     )
-    def delete_run(run_id: UUID) -> Response:
+    def delete_run(run_id: str) -> Response:
         app_database.delete_run(run_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 

@@ -9,6 +9,11 @@ def test_snapshot_migration_adds_dashboard_columns() -> None:
         / "migrations"
         / "002_run_snapshots.sql"
     ).read_text(encoding="utf-8")
+    run_id_migration = (
+        Path(__file__).resolve().parents[1]
+        / "migrations"
+        / "003_run_id_text.sql"
+    ).read_text(encoding="utf-8")
 
     assert "feature_slug TEXT" in migration
     assert "spec_path TEXT" in migration
@@ -21,3 +26,4 @@ def test_snapshot_migration_adds_dashboard_columns() -> None:
     assert "run_projection JSONB" in migration
     assert "stage_status JSONB" in migration
     assert "slice_states JSONB" in migration
+    assert "ALTER COLUMN run_id TYPE TEXT" in run_id_migration

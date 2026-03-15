@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from uuid import UUID
 
 import psycopg
 from psycopg.rows import dict_row
@@ -81,7 +80,7 @@ class Database:
 
     def upsert_run(
         self,
-        run_id: UUID,
+        run_id: str,
         *,
         workflow: str,
         feature_slug: str | None,
@@ -165,7 +164,7 @@ class Database:
                     RETURNING {RUN_COLUMNS}
                     """,
                     {
-                        "run_id": str(run_id),
+                        "run_id": run_id,
                         "workflow": workflow,
                         "feature_slug": feature_slug,
                         "spec_path": spec_path,
@@ -191,7 +190,7 @@ class Database:
             raise RuntimeError("Run upsert did not return a row.")
         return row
 
-    def get_run(self, run_id: UUID) -> dict[str, Any] | None:
+    def get_run(self, run_id: str) -> dict[str, Any] | None:
         with self.connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -200,7 +199,7 @@ class Database:
                     FROM runs
                     WHERE run_id = %s
                     """,
-                    (str(run_id),),
+                    (run_id,),
                 )
                 return cur.fetchone()
 
@@ -218,10 +217,10 @@ class Database:
                 )
                 return cur.fetchall()
 
-    def delete_run(self, run_id: UUID) -> None:
+    def delete_run(self, run_id: str) -> None:
         with self.connect() as conn:
             with conn.cursor() as cur:
-                cur.execute("DELETE FROM runs WHERE run_id = %s", (str(run_id),))
+                cur.execute("DELETE FROM runs WHERE run_id = %s", (run_id,))
             conn.commit()
 
     def purge_expired(self) -> int:

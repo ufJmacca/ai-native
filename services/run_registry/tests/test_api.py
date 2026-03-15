@@ -4,7 +4,6 @@ from datetime import UTC, datetime, timedelta
 import os
 from pathlib import Path
 import sys
-from uuid import UUID, uuid4
 
 import pytest
 
@@ -36,21 +35,21 @@ class FakeDatabase:
         self.purged += 1
         return 0
 
-    def upsert_run(self, run_id: UUID, **payload) -> dict:
+    def upsert_run(self, run_id: str, **payload) -> dict:
         row = {"run_id": run_id, **payload}
-        self.rows[str(run_id)] = row
+        self.rows[run_id] = row
         return row
 
-    def get_run(self, run_id: UUID) -> dict | None:
-        return self.rows.get(str(run_id))
+    def get_run(self, run_id: str) -> dict | None:
+        return self.rows.get(run_id)
 
     def list_runs(self, limit: int) -> list[dict]:
         rows = list(self.rows.values())
         rows.sort(key=lambda item: item["created_at"], reverse=True)
         return rows[:limit]
 
-    def delete_run(self, run_id: UUID) -> None:
-        self.rows.pop(str(run_id), None)
+    def delete_run(self, run_id: str) -> None:
+        self.rows.pop(run_id, None)
 
 
 def _settings() -> Settings:
@@ -86,7 +85,7 @@ def test_auth_is_required_for_registry_routes() -> None:
 def test_put_run_snapshot_returns_rich_detail_and_list_summary() -> None:
     database = FakeDatabase()
     client = TestClient(create_app(settings=_settings(), database=database))
-    run_id = uuid4()
+    run_id = "20260315T000000000000Z-agent-registry"
     created_at = datetime.now(UTC) - timedelta(minutes=3)
     updated_at = datetime.now(UTC)
     last_heartbeat_at = updated_at - timedelta(seconds=10)
@@ -116,7 +115,7 @@ def test_put_run_snapshot_returns_rich_detail_and_list_summary() -> None:
 
     assert put_response.status_code == 200
     detail = put_response.json()
-    assert detail["run_id"] == str(run_id)
+    assert detail["run_id"] == run_id
     assert detail["feature_slug"] == "task-management"
     assert detail["current_stage"] == "verify"
     assert detail["scheduler_status"] == "running"
@@ -129,7 +128,7 @@ def test_put_run_snapshot_returns_rich_detail_and_list_summary() -> None:
 
     assert list_response.status_code == 200
     summary = list_response.json()[0]
-    assert summary["run_id"] == str(run_id)
+    assert summary["run_id"] == run_id
     assert summary["feature_slug"] == "task-management"
     assert summary["liveness"] == "active"
     assert "run_projection" not in summary
@@ -138,7 +137,7 @@ def test_put_run_snapshot_returns_rich_detail_and_list_summary() -> None:
 def test_get_run_returns_stopped_liveness_for_terminal_status() -> None:
     database = FakeDatabase()
     client = TestClient(create_app(settings=_settings(), database=database))
-    run_id = uuid4()
+    run_id = "20260315T000000000001Z-cleanup"
     now = datetime.now(UTC)
     database.upsert_run(
         run_id,
@@ -170,7 +169,7 @@ def test_get_run_returns_stopped_liveness_for_terminal_status() -> None:
 def test_get_run_returns_stale_liveness_for_old_heartbeat() -> None:
     database = FakeDatabase()
     client = TestClient(create_app(settings=_settings(), database=database))
-    run_id = uuid4()
+    run_id = "20260315T000000000002Z-stale-run"
     now = datetime.now(UTC)
     database.upsert_run(
         run_id,
@@ -202,7 +201,7 @@ def test_get_run_returns_stale_liveness_for_old_heartbeat() -> None:
 def test_legacy_post_run_create_remains_supported() -> None:
     database = FakeDatabase()
     client = TestClient(create_app(settings=_settings(), database=database))
-    run_id = uuid4()
+    run_id = "legacy-run-123"
 
     response = client.post(
         "/v1/runs",
@@ -217,7 +216,7 @@ def test_legacy_post_run_create_remains_supported() -> None:
 
     assert response.status_code == 201
     payload = response.json()
-    assert payload["run_id"] == str(run_id)
+    assert payload["run_id"] == run_id
     assert payload["workflow"] == "legacy-client"
     assert payload["metadata"] == {"source": "test"}
 
@@ -225,7 +224,7 @@ def test_legacy_post_run_create_remains_supported() -> None:
 def test_delete_run_removes_registry_entry() -> None:
     database = FakeDatabase()
     client = TestClient(create_app(settings=_settings(), database=database))
-    run_id = uuid4()
+    run_id = "20260315T000000000003Z-delete-me"
     now = datetime.now(UTC)
     database.upsert_run(
         run_id,
