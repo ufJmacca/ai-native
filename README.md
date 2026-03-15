@@ -48,7 +48,9 @@ If you want to share a single config across repositories, pass `--config /path/t
 
 Telemetry settings can be managed directly from the CLI with `ainative telemetry configure`, inspected with `ainative telemetry show`, and validated with `ainative telemetry test`.
 Telemetry secrets are masked in CLI output, and remote settings can also be overridden with `AINATIVE_TELEMETRY_*` environment variables.
+Run registry publishing can be enabled separately with `registry.remote_url` and `registry.auth_token` in `ainative.yaml`, or with `AINATIVE_RUN_REGISTRY_URL` and `AINATIVE_RUN_REGISTRY_AUTH_TOKEN`.
 See [docs/configuration.md](docs/configuration.md) for details.
+For the standalone registry backend and operator dashboard, see [docs/self-hosted-run-registry.md](docs/self-hosted-run-registry.md).
 
 ## Core Targets
 

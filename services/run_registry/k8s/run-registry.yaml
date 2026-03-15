@@ -20,6 +20,8 @@ data:
   RUN_REGISTRY_DB_USER: "run_registry"
   RUN_REGISTRY_CORS_ORIGINS: "https://registry.example.com"
   RUN_REGISTRY_RETENTION_DAYS: "30"
+  RUN_REGISTRY_LIVENESS_TTL_SECONDS: "60"
+  RUN_REGISTRY_LIVENESS_GRACE_PERIOD_SECONDS: "120"
 ---
 apiVersion: apps/v1
 kind: Deployment

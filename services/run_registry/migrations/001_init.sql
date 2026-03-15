@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS runs (
-    run_id UUID PRIMARY KEY,
+    run_id TEXT PRIMARY KEY,
     workflow TEXT NOT NULL,
     status TEXT NOT NULL,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,

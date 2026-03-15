@@ -64,6 +64,14 @@ quality_gates:
   require_test_critique: true
   require_red_green_refactor: true
 
+registry:
+  heartbeat_interval_seconds: 15
+  liveness_ttl_seconds: 60
+  liveness_grace_period_seconds: 120
+  remote_url: null
+  auth_token: null
+  timeout_seconds: 5.0
+
 telemetry:
   enabled: false
   profile: null

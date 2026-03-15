@@ -111,3 +111,26 @@ def test_load_config_rejects_invalid_telemetry_auth_type_environment_override(mo
 
     with pytest.raises(ValueError, match="Invalid AINATIVE_TELEMETRY_AUTH_TYPE"):
         AppConfig.load(config_path)
+
+
+def test_load_config_applies_run_registry_environment_overrides(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text("registry:\n  heartbeat_interval_seconds: 15\n", encoding="utf-8")
+    monkeypatch.setenv("AINATIVE_RUN_REGISTRY_URL", "https://registry.example.com")
+    monkeypatch.setenv("AINATIVE_RUN_REGISTRY_AUTH_TOKEN", "registry-token")
+    monkeypatch.setenv("AINATIVE_RUN_REGISTRY_TIMEOUT_SECONDS", "8.5")
+
+    config = AppConfig.load(config_path)
+
+    assert config.registry.remote_url == "https://registry.example.com"
+    assert config.registry.auth_token == "registry-token"
+    assert config.registry.timeout_seconds == 8.5
+
+
+def test_load_config_rejects_invalid_run_registry_timeout_environment_override(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text("registry: {}\n", encoding="utf-8")
+    monkeypatch.setenv("AINATIVE_RUN_REGISTRY_TIMEOUT_SECONDS", "soon")
+
+    with pytest.raises(ValueError, match="Invalid AINATIVE_RUN_REGISTRY_TIMEOUT_SECONDS"):
+        AppConfig.load(config_path)

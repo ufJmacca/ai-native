@@ -93,9 +93,9 @@ def _parse_header(values: list[str]) -> dict[str, str]:
 
 def _state_store(config: AppConfig, workspace_root: Path | None = None, run_dir: Path | None = None) -> StateStore:
     if run_dir is not None:
-        return StateStore(run_dir.resolve().parent)
+        return StateStore(run_dir.resolve().parent, registry=config.registry, emit_warning=_print_progress)
     resolved_workspace = workspace_root.resolve() if workspace_root is not None else config.repo_root
-    return StateStore(config.resolve_artifacts_dir(resolved_workspace))
+    return StateStore(config.resolve_artifacts_dir(resolved_workspace), registry=config.registry, emit_warning=_print_progress)
 
 
 def _resolve_workspace_root(_config: AppConfig, workspace_dir: str | None) -> Path:

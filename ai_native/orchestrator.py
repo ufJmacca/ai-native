@@ -140,9 +140,13 @@ class WorkflowOrchestrator:
 
     def _state_store(self, workspace_root: Path | None = None, run_dir: Path | None = None) -> StateStore:
         if run_dir is not None:
-            return StateStore(run_dir.resolve().parent)
+            return StateStore(run_dir.resolve().parent, registry=self.config.registry, emit_warning=self._emit)
         resolved_workspace = workspace_root.resolve() if workspace_root is not None else self.config.repo_root
-        return StateStore(self.config.resolve_artifacts_dir(resolved_workspace))
+        return StateStore(
+            self.config.resolve_artifacts_dir(resolved_workspace),
+            registry=self.config.registry,
+            emit_warning=self._emit,
+        )
 
     def _context(
         self,

@@ -192,6 +192,26 @@ class RunDetailView(RunView):
     current_stage: StageName
     scheduler_status: Literal["idle", "running", "failed", "completed"]
     active_slice: str | None = None
+    run_projection: RunProjection | None = None
     slice_states: dict[str, SliceExecutionState] = Field(default_factory=dict)
     stage_status: dict[str, StageSnapshot] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RunRegistrySnapshot(BaseModel):
+    workflow: str = "ai-native"
+    feature_slug: str
+    spec_path: str
+    workspace_root: str
+    run_dir: str
+    status: RunStatus
+    current_stage: StageName
+    scheduler_status: Literal["idle", "running", "failed", "completed"]
+    active_slice: str | None = None
+    created_at: str
+    updated_at: str
+    last_heartbeat_at: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    run_projection: RunProjection | None = None
+    stage_status: dict[str, StageSnapshot] = Field(default_factory=dict)
+    slice_states: dict[str, SliceExecutionState] = Field(default_factory=dict)
