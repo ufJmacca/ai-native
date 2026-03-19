@@ -372,23 +372,27 @@ def command_doctor(args: argparse.Namespace) -> int:
     config = _load_config(args.config)
     checks = {
         "codex": shutil.which("codex"),
+        "copilot": shutil.which("copilot"),
         "gh": shutil.which("gh"),
         "git": shutil.which("git"),
         "uv": shutil.which("uv"),
         "mmdc": shutil.which("mmdc"),
         "codex_auth": str(Path.home() / ".codex" / "auth.json"),
         "codex_config": str(Path.home() / ".codex" / "config.toml"),
+        "copilot_dir": str(Path.home() / ".copilot"),
         "ssh_dir": str(Path.home() / ".ssh"),
         "gitconfig": str(Path.home() / ".gitconfig"),
         "gh_config_dir": str(Path.home() / ".config" / "gh"),
         "artifacts_dir": str(config.workspace.artifacts_dir),
     }
     payload = {
-        "commands": {name: bool(path) for name, path in checks.items() if name in {"codex", "gh", "git", "uv", "mmdc"}},
+        "commands": {
+            name: bool(path) for name, path in checks.items() if name in {"codex", "copilot", "gh", "git", "uv", "mmdc"}
+        },
         "paths": {
             name: Path(path).exists()
             for name, path in checks.items()
-            if name not in {"codex", "gh", "git", "uv", "mmdc", "artifacts_dir"}
+            if name not in {"codex", "copilot", "gh", "git", "uv", "mmdc", "artifacts_dir"}
         },
         "artifacts_dir": str(config.workspace.artifacts_dir),
         "config_path": str(config.config_path),

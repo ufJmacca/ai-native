@@ -6,7 +6,7 @@
 
 - Python-first orchestration with `uv`.
 - Devcontainer and Docker Compose setup for reproducible execution.
-- Host credential inheritance for Codex, SSH, Git identity, and optional GitHub CLI auth inside the devcontainer.
+- Host credential inheritance for Codex, SSH, Git identity, and optional GitHub CLI and GitHub Copilot CLI auth inside the devcontainer.
 - Structured prompts, JSON schemas, state management, and stage orchestration.
 - TDD gates that enforce red/green/refactor and Triple A style test reviews.
 - CI that builds and runs the template inside Docker.
@@ -14,7 +14,7 @@
 ## Quick Start
 
 1. Open the repository in a devcontainer.
-2. Confirm the devcontainer mounted `~/.codex`, `~/.ssh`, and `~/.gitconfig`.
+2. Confirm the devcontainer mounted `~/.codex`, `~/.ssh`, and `~/.gitconfig`, plus `~/.copilot` if you want to use GitHub Copilot CLI from inside the container.
 3. Run `make bootstrap`.
 4. Pick the target repository directory you want the agents to modify.
 5. Copy or create a spec inside that target repository.
@@ -72,6 +72,7 @@ The devcontainer inherits the following host paths:
 
 - `~/.codex/auth.json`
 - `~/.codex/config.toml`
+- `~/.copilot/` when present
 - `~/.ssh/`
 - `~/.gitconfig`
 - `~/.config/gh/` when present

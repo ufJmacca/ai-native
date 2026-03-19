@@ -6,4 +6,5 @@ services:
       - ${HOME}/.ssh:/home/vscode/.ssh:ro
       - ${HOME}/.gitconfig:/home/vscode/.gitconfig:ro
       - ${HOME}/.config:/mnt/host-config
+      - ${HOME}/.copilot:/mnt/host-copilot
       - /var/run/docker.sock:/var/run/docker.sock

@@ -160,6 +160,32 @@ def test_cli_runs_list_and_detail(monkeypatch, capsys, app_config, tmp_path: Pat
     assert '"liveness": "active"' in detail_output
 
 
+def test_cli_doctor_reports_copilot_binary_and_state_dir(monkeypatch, capsys, app_config, tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    (home / ".codex").mkdir(parents=True)
+    (home / ".codex" / "auth.json").write_text("{}", encoding="utf-8")
+    (home / ".codex" / "config.toml").write_text("", encoding="utf-8")
+    (home / ".copilot").mkdir()
+    (home / ".config" / "gh").mkdir(parents=True)
+    (home / ".ssh").mkdir()
+    (home / ".gitconfig").write_text("[user]\n  name = Test User\n", encoding="utf-8")
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("ai_native.cli._load_config", lambda _config_path=None: app_config)
+    monkeypatch.setattr(
+        "ai_native.cli.shutil.which",
+        lambda name: f"/usr/bin/{name}" if name in {"codex", "copilot", "gh", "git", "uv", "mmdc"} else None,
+    )
+    monkeypatch.setattr(sys, "argv", ["ainative", "doctor"])
+
+    assert main() == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["commands"]["copilot"] is True
+    assert payload["paths"]["copilot_dir"] is True
+    assert payload["paths"]["gh_config_dir"] is True
+
+
 def test_cli_telemetry_profile_add_use_and_list(monkeypatch, capsys, tmp_path: Path) -> None:
     config_path = tmp_path / "ainative.yaml"
     config_path.write_text("workspace:\n  artifacts_dir: .ai-native/runs\n", encoding="utf-8")

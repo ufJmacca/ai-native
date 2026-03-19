@@ -15,9 +15,24 @@ declare -a REQUIRED_DIRS=(
 
 declare -a OPTIONAL_DIRS=(
   "/home/vscode/.config/gh"
+  "/home/vscode/.copilot"
 )
 
 missing=0
+
+link_optional_dir() {
+  local source_path="$1"
+  local target_path="$2"
+
+  if [[ -d "${source_path}" ]] && [[ ! -e "${target_path}" ]]; then
+    mkdir -p "$(dirname "${target_path}")"
+    ln -s "${source_path}" "${target_path}"
+    echo "[linked] ${target_path} -> ${source_path}"
+  fi
+}
+
+link_optional_dir "/mnt/host-config/gh" "/home/vscode/.config/gh"
+link_optional_dir "/mnt/host-copilot" "/home/vscode/.copilot"
 
 for path in "${REQUIRED_FILES[@]}"; do
   if [[ -f "${path}" ]]; then
@@ -44,12 +59,6 @@ for path in "${OPTIONAL_DIRS[@]}"; do
     echo "[optional-missing] ${path}"
   fi
 done
-
-if [[ -d "/mnt/host-config/gh" ]] && [[ ! -e "/home/vscode/.config/gh" ]]; then
-  mkdir -p /home/vscode/.config
-  ln -s /mnt/host-config/gh /home/vscode/.config/gh
-  echo "[linked] /home/vscode/.config/gh -> /mnt/host-config/gh"
-fi
 
 if [[ "${missing}" -eq 1 ]]; then
   echo "Required host credentials were not mounted into the devcontainer." >&2
