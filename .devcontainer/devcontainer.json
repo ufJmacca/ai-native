@@ -17,6 +17,9 @@
     "ghcr.io/devcontainers/features/node:1": {
       "version": "22"
     },
+    "ghcr.io/devcontainers/features/copilot-cli:1": {
+      "version": "latest"
+    },
     "./features/codex-cli": {
       "version": "latest"
     }
@@ -25,4 +28,3 @@
   "postStartCommand": "bash .devcontainer/scripts/post-create.sh --verify-only",
   "shutdownAction": "stopCompose"
 }
-
