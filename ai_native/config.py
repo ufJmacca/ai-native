@@ -30,13 +30,22 @@ class WorkspaceConfig(BaseModel):
 
 
 class AgentProfile(BaseModel):
-    type: Literal["codex-exec", "codex-review", "external-command"]
+    type: Literal["codex-exec", "codex-review", "copilot-cli", "external-command"]
     model: str | None = None
     sandbox: str | None = None
     base_branch: str | None = None
     extra_args: list[str] = Field(default_factory=list)
     command: list[str] = Field(default_factory=list)
     search: bool = False
+    autopilot: bool | None = None
+    allow_all_permissions: bool | None = None
+    silent: bool | None = None
+    no_ask_user: bool | None = None
+    max_autopilot_continues: int | None = Field(default=None, ge=1)
+    allow_tools: list[str] = Field(default_factory=list)
+    deny_tools: list[str] = Field(default_factory=list)
+    allow_urls: list[str] = Field(default_factory=list)
+    deny_urls: list[str] = Field(default_factory=list)
 
 
 class GitConfig(BaseModel):

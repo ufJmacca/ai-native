@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from ai_native.adapters import build_adapter
+from ai_native.adapters.copilot import CopilotCLIAdapter
 from ai_native.config import AppConfig
 
 
@@ -27,6 +29,50 @@ def test_load_config_uses_defaults_when_file_is_missing(tmp_path: Path) -> None:
     assert config.repo_root == tmp_path.resolve()
     assert config.workspace.specs_dir == (tmp_path / "specs").resolve()
     assert set(config.agents) == {"builder", "critic", "verifier", "pr_reviewer"}
+
+
+def test_load_config_parses_copilot_cli_profile(tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text(
+        """
+agents:
+  builder:
+    type: copilot-cli
+    model: claude-sonnet-4.5
+    autopilot: false
+    allow_all_permissions: false
+    silent: true
+    no_ask_user: true
+    max_autopilot_continues: 4
+    allow_tools:
+      - read
+      - shell(git:*)
+    allow_urls:
+      - github.com
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    config = AppConfig.load(config_path)
+
+    assert config.agents["builder"].type == "copilot-cli"
+    assert config.agents["builder"].autopilot is False
+    assert config.agents["builder"].allow_all_permissions is False
+    assert config.agents["builder"].allow_tools == ["read", "shell(git:*)"]
+    assert config.agents["builder"].allow_urls == ["github.com"]
+    assert isinstance(build_adapter(config.agents["builder"]), CopilotCLIAdapter)
+
+
+def test_copilot_example_config_parses() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+
+    config = AppConfig.load(repo_root / "docs" / "examples" / "ainative.copilot.yaml")
+
+    assert config.agents["builder"].type == "copilot-cli"
+    assert config.agents["builder"].allow_all_permissions is True
+    assert config.agents["pr_reviewer"].allow_all_permissions is False
+    assert config.agents["pr_reviewer"].allow_tools == ["read", "shell(git:*)"]
 
 
 def test_telemetry_defaults_to_disabled() -> None:

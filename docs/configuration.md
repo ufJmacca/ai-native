@@ -2,6 +2,79 @@
 
 AI Native loads configuration from `ainative.yaml` in the current repository (or nearest parent), unless you pass `--config` or set `AINATIVE_CONFIG`.
 
+## Agent adapters
+
+AI Native ships with Codex defaults, but you can point any role at GitHub Copilot CLI with `type: copilot-cli`.
+If no explicit `ainative.yaml` is present, the built-in defaults still select Codex. Copilot-only users should copy the example below into their repository and use that as their local config.
+
+### Copilot CLI example
+
+The repository includes a copyable example at `docs/examples/ainative.copilot.yaml`.
+
+```yaml
+agents:
+  builder:
+    type: copilot-cli
+    autopilot: true
+    allow_all_permissions: true
+    silent: true
+    no_ask_user: true
+    max_autopilot_continues: 10
+  critic:
+    type: copilot-cli
+    autopilot: true
+    allow_all_permissions: true
+    silent: true
+    no_ask_user: true
+    max_autopilot_continues: 10
+  verifier:
+    type: copilot-cli
+    autopilot: true
+    allow_all_permissions: true
+    silent: true
+    no_ask_user: true
+    max_autopilot_continues: 10
+  pr_reviewer:
+    type: copilot-cli
+    autopilot: false
+    allow_all_permissions: false
+    silent: true
+    no_ask_user: true
+    allow_tools:
+      - read
+      - shell(git:*)
+```
+
+### Copilot-specific fields
+
+- `autopilot`: enable or disable autonomous continuation. Defaults to `true` for `copilot-cli`.
+- `allow_all_permissions`: when `true`, passes Copilot's full-permission mode. Defaults to `true` for `copilot-cli`.
+- `silent`: suppress usage and progress noise in stdout. Defaults to `true` for `copilot-cli`.
+- `no_ask_user`: make permission denials fail instead of prompting interactively. Defaults to `true` for `copilot-cli`.
+- `max_autopilot_continues`: bound the number of autonomous turns. Defaults to `10` for `copilot-cli`.
+- `allow_tools`, `deny_tools`, `allow_urls`, `deny_urls`: permission overrides used when `allow_all_permissions: false`.
+- `extra_args`: escape hatch for additional Copilot CLI flags.
+
+`sandbox`, `search`, and `base_branch` do not map to Copilot CLI and are ignored by the `copilot-cli` adapter.
+
+### Copilot prerequisites
+
+- Install the standalone `copilot` binary and make sure it is on `PATH`.
+- Authenticate Copilot CLI and confirm `ainative doctor` reports `providers.copilot.ready: true`.
+- Trust the target workspace root in Copilot CLI before running AI Native, so the generated worktrees under `.ai-native/worktrees/` inherit that trust.
+- This adapter intentionally does not shell through `gh copilot`; use the standalone CLI directly in v1.
+
+### Doctor output
+
+`ainative doctor` keeps the existing `commands` and `paths` inventory, and also reports additive provider readiness:
+
+- `providers.codex.selected`: at least one configured agent uses `codex-exec` or `codex-review`
+- `providers.codex.ready`: the Codex CLI plus `~/.codex/auth.json` and `~/.codex/config.toml` are present
+- `providers.copilot.selected`: at least one configured agent uses `copilot-cli`
+- `providers.copilot.ready`: the Copilot CLI plus `~/.copilot/config.json` are present
+
+The command stays non-blocking. Missing credentials for an unselected provider are informational only.
+
 ## Run registry publishing
 
 `ai_native` can publish rich run snapshots to the standalone run registry service. Publishing is best-effort: if the remote registry is unavailable or returns an error, the local workflow continues and emits a warning instead of failing the run.

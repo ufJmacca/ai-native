@@ -23,7 +23,7 @@ The run state also records the target workspace directory, so the same spec can 
 The template repo holds the prompts, schemas, and orchestration code. The actual feature work runs inside a user-provided target repository passed as `TARGET_DIR` in `make` or `--workspace-dir` in the CLI.
 
 - Repository scan and context generation run against the target workspace.
-- Codex builder, critic, verifier, and PR review commands execute in the target workspace.
+- The configured builder, critic, verifier, and PR review adapters execute in the target workspace.
 - Git branch, commit, push, and PR creation also execute in the target workspace.
 - If the target workspace is not already a git repository, the workflow initializes one there before stage execution begins.
 - Prompt and schema assets still come from the template repo.
