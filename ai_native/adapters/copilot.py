@@ -4,6 +4,8 @@ import json
 import subprocess
 from pathlib import Path
 
+from jsonschema import Draft202012Validator, ValidationError
+
 from ai_native.adapters.base import AdapterError, AgentResult
 from ai_native.config import AgentProfile
 
@@ -20,6 +22,16 @@ def _read_schema_text(schema_path: Path) -> str:
     except (OSError, json.JSONDecodeError):
         return schema_path.read_text(encoding="utf-8")
     return json.dumps(payload, indent=2, sort_keys=True)
+
+
+def _load_schema(schema_path: Path) -> dict[str, object]:
+    try:
+        payload = json.loads(schema_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise AdapterError(f"Schema file was not valid JSON: {schema_path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise AdapterError(f"Schema file must contain a JSON object: {schema_path}")
+    return payload
 
 
 def _schema_prompt(prompt: str, schema_path: Path) -> str:
@@ -118,10 +130,9 @@ class CopilotCLIAdapter:
         stripped = text.strip()
         if not stripped:
             raise AdapterError(f"Copilot output was empty for schema {schema_path}")
-        try:
-            return stripped, json.loads(stripped)
-        except json.JSONDecodeError:
-            raise
+        payload = json.loads(stripped)
+        Draft202012Validator(_load_schema(schema_path)).validate(payload)
+        return stripped, payload
 
     def run(self, prompt: str, cwd: Path, schema_path: Path | None = None) -> AgentResult:
         original_prompt = _schema_prompt(prompt, schema_path) if schema_path else prompt
@@ -135,7 +146,7 @@ class CopilotCLIAdapter:
         if schema_path:
             try:
                 text, payload = self._parse_json_output(text, schema_path)
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, ValidationError):
                 repair_prompt = _repair_prompt(prompt, text, schema_path)
                 repair_command = self._build_command(repair_prompt)
                 repair_completed = self._run_command(repair_command, cwd=cwd)
@@ -145,8 +156,8 @@ class CopilotCLIAdapter:
                     )
                 try:
                     text, payload = self._parse_json_output(repair_completed.stdout.strip(), schema_path)
-                except json.JSONDecodeError as exc:
-                    raise AdapterError(f"Copilot output was not valid JSON for schema {schema_path}: {exc}") from exc
+                except (json.JSONDecodeError, ValidationError) as exc:
+                    raise AdapterError(f"Copilot output did not satisfy schema {schema_path}: {exc}") from exc
                 command = repair_command
                 completed = repair_completed
 

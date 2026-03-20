@@ -45,7 +45,7 @@ The installed CLI now loads prompts and schemas from the package itself, so it d
 If `ainative.yaml` exists in the current repository or one of its parent directories, the CLI uses it automatically.
 If no config file is present, the CLI falls back to built-in defaults that mirror the template's current agent setup.
 If you want to share a single config across repositories, pass `--config /path/to/ainative.yaml` or set `AINATIVE_CONFIG=/path/to/ainative.yaml`.
-`ainative doctor` reports readiness for both Codex and Copilot, but only the provider selected by your current agent config is meaningfully required. If you want Copilot-only execution, start from [docs/examples/ainative.copilot.yaml](docs/examples/ainative.copilot.yaml).
+`ainative doctor` reports readiness for both Codex and Copilot, but only the provider selected by your current agent config is meaningfully required. For Copilot, that readiness signal is based on the standalone CLI being installed because auth can come from env vars, keychain, `gh auth`, or local config. If you want Copilot-only execution, start from [docs/examples/ainative.copilot.yaml](docs/examples/ainative.copilot.yaml).
 
 Telemetry settings can be managed directly from the CLI with `ainative telemetry configure`, inspected with `ainative telemetry show`, and validated with `ainative telemetry test`.
 Telemetry secrets are masked in CLI output, and remote settings can also be overridden with `AINATIVE_TELEMETRY_*` environment variables.

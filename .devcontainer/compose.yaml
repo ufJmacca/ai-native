@@ -1,7 +1,7 @@
 services:
   workspace:
     volumes:
-      - ${HOME}/.codex:/mnt/host-codex
+      - ${HOME}/.codex:/mnt/host-codex:ro
       - ${HOME}/.ssh:/home/vscode/.ssh:ro
       - ${HOME}/.gitconfig:/home/vscode/.gitconfig:ro
       - ${HOME}/.config:/mnt/host-config

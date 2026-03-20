@@ -81,6 +81,46 @@ def test_copilot_cli_adapter_repairs_invalid_json_once(monkeypatch, tmp_path: Pa
     assert "not json" in repair_prompt
 
 
+def test_copilot_cli_adapter_repairs_schema_violations_once(monkeypatch, tmp_path: Path) -> None:
+    commands: list[list[str]] = []
+    schema_path = tmp_path / "schema.json"
+    schema_path.write_text(
+        '{"type":"object","additionalProperties":false,"required":["title"],"properties":{"title":{"type":"string"}}}',
+        encoding="utf-8",
+    )
+
+    def fake_run(command, cwd, capture_output, text, check):  # type: ignore[no-untyped-def]
+        commands.append(command)
+        if len(commands) == 1:
+            return SimpleNamespace(returncode=0, stdout='{"title":"ok","extra":true}\n', stderr="")
+        return SimpleNamespace(returncode=0, stdout='{"title":"repaired"}\n', stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    adapter = CopilotCLIAdapter(AgentProfile(type="copilot-cli"))
+
+    result = adapter.run("prompt", cwd=tmp_path, schema_path=schema_path)
+
+    assert result.json_data == {"title": "repaired"}
+    assert len(commands) == 2
+
+
+def test_copilot_cli_adapter_raises_when_repaired_json_still_violates_schema(monkeypatch, tmp_path: Path) -> None:
+    schema_path = tmp_path / "schema.json"
+    schema_path.write_text(
+        '{"type":"object","additionalProperties":false,"required":["questions"],"properties":{"questions":{"type":"array","items":{"type":"string"},"maxItems":1}}}',
+        encoding="utf-8",
+    )
+
+    def fake_run(command, cwd, capture_output, text, check):  # type: ignore[no-untyped-def]
+        return SimpleNamespace(returncode=0, stdout='{"questions":["one","two"]}\n', stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    adapter = CopilotCLIAdapter(AgentProfile(type="copilot-cli"))
+
+    with pytest.raises(AdapterError, match="did not satisfy schema"):
+        adapter.run("prompt", cwd=tmp_path, schema_path=schema_path)
+
+
 def test_copilot_cli_adapter_respects_permission_overrides(monkeypatch, tmp_path: Path) -> None:
     captured: dict[str, object] = {}
 

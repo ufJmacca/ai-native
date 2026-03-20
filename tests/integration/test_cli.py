@@ -195,9 +195,7 @@ def test_cli_doctor_reports_selected_copilot_provider_when_codex_is_missing(
     monkeypatch, capsys, app_config, tmp_path: Path
 ) -> None:
     home = tmp_path / "home"
-    (home / ".copilot").mkdir(parents=True)
-    (home / ".copilot" / "config.json").write_text("{}", encoding="utf-8")
-    (home / ".ssh").mkdir()
+    (home / ".ssh").mkdir(parents=True)
     (home / ".gitconfig").write_text("[user]\n  name = Test User\n", encoding="utf-8")
 
     app_config.agents = {
@@ -221,6 +219,7 @@ def test_cli_doctor_reports_selected_copilot_provider_when_codex_is_missing(
     assert payload["commands"]["codex"] is False
     assert payload["commands"]["copilot"] is True
     assert payload["paths"]["codex_auth"] is False
+    assert payload["paths"]["copilot_config"] is False
     assert payload["providers"]["codex"] == {"selected": False, "ready": False}
     assert payload["providers"]["copilot"] == {"selected": True, "ready": True}
 

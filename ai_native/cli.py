@@ -63,7 +63,9 @@ def _selected_provider_summary(config: AppConfig, checks: dict[str, str | None])
         },
         "copilot": {
             "selected": copilot_selected,
-            "ready": bool(checks["copilot"]) and Path(str(checks["copilot_config"])).exists(),
+            # Copilot auth can come from env vars, keychain, gh auth, or config.json,
+            # so config.json alone is too narrow to use as the readiness gate.
+            "ready": bool(checks["copilot"]),
         },
     }
 

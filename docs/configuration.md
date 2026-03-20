@@ -60,7 +60,7 @@ agents:
 ### Copilot prerequisites
 
 - Install the standalone `copilot` binary and make sure it is on `PATH`.
-- Authenticate Copilot CLI and confirm `ainative doctor` reports `providers.copilot.ready: true`.
+- Authenticate Copilot CLI. `ainative doctor` reports `providers.copilot.ready: true` when the standalone CLI is installed, while actual Copilot auth may come from env vars, keychain, `gh auth`, or local config depending on your setup.
 - Trust the target workspace root in Copilot CLI before running AI Native, so the generated worktrees under `.ai-native/worktrees/` inherit that trust.
 - This adapter intentionally does not shell through `gh copilot`; use the standalone CLI directly in v1.
 
@@ -71,7 +71,7 @@ agents:
 - `providers.codex.selected`: at least one configured agent uses `codex-exec` or `codex-review`
 - `providers.codex.ready`: the Codex CLI plus `~/.codex/auth.json` and `~/.codex/config.toml` are present
 - `providers.copilot.selected`: at least one configured agent uses `copilot-cli`
-- `providers.copilot.ready`: the Copilot CLI plus `~/.copilot/config.json` are present
+- `providers.copilot.ready`: the Copilot CLI is present; Copilot auth may come from env vars, keychain, `gh auth`, or local config
 
 The command stays non-blocking. Missing credentials for an unselected provider are informational only.
 
