@@ -5,7 +5,7 @@ AI Native loads configuration from `ainative.yaml` in the current repository (or
 ## Agent adapters
 
 AI Native ships with Codex defaults, but you can point any role at GitHub Copilot CLI with `type: copilot-cli`.
-If no explicit `ainative.yaml` is present, the built-in defaults still select Codex. Copilot-only users should copy the example below into their repository and use that as their local config.
+If no explicit `ainative.yaml` is present, AI Native auto-detects a ready provider for the built-in defaults. Codex stays the preferred default when both providers are ready, and Copilot becomes the default only when `copilot` is available and Codex is not. Copilot-only users can still copy the example below into their repository when they want an explicit local config.
 
 ### Copilot CLI example
 
@@ -68,12 +68,12 @@ agents:
 
 `ainative doctor` keeps the existing `commands` and `paths` inventory, and also reports additive provider readiness:
 
-- `providers.codex.selected`: at least one configured agent uses `codex-exec` or `codex-review`
+- `providers.codex.selected`: at least one effective agent profile uses `codex-exec` or `codex-review`
 - `providers.codex.ready`: the Codex CLI plus `~/.codex/auth.json` and `~/.codex/config.toml` are present
-- `providers.copilot.selected`: at least one configured agent uses `copilot-cli`
+- `providers.copilot.selected`: at least one effective agent profile uses `copilot-cli`
 - `providers.copilot.ready`: the Copilot CLI is present; Copilot auth may come from env vars, keychain, `gh auth`, or local config
 
-The command stays non-blocking. Missing credentials for an unselected provider are informational only.
+The command stays non-blocking. Missing credentials for an unselected provider are informational only, and when `ainative.yaml` is absent the selected provider reflects the same no-config auto-detection logic used at runtime.
 
 ## Run registry publishing
 

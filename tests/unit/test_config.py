@@ -20,8 +20,9 @@ def test_load_config_resolves_paths_from_repo_root() -> None:
     assert config.package_root == repo_root / "ai_native"
 
 
-def test_load_config_uses_defaults_when_file_is_missing(tmp_path: Path) -> None:
+def test_load_config_prefers_codex_defaults_when_no_provider_is_ready(monkeypatch, tmp_path: Path) -> None:
     config_path = tmp_path / "ainative.yaml"
+    monkeypatch.setattr("ai_native.config.shutil.which", lambda _name: None)
 
     config = AppConfig.load(config_path)
 
@@ -29,6 +30,56 @@ def test_load_config_uses_defaults_when_file_is_missing(tmp_path: Path) -> None:
     assert config.repo_root == tmp_path.resolve()
     assert config.workspace.specs_dir == (tmp_path / "specs").resolve()
     assert set(config.agents) == {"builder", "critic", "verifier", "pr_reviewer"}
+    assert config.agents["builder"].type == "codex-exec"
+    assert config.agents["pr_reviewer"].type == "codex-review"
+
+
+def test_load_config_uses_copilot_defaults_when_only_copilot_is_ready(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("ai_native.config.shutil.which", lambda name: f"/usr/bin/{name}" if name == "copilot" else None)
+
+    config = AppConfig.load(config_path)
+
+    assert config.agents["builder"].type == "copilot-cli"
+    assert config.agents["pr_reviewer"].type == "copilot-cli"
+    assert config.agents["pr_reviewer"].allow_all_permissions is False
+    assert config.agents["pr_reviewer"].allow_tools == ["read", "shell(git:*)"]
+
+
+def test_load_config_uses_codex_defaults_when_only_codex_is_ready(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    home = tmp_path / "home"
+    (home / ".codex").mkdir(parents=True)
+    (home / ".codex" / "auth.json").write_text("{}", encoding="utf-8")
+    (home / ".codex" / "config.toml").write_text("", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("ai_native.config.shutil.which", lambda name: f"/usr/bin/{name}" if name == "codex" else None)
+
+    config = AppConfig.load(config_path)
+
+    assert config.agents["builder"].type == "codex-exec"
+    assert config.agents["pr_reviewer"].type == "codex-review"
+
+
+def test_load_config_prefers_codex_defaults_when_both_providers_are_ready(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    home = tmp_path / "home"
+    (home / ".codex").mkdir(parents=True)
+    (home / ".codex" / "auth.json").write_text("{}", encoding="utf-8")
+    (home / ".codex" / "config.toml").write_text("", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(
+        "ai_native.config.shutil.which",
+        lambda name: f"/usr/bin/{name}" if name in {"codex", "copilot"} else None,
+    )
+
+    config = AppConfig.load(config_path)
+
+    assert config.agents["builder"].type == "codex-exec"
+    assert config.agents["pr_reviewer"].type == "codex-review"
 
 
 def test_load_config_parses_copilot_cli_profile(tmp_path: Path) -> None:

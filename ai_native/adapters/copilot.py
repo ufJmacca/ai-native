@@ -61,6 +61,18 @@ def _repair_prompt(original_prompt: str, invalid_response: str, schema_path: Pat
     )
 
 
+def _review_prompt(prompt: str, base_branch: str | None) -> str:
+    if not base_branch:
+        return prompt
+    return "\n\n".join(
+        [
+            f"Review the current branch against the git base branch `{base_branch}`.",
+            "Use Copilot's review workflow to inspect the actual code changes before writing findings.",
+            prompt.rstrip(),
+        ]
+    )
+
+
 class CopilotCLIAdapter:
     def __init__(self, profile: AgentProfile):
         self.profile = profile
@@ -88,15 +100,17 @@ class CopilotCLIAdapter:
             else self.profile.max_autopilot_continues
         )
 
-    def _build_command(self, prompt: str) -> list[str]:
+    def _build_command(self, prompt: str, *, agent: str | None = None, use_autopilot: bool) -> list[str]:
         command = ["copilot"]
         if self.profile.model:
             command.extend(["--model", self.profile.model])
+        if agent:
+            command.extend(["--agent", agent])
         if self._resolved_silent():
             command.append("-s")
         if self._resolved_no_ask_user():
             command.append("--no-ask-user")
-        if self._resolved_autopilot():
+        if use_autopilot:
             command.append("--autopilot")
             command.extend(["--max-autopilot-continues", str(self._resolved_max_autopilot_continues())])
         if self._resolved_allow_all_permissions():
@@ -136,7 +150,7 @@ class CopilotCLIAdapter:
 
     def run(self, prompt: str, cwd: Path, schema_path: Path | None = None) -> AgentResult:
         original_prompt = _schema_prompt(prompt, schema_path) if schema_path else prompt
-        command = self._build_command(original_prompt)
+        command = self._build_command(original_prompt, use_autopilot=self._resolved_autopilot())
         completed = self._run_command(command, cwd=cwd)
         if completed.returncode != 0:
             raise AdapterError(completed.stderr.strip() or completed.stdout.strip() or "copilot failed")
@@ -148,7 +162,7 @@ class CopilotCLIAdapter:
                 text, payload = self._parse_json_output(text, schema_path)
             except (json.JSONDecodeError, ValidationError):
                 repair_prompt = _repair_prompt(prompt, text, schema_path)
-                repair_command = self._build_command(repair_prompt)
+                repair_command = self._build_command(repair_prompt, use_autopilot=self._resolved_autopilot())
                 repair_completed = self._run_command(repair_command, cwd=cwd)
                 if repair_completed.returncode != 0:
                     raise AdapterError(
@@ -164,6 +178,23 @@ class CopilotCLIAdapter:
         return AgentResult(
             text=text,
             json_data=payload,
+            stdout=completed.stdout,
+            stderr=completed.stderr,
+            command=command,
+            returncode=completed.returncode,
+        )
+
+    def review(self, cwd: Path, prompt: str, base_branch: str | None = None) -> AgentResult:
+        command = self._build_command(
+            _review_prompt(prompt, base_branch),
+            agent="code-review",
+            use_autopilot=self.profile.autopilot is True,
+        )
+        completed = self._run_command(command, cwd=cwd)
+        if completed.returncode != 0:
+            raise AdapterError(completed.stderr.strip() or completed.stdout.strip() or "copilot review failed")
+        return AgentResult(
+            text=completed.stdout.strip(),
             stdout=completed.stdout,
             stderr=completed.stderr,
             command=command,

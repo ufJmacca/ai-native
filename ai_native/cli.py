@@ -13,7 +13,7 @@ from typing import Any
 
 import yaml
 
-from ai_native.config import AppConfig
+from ai_native.config import AppConfig, provider_readiness, provider_runtime_checks
 from ai_native.orchestrator import WorkflowOrchestrator
 from ai_native.state import StateStore
 
@@ -43,29 +43,18 @@ def _discover_config_path(explicit: str | None = None) -> Path:
     return (current / "ainative.yaml").resolve()
 
 
-def _copilot_home() -> Path:
-    override = os.environ.get("COPILOT_HOME")
-    if override:
-        return Path(override).expanduser().resolve()
-    return (Path.home() / ".copilot").resolve()
-
-
-def _selected_provider_summary(config: AppConfig, checks: dict[str, str | None]) -> dict[str, dict[str, bool]]:
+def _selected_provider_summary(config: AppConfig, readiness: dict[str, bool]) -> dict[str, dict[str, bool]]:
     selected_types = {profile.type for profile in config.agents.values()}
     codex_selected = bool(selected_types & _CODEX_AGENT_TYPES)
     copilot_selected = bool(selected_types & _COPILOT_AGENT_TYPES)
     return {
         "codex": {
             "selected": codex_selected,
-            "ready": bool(checks["codex"])
-            and Path(str(checks["codex_auth"])).exists()
-            and Path(str(checks["codex_config"])).exists(),
+            "ready": readiness["codex"],
         },
         "copilot": {
             "selected": copilot_selected,
-            # Copilot auth can come from env vars, keychain, gh auth, or config.json,
-            # so config.json alone is too narrow to use as the readiness gate.
-            "ready": bool(checks["copilot"]),
+            "ready": readiness["copilot"],
         },
     }
 
@@ -399,23 +388,18 @@ def command_telemetry_test(args: argparse.Namespace) -> int:
 
 def command_doctor(args: argparse.Namespace) -> int:
     config = _load_config(args.config)
-    copilot_home = _copilot_home()
     checks = {
-        "codex": shutil.which("codex"),
-        "copilot": shutil.which("copilot"),
+        **provider_runtime_checks(shutil.which),
         "gh": shutil.which("gh"),
         "git": shutil.which("git"),
         "uv": shutil.which("uv"),
         "mmdc": shutil.which("mmdc"),
-        "codex_auth": str(Path.home() / ".codex" / "auth.json"),
-        "codex_config": str(Path.home() / ".codex" / "config.toml"),
-        "copilot_dir": str(copilot_home),
-        "copilot_config": str(copilot_home / "config.json"),
         "ssh_dir": str(Path.home() / ".ssh"),
         "gitconfig": str(Path.home() / ".gitconfig"),
         "gh_config_dir": str(Path.home() / ".config" / "gh"),
         "artifacts_dir": str(config.workspace.artifacts_dir),
     }
+    readiness = provider_readiness(checks)
     payload = {
         "commands": {
             name: bool(path) for name, path in checks.items() if name in {"codex", "copilot", "gh", "git", "uv", "mmdc"}
@@ -425,7 +409,7 @@ def command_doctor(args: argparse.Namespace) -> int:
             for name, path in checks.items()
             if name not in {"codex", "copilot", "gh", "git", "uv", "mmdc", "artifacts_dir"}
         },
-        "providers": _selected_provider_summary(config, checks),
+        "providers": _selected_provider_summary(config, readiness),
         "artifacts_dir": str(config.workspace.artifacts_dir),
         "config_path": str(config.config_path),
         "config_exists": config.config_path.exists(),

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import shutil
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Literal
 
@@ -91,6 +94,41 @@ class TelemetryConfig(BaseModel):
     tenant: str | None = None
 
 
+def codex_home() -> Path:
+    return (Path.home() / ".codex").resolve()
+
+
+def copilot_home() -> Path:
+    override = os.environ.get("COPILOT_HOME")
+    if override:
+        return Path(override).expanduser().resolve()
+    return (Path.home() / ".copilot").resolve()
+
+
+def provider_runtime_checks(which: Callable[[str], str | None] | None = None) -> dict[str, str | None]:
+    resolver = shutil.which if which is None else which
+    codex_root = codex_home()
+    copilot_root = copilot_home()
+    return {
+        "codex": resolver("codex"),
+        "copilot": resolver("copilot"),
+        "codex_auth": str(codex_root / "auth.json"),
+        "codex_config": str(codex_root / "config.toml"),
+        "copilot_dir": str(copilot_root),
+        "copilot_config": str(copilot_root / "config.json"),
+    }
+
+
+def provider_readiness(checks: Mapping[str, str | None]) -> dict[str, bool]:
+    return {
+        "codex": bool(checks.get("codex"))
+        and Path(str(checks["codex_auth"])).exists()
+        and Path(str(checks["codex_config"])).exists(),
+        # Copilot auth can come from env vars, keychain, gh auth, or local config.
+        "copilot": bool(checks.get("copilot")),
+    }
+
+
 def default_agents() -> dict[str, AgentProfile]:
     return {
         "builder": AgentProfile(
@@ -120,6 +158,52 @@ def default_agents() -> dict[str, AgentProfile]:
     }
 
 
+def copilot_default_agents() -> dict[str, AgentProfile]:
+    return {
+        "builder": AgentProfile(
+            type="copilot-cli",
+            autopilot=True,
+            allow_all_permissions=True,
+            silent=True,
+            no_ask_user=True,
+            max_autopilot_continues=10,
+        ),
+        "critic": AgentProfile(
+            type="copilot-cli",
+            autopilot=True,
+            allow_all_permissions=True,
+            silent=True,
+            no_ask_user=True,
+            max_autopilot_continues=10,
+        ),
+        "verifier": AgentProfile(
+            type="copilot-cli",
+            autopilot=True,
+            allow_all_permissions=True,
+            silent=True,
+            no_ask_user=True,
+            max_autopilot_continues=10,
+        ),
+        "pr_reviewer": AgentProfile(
+            type="copilot-cli",
+            autopilot=False,
+            allow_all_permissions=False,
+            silent=True,
+            no_ask_user=True,
+            allow_tools=["read", "shell(git:*)"],
+        ),
+    }
+
+
+def default_agents_for_missing_config(
+    which: Callable[[str], str | None] | None = None,
+) -> dict[str, AgentProfile]:
+    readiness = provider_readiness(provider_runtime_checks(which))
+    if readiness["copilot"] and not readiness["codex"]:
+        return copilot_default_agents()
+    return default_agents()
+
+
 class AppConfig(BaseModel):
     workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig)
     agents: dict[str, AgentProfile] = Field(default_factory=default_agents)
@@ -135,9 +219,12 @@ class AppConfig(BaseModel):
     def load(cls, path: Path) -> "AppConfig":
         resolved_path = path.resolve()
         raw = {}
-        if resolved_path.exists():
+        config_exists = resolved_path.exists()
+        if config_exists:
             raw = yaml.safe_load(resolved_path.read_text(encoding="utf-8")) or {}
         config = cls.model_validate(raw)
+        if not config_exists:
+            config.agents = default_agents_for_missing_config()
         config.config_path = resolved_path
         config.repo_root = resolved_path.parent.resolve()
         config.package_root = Path(__file__).resolve().parent

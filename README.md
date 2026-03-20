@@ -43,7 +43,7 @@ You can also install `ai-native-base` as a reusable CLI and run it from other re
 
 The installed CLI now loads prompts and schemas from the package itself, so it does not need this template checkout at runtime.
 If `ainative.yaml` exists in the current repository or one of its parent directories, the CLI uses it automatically.
-If no config file is present, the CLI falls back to built-in defaults that mirror the template's current agent setup.
+If no config file is present, the CLI auto-detects a ready provider for the built-in defaults: Copilot is selected only when `copilot` is available and Codex is not, while Codex remains the preferred default when both are ready.
 If you want to share a single config across repositories, pass `--config /path/to/ainative.yaml` or set `AINATIVE_CONFIG=/path/to/ainative.yaml`.
 `ainative doctor` reports readiness for both Codex and Copilot, but only the provider selected by your current agent config is meaningfully required. For Copilot, that readiness signal is based on the standalone CLI being installed because auth can come from env vars, keychain, `gh auth`, or local config. If you want Copilot-only execution, start from [docs/examples/ainative.copilot.yaml](docs/examples/ainative.copilot.yaml).
 
@@ -79,6 +79,7 @@ The devcontainer inherits the following host paths:
 - `~/.config/gh/` when present
 
 `~/.ssh/` and `~/.gitconfig` are the only host mounts required for the devcontainer bootstrap checks. Codex and Copilot credentials are optional and only needed for the provider you configure.
+If `ainative.yaml` is missing, AI Native auto-detects a ready provider from those optional mounts and installed CLIs, preferring Codex when both providers are ready.
 The root `compose.yaml` does not require host auth mounts so CI and headless smoke tests can run without secrets. The devcontainer override adds the host credentials for interactive AI-native development.
 
 ## Workflow Stages

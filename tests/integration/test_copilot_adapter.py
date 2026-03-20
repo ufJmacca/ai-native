@@ -159,6 +159,43 @@ def test_copilot_cli_adapter_respects_permission_overrides(monkeypatch, tmp_path
     ]
 
 
+def test_copilot_cli_adapter_review_uses_code_review_agent(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(command, cwd, capture_output, text, check):  # type: ignore[no-untyped-def]
+        captured["command"] = command
+        return SimpleNamespace(returncode=0, stdout="review ok\n", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    adapter = CopilotCLIAdapter(
+        AgentProfile(
+            type="copilot-cli",
+            allow_all_permissions=False,
+            allow_tools=["read", "shell(git:*)"],
+        )
+    )
+
+    result = adapter.review(cwd=tmp_path, prompt="prompt", base_branch="main")
+
+    review_prompt = captured["command"][captured["command"].index("-p") + 1]  # type: ignore[index]
+    assert result.text == "review ok"
+    assert captured["command"] == [
+        "copilot",
+        "--agent",
+        "code-review",
+        "-s",
+        "--no-ask-user",
+        "--allow-tool",
+        "read",
+        "--allow-tool",
+        "shell(git:*)",
+        "-p",
+        review_prompt,
+    ]
+    assert "git base branch `main`" in review_prompt
+    assert "--autopilot" not in captured["command"]
+
+
 def test_copilot_cli_adapter_raises_when_binary_is_missing(monkeypatch, tmp_path: Path) -> None:
     def fake_run(command, cwd, capture_output, text, check):  # type: ignore[no-untyped-def]
         raise FileNotFoundError(command[0])

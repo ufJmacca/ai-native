@@ -224,6 +224,63 @@ def test_cli_doctor_reports_selected_copilot_provider_when_codex_is_missing(
     assert payload["providers"]["copilot"] == {"selected": True, "ready": True}
 
 
+def test_cli_doctor_auto_selects_copilot_when_config_is_missing(monkeypatch, capsys, tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    home = tmp_path / "home"
+    (home / ".ssh").mkdir(parents=True)
+    (home / ".gitconfig").write_text("[user]\n  name = Test User\n", encoding="utf-8")
+
+    monkeypatch.chdir(repo_root)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(
+        "ai_native.cli.shutil.which",
+        lambda name: f"/usr/bin/{name}" if name in {"copilot", "gh", "git", "uv", "mmdc"} else None,
+    )
+    monkeypatch.setattr(
+        "ai_native.config.shutil.which",
+        lambda name: f"/usr/bin/{name}" if name == "copilot" else None,
+    )
+    monkeypatch.setattr(sys, "argv", ["ainative", "doctor"])
+
+    assert main() == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["config_exists"] is False
+    assert payload["providers"]["codex"] == {"selected": False, "ready": False}
+    assert payload["providers"]["copilot"] == {"selected": True, "ready": True}
+
+
+def test_cli_doctor_auto_selects_codex_when_config_is_missing(monkeypatch, capsys, tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    home = tmp_path / "home"
+    (home / ".codex").mkdir(parents=True)
+    (home / ".codex" / "auth.json").write_text("{}", encoding="utf-8")
+    (home / ".codex" / "config.toml").write_text("", encoding="utf-8")
+    (home / ".ssh").mkdir()
+    (home / ".gitconfig").write_text("[user]\n  name = Test User\n", encoding="utf-8")
+
+    monkeypatch.chdir(repo_root)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(
+        "ai_native.cli.shutil.which",
+        lambda name: f"/usr/bin/{name}" if name in {"codex", "gh", "git", "uv", "mmdc"} else None,
+    )
+    monkeypatch.setattr(
+        "ai_native.config.shutil.which",
+        lambda name: f"/usr/bin/{name}" if name == "codex" else None,
+    )
+    monkeypatch.setattr(sys, "argv", ["ainative", "doctor"])
+
+    assert main() == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["config_exists"] is False
+    assert payload["providers"]["codex"] == {"selected": True, "ready": True}
+    assert payload["providers"]["copilot"] == {"selected": False, "ready": False}
+
+
 def test_cli_telemetry_profile_add_use_and_list(monkeypatch, capsys, tmp_path: Path) -> None:
     config_path = tmp_path / "ainative.yaml"
     config_path.write_text("workspace:\n  artifacts_dir: .ai-native/runs\n", encoding="utf-8")

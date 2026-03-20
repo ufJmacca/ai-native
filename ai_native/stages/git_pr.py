@@ -86,6 +86,17 @@ def _commit_message(slice_def: SliceDefinition, slice_dir: Path, conventional_pr
     return subject, "\n".join(body_lines)
 
 
+def _review_prompt_with_base_branch(prompt: str, base_branch: str | None) -> str:
+    if not base_branch:
+        return prompt
+    return "\n\n".join(
+        [
+            f"Review the current branch against the git base branch `{base_branch}`.",
+            prompt.rstrip(),
+        ]
+    )
+
+
 def commit_slice(context: ExecutionContext, state: RunState, slice_def: SliceDefinition) -> list[Path]:
     commit_path = _commit_artifact_path(context, state, slice_def.id)
     if commit_path.exists():
@@ -141,7 +152,15 @@ def create_prs(context: ExecutionContext, state: RunState, dry_run: bool = False
         pr_body=body,
         prd=prd,
     )
-    review_text = context.pr_reviewer.run(review_prompt, cwd=context.repo_root).text
+    pr_base = _pr_base_branch(context, state, slice_plan, slice_def)
+    review_method = getattr(context.pr_reviewer, "review", None)
+    if callable(review_method):
+        review_text = review_method(cwd=context.repo_root, prompt=review_prompt, base_branch=pr_base).text
+    else:
+        review_text = context.pr_reviewer.run(
+            _review_prompt_with_base_branch(review_prompt, pr_base),
+            cwd=context.repo_root,
+        ).text
     review_path = pr_dir / f"{slice_def.id}-review.md"
     write_text(review_path, review_text)
     artifacts.append(review_path)
@@ -150,7 +169,6 @@ def create_prs(context: ExecutionContext, state: RunState, dry_run: bool = False
         ensure_branch(context.repo_root, branch_name)
         push_branch(context.repo_root, branch_name)
         title = f"{slice_def.id}: {slice_def.name}"
-        pr_base = _pr_base_branch(context, state, slice_plan, slice_def)
         pr_url = create_pull_request(context.repo_root, title, body_path, context.config.git.pr_draft, base_branch=pr_base)
         url_path = pr_dir / f"{slice_def.id}-url.txt"
         write_text(url_path, pr_url + "\n")
