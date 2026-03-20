@@ -1,0 +1,31 @@
+agents:
+  builder:
+    type: copilot-cli
+    autopilot: true
+    allow_all_permissions: true
+    silent: true
+    no_ask_user: true
+    max_autopilot_continues: 10
+  critic:
+    type: copilot-cli
+    autopilot: true
+    allow_all_permissions: true
+    silent: true
+    no_ask_user: true
+    max_autopilot_continues: 10
+  verifier:
+    type: copilot-cli
+    autopilot: true
+    allow_all_permissions: true
+    silent: true
+    no_ask_user: true
+    max_autopilot_continues: 10
+  pr_reviewer:
+    type: copilot-cli
+    autopilot: false
+    allow_all_permissions: false
+    silent: true
+    no_ask_user: true
+    allow_tools:
+      - read
+      - shell(git:*)

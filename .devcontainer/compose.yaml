@@ -1,8 +1,7 @@
 services:
   workspace:
     volumes:
-      - ${HOME}/.codex/auth.json:/home/vscode/.codex/auth.json:ro
-      - ${HOME}/.codex/config.toml:/home/vscode/.codex/config.toml:ro
+      - ${HOME}/.codex:/mnt/host-codex:ro
       - ${HOME}/.ssh:/home/vscode/.ssh:ro
       - ${HOME}/.gitconfig:/home/vscode/.gitconfig:ro
       - ${HOME}/.config:/mnt/host-config

@@ -13,12 +13,14 @@ from typing import Any
 
 import yaml
 
-from ai_native.config import AppConfig
+from ai_native.config import AppConfig, provider_readiness, provider_runtime_checks
 from ai_native.orchestrator import WorkflowOrchestrator
 from ai_native.state import StateStore
 
 _AUTH_TYPES = ("api_key", "bearer", "basic", "none")
 _SECRET_KEYS = {"api_key", "token", "password"}
+_CODEX_AGENT_TYPES = {"codex-exec", "codex-review"}
+_COPILOT_AGENT_TYPES = {"copilot-cli"}
 
 
 def _config_path() -> Path:
@@ -39,6 +41,22 @@ def _discover_config_path(explicit: str | None = None) -> Path:
         if candidate.exists():
             return candidate.resolve()
     return (current / "ainative.yaml").resolve()
+
+
+def _selected_provider_summary(config: AppConfig, readiness: dict[str, bool]) -> dict[str, dict[str, bool]]:
+    selected_types = {profile.type for profile in config.agents.values()}
+    codex_selected = bool(selected_types & _CODEX_AGENT_TYPES)
+    copilot_selected = bool(selected_types & _COPILOT_AGENT_TYPES)
+    return {
+        "codex": {
+            "selected": codex_selected,
+            "ready": readiness["codex"],
+        },
+        "copilot": {
+            "selected": copilot_selected,
+            "ready": readiness["copilot"],
+        },
+    }
 
 
 def _load_config(config_path: str | None = None) -> AppConfig:
@@ -371,20 +389,17 @@ def command_telemetry_test(args: argparse.Namespace) -> int:
 def command_doctor(args: argparse.Namespace) -> int:
     config = _load_config(args.config)
     checks = {
-        "codex": shutil.which("codex"),
-        "copilot": shutil.which("copilot"),
+        **provider_runtime_checks(shutil.which),
         "gh": shutil.which("gh"),
         "git": shutil.which("git"),
         "uv": shutil.which("uv"),
         "mmdc": shutil.which("mmdc"),
-        "codex_auth": str(Path.home() / ".codex" / "auth.json"),
-        "codex_config": str(Path.home() / ".codex" / "config.toml"),
-        "copilot_dir": str(Path.home() / ".copilot"),
         "ssh_dir": str(Path.home() / ".ssh"),
         "gitconfig": str(Path.home() / ".gitconfig"),
         "gh_config_dir": str(Path.home() / ".config" / "gh"),
         "artifacts_dir": str(config.workspace.artifacts_dir),
     }
+    readiness = provider_readiness(checks)
     payload = {
         "commands": {
             name: bool(path) for name, path in checks.items() if name in {"codex", "copilot", "gh", "git", "uv", "mmdc"}
@@ -394,6 +409,7 @@ def command_doctor(args: argparse.Namespace) -> int:
             for name, path in checks.items()
             if name not in {"codex", "copilot", "gh", "git", "uv", "mmdc", "artifacts_dir"}
         },
+        "providers": _selected_provider_summary(config, readiness),
         "artifacts_dir": str(config.workspace.artifacts_dir),
         "config_path": str(config.config_path),
         "config_exists": config.config_path.exists(),

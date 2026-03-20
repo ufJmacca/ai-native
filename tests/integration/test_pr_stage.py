@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ai_native.adapters.base import AgentResult
 from ai_native.models import RunState
 from ai_native.prompting import PromptLibrary
 from ai_native.state import StateStore
@@ -357,3 +358,173 @@ def test_create_prs_falls_back_to_base_branch_for_incomparable_dependencies(monk
 
     assert any(path.name == "S004-url.txt" for path in artifacts)
     assert captured["base_branch"] == app_config.workspace.base_branch
+
+
+def test_create_prs_uses_review_adapter_base_branch(monkeypatch, app_config, tmp_path: Path) -> None:
+    run_dir = tmp_path / "artifacts" / "run-1"
+    (run_dir / "slice").mkdir(parents=True, exist_ok=True)
+    (run_dir / "prd").mkdir(parents=True, exist_ok=True)
+    write_json(
+        run_dir / "slice" / "slices.json",
+        {
+            "title": "Slices",
+            "summary": "Summary",
+            "slices": [
+                {
+                    "id": "S001",
+                    "name": "First slice",
+                    "goal": "Ship slice one.",
+                    "acceptance_criteria": ["One"],
+                    "file_impact": ["a.py"],
+                    "test_plan": ["test one"],
+                    "dependencies": [],
+                },
+                {
+                    "id": "S002",
+                    "name": "Second slice",
+                    "goal": "Ship slice two.",
+                    "acceptance_criteria": ["Two"],
+                    "file_impact": ["b.py"],
+                    "test_plan": ["test two"],
+                    "dependencies": ["S001"],
+                },
+                {
+                    "id": "S003",
+                    "name": "Third slice",
+                    "goal": "Ship slice three.",
+                    "acceptance_criteria": ["Three"],
+                    "file_impact": ["c.py"],
+                    "test_plan": ["test three"],
+                    "dependencies": ["S001", "S002"],
+                },
+            ],
+        },
+    )
+    write_json(
+        run_dir / "prd" / "prd.json",
+        {
+            "title": "PRD",
+            "user_value": "Users can create todos",
+            "scope": [],
+            "constraints": [],
+            "acceptance_criteria": [],
+            "out_of_scope": [],
+        },
+    )
+    state = RunState(
+        run_id="run-1",
+        feature_slug="todo",
+        spec_path=str(tmp_path / "spec.md"),
+        workspace_root=str(Path(__file__).resolve().parents[2]),
+        spec_hash="hash",
+        run_dir=str(run_dir),
+        created_at=utc_now(),
+        updated_at=utc_now(),
+        active_slice="S003",
+        slice_states={
+            "S001": {"slice_id": "S001", "branch_name": "codex/todo-S001"},
+            "S002": {"slice_id": "S002", "branch_name": "codex/todo-S002"},
+        },
+    )
+    prompt_library = PromptLibrary(Path(__file__).resolve().parents[2] / "ai_native" / "prompts")
+    adapter = FakeWorkflowAdapter()
+    context = ExecutionContext(
+        config=app_config,
+        prompt_library=prompt_library,
+        state_store=StateStore(tmp_path / "artifacts"),
+        template_root=Path(__file__).resolve().parents[2] / "ai_native",
+        repo_root=Path(__file__).resolve().parents[2],
+        spec_path=tmp_path / "spec.md",
+        run_dir=run_dir,
+        builder=adapter,
+        critic=adapter,
+        verifier=adapter,
+        pr_reviewer=adapter,
+    )
+    monkeypatch.setattr("ai_native.stages.git_pr.ensure_branch", lambda cwd, branch: None)
+    monkeypatch.setattr("ai_native.stages.git_pr.push_branch", lambda cwd, branch: None)
+    monkeypatch.setattr(
+        "ai_native.stages.git_pr.create_pull_request",
+        lambda cwd, title, body_file, draft, base_branch=None: "https://example.invalid/pr/3",
+    )
+
+    create_prs(context, state, dry_run=False)
+
+    review_calls = [call for call in adapter.calls if call["mode"] == "review"]
+    assert len(review_calls) == 1
+    assert review_calls[0]["cwd"] == Path(__file__).resolve().parents[2]
+    assert review_calls[0]["base_branch"] == "codex/todo-S002"
+
+
+def test_create_prs_falls_back_to_run_with_base_branch_context(app_config, tmp_path: Path) -> None:
+    class RunOnlyAdapter:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        def run(self, prompt: str, cwd: Path, schema_path: Path | None = None) -> AgentResult:
+            self.prompts.append(prompt)
+            return AgentResult(text="# Review\nLooks good.")
+
+    run_dir = tmp_path / "artifacts" / "run-1"
+    (run_dir / "slice").mkdir(parents=True, exist_ok=True)
+    (run_dir / "prd").mkdir(parents=True, exist_ok=True)
+    write_json(
+        run_dir / "slice" / "slices.json",
+        {
+            "title": "Slices",
+            "summary": "Summary",
+            "slices": [
+                {
+                    "id": "S001",
+                    "name": "Create todos",
+                    "goal": "Ship the first slice.",
+                    "acceptance_criteria": ["Todo can be created"],
+                    "file_impact": ["app.py"],
+                    "test_plan": ["Test create endpoint"],
+                    "dependencies": [],
+                }
+            ],
+        },
+    )
+    write_json(
+        run_dir / "prd" / "prd.json",
+        {
+            "title": "PRD",
+            "user_value": "Users can create todos",
+            "scope": [],
+            "constraints": [],
+            "acceptance_criteria": [],
+            "out_of_scope": [],
+        },
+    )
+    state = RunState(
+        run_id="run-1",
+        feature_slug="todo",
+        spec_path=str(tmp_path / "spec.md"),
+        workspace_root=str(Path(__file__).resolve().parents[2]),
+        spec_hash="hash",
+        run_dir=str(run_dir),
+        created_at=utc_now(),
+        updated_at=utc_now(),
+        active_slice="S001",
+    )
+    prompt_library = PromptLibrary(Path(__file__).resolve().parents[2] / "ai_native" / "prompts")
+    adapter = RunOnlyAdapter()
+    context = ExecutionContext(
+        config=app_config,
+        prompt_library=prompt_library,
+        state_store=StateStore(tmp_path / "artifacts"),
+        template_root=Path(__file__).resolve().parents[2] / "ai_native",
+        repo_root=Path(__file__).resolve().parents[2],
+        spec_path=tmp_path / "spec.md",
+        run_dir=run_dir,
+        builder=adapter,
+        critic=adapter,
+        verifier=adapter,
+        pr_reviewer=adapter,
+    )
+
+    create_prs(context, state, dry_run=True)
+
+    assert len(adapter.prompts) == 1
+    assert "git base branch `main`" in adapter.prompts[0]

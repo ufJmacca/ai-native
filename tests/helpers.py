@@ -12,11 +12,19 @@ class FakeWorkflowAdapter:
         self.calls: list[dict[str, object]] = []
 
     def run(self, prompt: str, cwd: Path, schema_path: Path | None = None) -> AgentResult:
-        self.calls.append({"prompt": prompt, "cwd": cwd, "schema_path": schema_path})
+        self.calls.append({"mode": "run", "prompt": prompt, "cwd": cwd, "schema_path": schema_path})
         if schema_path:
             payload = self._payload_for_schema(schema_path.name)
             return AgentResult(text=json.dumps(payload), json_data=payload)
 
+        return self._text_result(prompt)
+
+    def review(self, cwd: Path, prompt: str, base_branch: str | None = None) -> AgentResult:
+        self.calls.append({"mode": "review", "prompt": prompt, "cwd": cwd, "base_branch": base_branch})
+        return self._text_result(prompt)
+
+    @staticmethod
+    def _text_result(prompt: str) -> AgentResult:
         match = re.search(r"Slice artifact directory:\n(?P<path>.+)", prompt)
         if match:
             slice_dir = Path(match.group("path").strip())

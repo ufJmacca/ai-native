@@ -6,7 +6,7 @@
 
 - Python-first orchestration with `uv`.
 - Devcontainer and Docker Compose setup for reproducible execution.
-- Host credential inheritance for Codex, SSH, Git identity, and optional GitHub CLI and GitHub Copilot CLI auth inside the devcontainer.
+- Host credential inheritance for SSH, Git identity, and optional Codex, GitHub CLI, and GitHub Copilot CLI auth inside the devcontainer.
 - Structured prompts, JSON schemas, state management, and stage orchestration.
 - TDD gates that enforce red/green/refactor and Triple A style test reviews.
 - CI that builds and runs the template inside Docker.
@@ -14,14 +14,14 @@
 ## Quick Start
 
 1. Open the repository in a devcontainer.
-2. Confirm the devcontainer mounted `~/.codex`, `~/.ssh`, and `~/.gitconfig`, plus `~/.copilot` if you want to use GitHub Copilot CLI from inside the container.
+2. Confirm the devcontainer mounted `~/.ssh` and `~/.gitconfig`. Mount `~/.codex` only if you plan to use Codex, and `~/.copilot` only if you plan to use GitHub Copilot CLI.
 3. Run `make bootstrap`.
 4. Pick the target repository directory you want the agents to modify.
 5. Copy or create a spec inside that target repository.
 6. Run `make run SPEC=specs/task-management.md TARGET_DIR=/path/to/target-repo`.
 
 The `Makefile` auto-detects whether it is running inside the devcontainer. Inside the devcontainer it runs `uv` commands directly. On the host it shells out through `docker compose run`.
-`TARGET_DIR` is mandatory for the workflow targets in `make`. The workflow runs Codex, git operations, repository recon, and implementation inside that target directory rather than inside the template repo. Relative spec paths are resolved from `TARGET_DIR`.
+`TARGET_DIR` is mandatory for the workflow targets in `make`. The workflow runs the configured agent adapter, git operations, repository recon, and implementation inside that target directory rather than inside the template repo. Relative spec paths are resolved from `TARGET_DIR`.
 `TARGET_DIR` must be either a standalone directory that ai-native can initialize as a git repository or an existing repository root. Nested directories inside another repository are rejected to avoid binding worktrees, branches, and PRs to the wrong git root.
 If a relative spec path is not present under `TARGET_DIR`, the CLI falls back to the same relative path in the template repo.
 If the planning step needs clarification, `make run` now pauses and asks the questions directly in the terminal, then feeds the answers back into the planning loop.
@@ -38,17 +38,19 @@ Because the scheduler creates worktrees from the base branch, the target reposit
 You can also install `ai-native-base` as a reusable CLI and run it from other repositories:
 
 1. Install it with `uv tool install /path/to/ai-native-base` for local development, or publish it and install with `uv tool install ai-native-base`.
-2. From the target repository, run `ainative doctor` to confirm the runtime and auth setup.
+2. From the target repository, run `ainative doctor` to confirm the runtime and selected-provider auth setup.
 3. Run the workflow directly from that repository, for example `ainative run --spec specs/my-feature.md`.
 
 The installed CLI now loads prompts and schemas from the package itself, so it does not need this template checkout at runtime.
 If `ainative.yaml` exists in the current repository or one of its parent directories, the CLI uses it automatically.
-If no config file is present, the CLI falls back to built-in defaults that mirror the template's current agent setup.
+If no config file is present, the CLI auto-detects a ready provider for the built-in defaults. Copilot is selected only when the standalone `copilot` CLI is available, Codex is not, and AI Native can see a local Copilot auth signal such as a supported token env var, `gh` auth state, or the plaintext fallback config file. Codex remains the preferred default when both providers are ready.
 If you want to share a single config across repositories, pass `--config /path/to/ainative.yaml` or set `AINATIVE_CONFIG=/path/to/ainative.yaml`.
+`ainative doctor` reports readiness for both Codex and Copilot, but only the provider selected by your current agent config is meaningfully required. For Copilot, that readiness signal is based on the standalone CLI being installed because auth can come from env vars, keychain, `gh auth`, or local config. If you want Copilot-only execution, start from [docs/examples/ainative.copilot.yaml](docs/examples/ainative.copilot.yaml).
 
 Telemetry settings can be managed directly from the CLI with `ainative telemetry configure`, inspected with `ainative telemetry show`, and validated with `ainative telemetry test`.
 Telemetry secrets are masked in CLI output, and remote settings can also be overridden with `AINATIVE_TELEMETRY_*` environment variables.
 Run registry publishing can be enabled separately with `registry.remote_url` and `registry.auth_token` in `ainative.yaml`, or with `AINATIVE_RUN_REGISTRY_URL` and `AINATIVE_RUN_REGISTRY_AUTH_TOKEN`.
+GitHub Copilot CLI is also supported as a first-class adapter. Use the standalone `copilot` binary rather than `gh copilot`, trust the target workspace in Copilot CLI first, and start from [docs/examples/ainative.copilot.yaml](docs/examples/ainative.copilot.yaml) if you want a ready-made agent profile set.
 See [docs/configuration.md](docs/configuration.md) for details.
 For the standalone registry backend and operator dashboard, see [docs/self-hosted-run-registry.md](docs/self-hosted-run-registry.md).
 
@@ -70,13 +72,14 @@ For the standalone registry backend and operator dashboard, see [docs/self-hoste
 
 The devcontainer inherits the following host paths:
 
-- `~/.codex/auth.json`
-- `~/.codex/config.toml`
+- `~/.codex/` when present and you want to use Codex
 - `~/.copilot/` when present
 - `~/.ssh/`
 - `~/.gitconfig`
 - `~/.config/gh/` when present
 
+`~/.ssh/` and `~/.gitconfig` are the only host mounts required for the devcontainer bootstrap checks. Codex and Copilot credentials are optional and only needed for the provider you configure.
+If `ainative.yaml` is missing, AI Native auto-detects a ready provider from those optional mounts, installed CLIs, and locally visible auth signals, preferring Codex when both providers are ready.
 The root `compose.yaml` does not require host auth mounts so CI and headless smoke tests can run without secrets. The devcontainer override adds the host credentials for interactive AI-native development.
 
 ## Workflow Stages
