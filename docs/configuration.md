@@ -5,7 +5,7 @@ AI Native loads configuration from `ainative.yaml` in the current repository (or
 ## Agent adapters
 
 AI Native ships with Codex defaults, but you can point any role at GitHub Copilot CLI with `type: copilot-cli`.
-If no explicit `ainative.yaml` is present, AI Native auto-detects a ready provider for the built-in defaults. Codex stays the preferred default when both providers are ready, and Copilot becomes the default only when `copilot` is available and Codex is not. Copilot-only users can still copy the example below into their repository when they want an explicit local config.
+If no explicit `ainative.yaml` is present, AI Native auto-detects a ready provider for the built-in defaults. Codex stays the preferred default when both providers are ready, and Copilot becomes the default only when the standalone `copilot` CLI is available, Codex is not, and AI Native can see a local Copilot auth signal such as a supported token env var, `gh` auth state, or the plaintext fallback config file. Copilot-only users can still copy the example below into their repository when they want an explicit local config.
 
 ### Copilot CLI example
 
@@ -61,6 +61,7 @@ agents:
 
 - Install the standalone `copilot` binary and make sure it is on `PATH`.
 - Authenticate Copilot CLI. `ainative doctor` reports `providers.copilot.ready: true` when the standalone CLI is installed, while actual Copilot auth may come from env vars, keychain, `gh auth`, or local config depending on your setup.
+- The no-config auto-detect path is intentionally more conservative than `ainative doctor`: it only auto-selects Copilot when AI Native can observe a local auth signal. Keychain-only Copilot setups should use an explicit `ainative.yaml` if they want Copilot selected without Codex.
 - Trust the target workspace root in Copilot CLI before running AI Native, so the generated worktrees under `.ai-native/worktrees/` inherit that trust.
 - This adapter intentionally does not shell through `gh copilot`; use the standalone CLI directly in v1.
 

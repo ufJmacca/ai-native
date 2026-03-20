@@ -170,6 +170,7 @@ def test_copilot_cli_adapter_review_uses_code_review_agent(monkeypatch, tmp_path
     adapter = CopilotCLIAdapter(
         AgentProfile(
             type="copilot-cli",
+            autopilot=False,
             allow_all_permissions=False,
             allow_tools=["read", "shell(git:*)"],
         )
@@ -194,6 +195,22 @@ def test_copilot_cli_adapter_review_uses_code_review_agent(monkeypatch, tmp_path
     ]
     assert "git base branch `main`" in review_prompt
     assert "--autopilot" not in captured["command"]
+
+
+def test_copilot_cli_adapter_review_defaults_to_autopilot(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(command, cwd, capture_output, text, check):  # type: ignore[no-untyped-def]
+        captured["command"] = command
+        return SimpleNamespace(returncode=0, stdout="review ok\n", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    adapter = CopilotCLIAdapter(AgentProfile(type="copilot-cli"))
+
+    adapter.review(cwd=tmp_path, prompt="prompt", base_branch="main")
+
+    assert "--autopilot" in captured["command"]
+    assert "--max-autopilot-continues" in captured["command"]
 
 
 def test_copilot_cli_adapter_raises_when_binary_is_missing(monkeypatch, tmp_path: Path) -> None:

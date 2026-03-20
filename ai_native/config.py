@@ -10,6 +10,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 _TELEMETRY_AUTH_TYPES = {"api_key", "bearer", "basic", "none"}
+_COPILOT_TOKEN_ENV_VARS = ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
 
 
 class WorkspaceConfig(BaseModel):
@@ -129,6 +130,16 @@ def provider_readiness(checks: Mapping[str, str | None]) -> dict[str, bool]:
     }
 
 
+def copilot_has_auth_signal(which: Callable[[str], str | None] | None = None) -> bool:
+    resolver = shutil.which if which is None else which
+    if any(_read_env(name) for name in _COPILOT_TOKEN_ENV_VARS):
+        return True
+    if Path(copilot_home() / "config.json").exists():
+        return True
+    gh_hosts = Path.home() / ".config" / "gh" / "hosts.yml"
+    return bool(resolver("gh")) and gh_hosts.exists()
+
+
 def default_agents() -> dict[str, AgentProfile]:
     return {
         "builder": AgentProfile(
@@ -199,7 +210,7 @@ def default_agents_for_missing_config(
     which: Callable[[str], str | None] | None = None,
 ) -> dict[str, AgentProfile]:
     readiness = provider_readiness(provider_runtime_checks(which))
-    if readiness["copilot"] and not readiness["codex"]:
+    if readiness["copilot"] and not readiness["codex"] and copilot_has_auth_signal(which):
         return copilot_default_agents()
     return default_agents()
 

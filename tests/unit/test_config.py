@@ -34,11 +34,14 @@ def test_load_config_prefers_codex_defaults_when_no_provider_is_ready(monkeypatc
     assert config.agents["pr_reviewer"].type == "codex-review"
 
 
-def test_load_config_uses_copilot_defaults_when_only_copilot_is_ready(monkeypatch, tmp_path: Path) -> None:
+def test_load_config_uses_copilot_defaults_when_only_copilot_is_ready_with_auth_signal(
+    monkeypatch, tmp_path: Path
+) -> None:
     config_path = tmp_path / "ainative.yaml"
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("GH_TOKEN", "test-token")
     monkeypatch.setattr("ai_native.config.shutil.which", lambda name: f"/usr/bin/{name}" if name == "copilot" else None)
 
     config = AppConfig.load(config_path)
@@ -47,6 +50,19 @@ def test_load_config_uses_copilot_defaults_when_only_copilot_is_ready(monkeypatc
     assert config.agents["pr_reviewer"].type == "copilot-cli"
     assert config.agents["pr_reviewer"].allow_all_permissions is False
     assert config.agents["pr_reviewer"].allow_tools == ["read", "shell(git:*)"]
+
+
+def test_load_config_keeps_codex_defaults_when_copilot_has_no_auth_signal(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("ai_native.config.shutil.which", lambda name: f"/usr/bin/{name}" if name == "copilot" else None)
+
+    config = AppConfig.load(config_path)
+
+    assert config.agents["builder"].type == "codex-exec"
+    assert config.agents["pr_reviewer"].type == "codex-review"
 
 
 def test_load_config_uses_codex_defaults_when_only_codex_is_ready(monkeypatch, tmp_path: Path) -> None:

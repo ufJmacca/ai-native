@@ -188,7 +188,7 @@ class CopilotCLIAdapter:
         command = self._build_command(
             _review_prompt(prompt, base_branch),
             agent="code-review",
-            use_autopilot=self.profile.autopilot is True,
+            use_autopilot=self._resolved_autopilot(),
         )
         completed = self._run_command(command, cwd=cwd)
         if completed.returncode != 0:

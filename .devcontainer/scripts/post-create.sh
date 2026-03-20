@@ -93,7 +93,7 @@ if [[ "${missing}" -eq 1 ]]; then
   echo "Required host credentials were not mounted into the devcontainer." >&2
   echo "Check .devcontainer/compose.yaml and confirm ~/.ssh and ~/.gitconfig exist on the host." >&2
   echo "Codex and Copilot credentials are optional provider mounts." >&2
-  echo "When ainative.yaml is missing, AI Native auto-detects a ready provider and prefers Codex when both are available." >&2
+  echo "When ainative.yaml is missing, AI Native auto-detects a ready provider from installed CLIs and visible auth signals, and prefers Codex when both are available." >&2
 fi
 
 if [[ "${VERIFY_ONLY}" == "--verify-only" ]]; then

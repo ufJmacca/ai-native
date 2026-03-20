@@ -233,6 +233,7 @@ def test_cli_doctor_auto_selects_copilot_when_config_is_missing(monkeypatch, cap
 
     monkeypatch.chdir(repo_root)
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("GH_TOKEN", "test-token")
     monkeypatch.setattr(
         "ai_native.cli.shutil.which",
         lambda name: f"/usr/bin/{name}" if name in {"copilot", "gh", "git", "uv", "mmdc"} else None,
