@@ -243,14 +243,17 @@ def _supports_non_image_reference_inputs(manifest: ReferenceManifest) -> bool:
     return any(item.kind in {"html_export", "url"} for item in manifest.references)
 
 
-def ensure_reference_workflow_supported(manifest: ReferenceManifest, adapter: AgentAdapter) -> None:
+def ensure_reference_workflow_supported(
+    manifest: ReferenceManifest, adapter: AgentAdapter, *, role_name: str = "builder"
+) -> None:
     if adapter_supports_image_inputs(adapter):
         return
     if _supports_non_image_reference_inputs(manifest):
         return
     raise StageError(
-        "Reference-driven web workflow requires a builder that supports image inputs when all references are image-only. "
-        "Use Codex for this run or add an html_export/url reference."
+        "Reference-driven web workflow requires "
+        f"a {role_name} that supports image inputs when all references are image-only. "
+        f"Use Codex for the {role_name} role or add an html_export/url reference."
     )
 
 

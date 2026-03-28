@@ -9,6 +9,7 @@ from ai_native.models import ReviewReport, RunState, VerificationReport
 from ai_native.reference_workflow import (
     adapter_supports_image_inputs,
     append_reference_prompt_block,
+    ensure_reference_workflow_supported,
     load_reference_context,
     load_reference_manifest_for_run,
     visual_review_prompt_block,
@@ -307,6 +308,7 @@ def _run_visual_review(
     reference_context = load_reference_context(Path(context.run_dir))
     if manifest is None or reference_context is None:
         raise StageError("reference-driven verification requires recon/reference-context artifacts")
+    ensure_reference_workflow_supported(manifest, context.critic, role_name="critic")
 
     capture_dir = _capture_dir(verification_dir, slice_definition["id"], attempt)
     with preview_session(manifest.preview, cwd=context.repo_root):

@@ -52,3 +52,39 @@ Implement the page faithfully.
     assert parsed.reference_manifest.workflow_profile == "reference_driven_web"
     assert parsed.reference_manifest.references[0].path == str(export_path.resolve())
     assert parsed.reference_manifest.preview.url == "http://127.0.0.1:3000"
+
+
+def test_parse_spec_accepts_crlf_frontmatter(tmp_path: Path) -> None:
+    export_path = tmp_path / "stitch.html"
+    export_path.write_text("<html></html>\n", encoding="utf-8")
+    spec_path = tmp_path / "spec-crlf.md"
+    spec_path.write_bytes(
+        (
+            "---\r\n"
+            "ainative:\r\n"
+            "  workflow_profile: reference_driven_web\r\n"
+            "  references:\r\n"
+            "    - id: landing\r\n"
+            "      label: Landing export\r\n"
+            "      kind: html_export\r\n"
+            "      path: stitch.html\r\n"
+            "      route: /\r\n"
+            "      viewport:\r\n"
+            "        width: 1440\r\n"
+            "        height: 1024\r\n"
+            "        label: desktop\r\n"
+            "  preview:\r\n"
+            "    url: http://127.0.0.1:3000\r\n"
+            "---\r\n"
+            "# Visual Spec\r\n"
+            "\r\n"
+            "Implement the page faithfully.\r\n"
+        ).encode("utf-8")
+    )
+
+    parsed = parse_spec(spec_path)
+
+    assert parsed.reference_manifest is not None
+    assert parsed.reference_manifest.workflow_profile == "reference_driven_web"
+    assert parsed.reference_manifest.references[0].path == str(export_path.resolve())
+    assert parsed.reference_manifest.preview.url == "http://127.0.0.1:3000"

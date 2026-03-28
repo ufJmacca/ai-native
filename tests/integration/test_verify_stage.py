@@ -8,10 +8,9 @@ from pathlib import Path
 import pytest
 
 from ai_native.adapters.base import AgentResult
-from ai_native.browser import ImplementationCapture
 from ai_native.prompting import PromptLibrary
 from ai_native.stages.common import ExecutionContext, StageError
-from ai_native.stages.verify import run as run_verify
+from ai_native.stages.verify import ImplementationCapture, run as run_verify
 from ai_native.state import StateStore
 from ai_native.utils import write_json
 from tests.helpers import FakeWorkflowAdapter
@@ -648,3 +647,70 @@ def test_verify_stage_slugifies_reference_image_artifact_names(
     expected_reference = run_dir / "verify" / "visual" / "S001" / "attempt-1" / "hero-mobile-reference.png"
     assert expected_reference.exists()
     assert critic.image_paths[0] == [capture_path, expected_reference]
+
+
+def test_verify_stage_rejects_image_only_references_without_image_capable_critic(
+    app_config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reference_image = tmp_path / "reference.png"
+    reference_image.write_bytes(b"reference-image")
+    spec_path = tmp_path / "reference-spec.md"
+    spec_path.write_text(
+        "\n".join(
+            [
+                "---",
+                "ainative:",
+                "  workflow_profile: reference_driven_web",
+                "  references:",
+                "    - id: hero",
+                "      label: Hero reference",
+                "      kind: image",
+                f"      path: {reference_image.name}",
+                "      route: /",
+                "      viewport:",
+                "        width: 1440",
+                "        height: 1200",
+                "        label: desktop",
+                "  preview:",
+                "    url: http://localhost:4173",
+                "---",
+                "# Reference Landing Page",
+                "",
+                "Recreate the supplied landing page faithfully.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    state_store = StateStore(tmp_path / "artifacts")
+    state = state_store.create_run(spec_path, Path(__file__).resolve().parents[2])
+    run_dir = Path(state.run_dir)
+    _seed_slice_plan_and_artifacts(run_dir)
+    _seed_reference_context(run_dir)
+
+    monkeypatch.setattr(
+        "ai_native.stages.verify.preview_session",
+        lambda preview, cwd: (_ for _ in ()).throw(AssertionError("preview session should not start")),
+    )
+    monkeypatch.setattr(
+        "ai_native.stages.verify.capture_implementation_screenshots",
+        lambda preview, references, output_dir: (_ for _ in ()).throw(AssertionError("captures should not run")),
+    )
+
+    context = ExecutionContext(
+        config=app_config,
+        prompt_library=PromptLibrary(Path(__file__).resolve().parents[2] / "ai_native" / "prompts"),
+        state_store=state_store,
+        template_root=Path(__file__).resolve().parents[2] / "ai_native",
+        repo_root=Path(__file__).resolve().parents[2],
+        spec_path=spec_path,
+        run_dir=run_dir,
+        builder=VerificationRevisionBuilder(),
+        critic=FakeWorkflowAdapter(),
+        verifier=PassingVerifier(),
+        pr_reviewer=FakeWorkflowAdapter(),
+        emit_progress=lambda _message: None,
+    )
+
+    with pytest.raises(StageError, match="critic that supports image inputs"):
+        run_verify(context, state)

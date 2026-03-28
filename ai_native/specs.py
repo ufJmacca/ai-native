@@ -19,9 +19,9 @@ class ParsedSpec(BaseModel):
 
 
 def _split_frontmatter(raw_text: str) -> tuple[dict[str, Any], str]:
-    if not raw_text.startswith(f"{_FRONTMATTER_DELIMITER}\n"):
-        return {}, raw_text
     lines = raw_text.splitlines(keepends=True)
+    if not lines or lines[0].strip() != _FRONTMATTER_DELIMITER:
+        return {}, raw_text
     closing_index: int | None = None
     for index in range(1, len(lines)):
         if lines[index].strip() == _FRONTMATTER_DELIMITER:
