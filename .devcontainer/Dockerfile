@@ -11,16 +11,16 @@ ENV PATH=/home/vscode/.local/bin:${PATH}
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        libasound2 \
-        libatk-bridge2.0-0 \
-        libatk1.0-0 \
+        libasound2t64 \
+        libatk-bridge2.0-0t64 \
+        libatk1.0-0t64 \
         libcairo2 \
-        libcups2 \
+        libcups2t64 \
         libdbus-1-3 \
         libdrm2 \
         libgbm1 \
-        libglib2.0-0 \
-        libgtk-3-0 \
+        libglib2.0-0t64 \
+        libgtk-3-0t64 \
         libnspr4 \
         libnss3 \
         libpango-1.0-0 \
