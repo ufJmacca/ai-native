@@ -12,6 +12,17 @@ from ai_native.stages.common import ExecutionContext, StageError, write_diagram_
 from ai_native.utils import read_json, read_text, write_json
 
 ATTEMPT_RE = re.compile(r"architecture-review-attempt-(?P<attempt>\d+)\.json$")
+MERMAID_BROWSER_DEPENDENCY_ERRORS = (
+    "Could not find Chrome",
+    "chrome-headless-shell",
+)
+MERMAID_BROWSER_LAUNCH_ERRORS = (
+    "Failed to launch the browser process",
+    "Running as root without --no-sandbox is not supported",
+    "No usable sandbox",
+    "zygote_host_impl_linux.cc",
+    "rosetta error",
+)
 
 
 def _existing_attempt_numbers(stage_dir: Path) -> list[int]:
@@ -208,8 +219,10 @@ def _validate_mermaid(context: ExecutionContext, diagram_path: Path) -> tuple[bo
         )
         if completed.returncode != 0:
             message = completed.stderr.strip() or completed.stdout.strip() or "Mermaid validation failed."
-            if "Could not find Chrome" in message or "chrome-headless-shell" in message:
+            if any(fragment in message for fragment in MERMAID_BROWSER_DEPENDENCY_ERRORS):
                 return True, f"Mermaid CLI browser dependency missing; validation skipped. {message}"
+            if any(fragment in message for fragment in MERMAID_BROWSER_LAUNCH_ERRORS):
+                return True, f"Mermaid CLI browser launch unavailable; validation skipped. {message}"
             return False, message
         return True, "Mermaid validation passed."
 

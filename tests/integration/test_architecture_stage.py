@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from pathlib import Path
 
 from ai_native.adapters.base import AgentResult
@@ -341,3 +342,55 @@ def test_architecture_stage_resumes_legacy_failed_run(app_config, tmp_spec: Path
     assert (stage_dir / "architecture-review-attempt-1.json").exists()
     assert (stage_dir / "validation-attempt-1.json").exists()
     assert (stage_dir / "architecture-attempt-2.json").exists()
+
+
+def test_architecture_stage_skips_browser_launch_validation_failures(
+    monkeypatch, app_config, tmp_spec: Path, tmp_path: Path
+) -> None:
+    app_config.workspace.architecture_max_attempts = 3
+    app_config.workspace.mermaid_validate_command = ["mmdc"]
+    state_store = StateStore(tmp_path / "artifacts")
+    state = state_store.create_run(tmp_spec, Path(__file__).resolve().parents[2])
+    run_dir = Path(state.run_dir)
+    _seed_plan_and_context(run_dir)
+    builder = ResumeArchitectureBuilder()
+    critic = ApprovingArchitectureCritic()
+    progress: list[str] = []
+
+    monkeypatch.setattr("ai_native.stages.architecture.shutil.which", lambda command: f"/usr/bin/{command}")
+    monkeypatch.setattr(
+        "ai_native.stages.architecture.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr=(
+                "Error: Failed to launch the browser process!\n"
+                "[0328/092145.746999:ERROR:zygote_host_impl_linux.cc(101)] "
+                "Running as root without --no-sandbox is not supported."
+            ),
+        ),
+    )
+
+    context = ExecutionContext(
+        config=app_config,
+        prompt_library=PromptLibrary(Path(__file__).resolve().parents[2] / "ai_native" / "prompts"),
+        state_store=state_store,
+        template_root=Path(__file__).resolve().parents[2] / "ai_native",
+        repo_root=Path(__file__).resolve().parents[2],
+        spec_path=tmp_spec,
+        run_dir=run_dir,
+        builder=builder,
+        critic=critic,
+        verifier=FakeWorkflowAdapter(),
+        pr_reviewer=FakeWorkflowAdapter(),
+        emit_progress=progress.append,
+    )
+
+    run_architecture(context, state)
+
+    validation = json.loads((run_dir / "architecture" / "validation.json").read_text(encoding="utf-8"))
+    assert validation["valid"] is True
+    assert "browser launch unavailable; validation skipped" in validation["message"]
+    assert builder.attempts == 1
+    assert critic.calls == 1
+    assert not any("validation failed, retrying" in event for event in progress)
