@@ -4,6 +4,8 @@ import re
 from pathlib import Path
 
 from ai_native.models import PlanArtifact, QuestionBatch, ReviewReport, RunState
+from ai_native.reference_workflow import append_reference_prompt_block
+from ai_native.specs import load_prompt_spec_text
 from ai_native.stages.common import ExecutionContext, StageError, dump_model, render_plan_markdown, write_review
 from ai_native.utils import read_json, read_text, write_json, write_text
 
@@ -25,7 +27,7 @@ def _render_plan_prompt(
     critique: ReviewReport | None = None,
 ) -> str:
     if prior_plan and critique:
-        return context.prompt_library.render(
+        prompt = context.prompt_library.render(
             "plan_revise.md",
             spec_text=spec_text,
             context_report=context_report,
@@ -39,7 +41,8 @@ def _render_plan_prompt(
             prior_plan=prior_plan.model_dump(mode="json"),
             critique=critique.model_dump(mode="json"),
         )
-    return context.prompt_library.render(
+        return append_reference_prompt_block(prompt, Path(context.run_dir))
+    prompt = context.prompt_library.render(
         "plan.md",
         spec_text=spec_text,
         context_report=context_report,
@@ -51,6 +54,7 @@ def _render_plan_prompt(
         critique_history=critique_history,
         blocker_ledger=blocker_ledger,
     )
+    return append_reference_prompt_block(prompt, Path(context.run_dir))
 
 
 def _render_user_answers(answer_pairs: list[dict[str, str]]) -> str:
@@ -277,7 +281,7 @@ def _ask_to_continue_after_exhaustion(context: ExecutionContext, current_limit: 
 
 def run(context: ExecutionContext, state: RunState) -> list[Path]:
     stage_dir = context.state_store.stage_dir(state, "plan")
-    spec_text = read_text(context.spec_path)
+    spec_text = load_prompt_spec_text(Path(state.run_dir), context.spec_path)
     context_report = read_json(Path(state.run_dir) / "recon" / "context.json")
     grounding_md = stage_dir / "grounding.md"
     intent_md = stage_dir / "intent.md"
@@ -293,10 +297,13 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
         )
     else:
         context.emit_progress("[ainative] plan: grounding")
-        grounding_prompt = context.prompt_library.render(
+        grounding_prompt = append_reference_prompt_block(
+            context.prompt_library.render(
             "plan_phase_grounding.md",
             spec_text=spec_text,
             context_report=context_report,
+            ),
+            Path(context.run_dir),
         )
         grounding_notes = context.builder.run(grounding_prompt, cwd=context.repo_root).text
         write_text(grounding_md, grounding_notes)
@@ -310,12 +317,15 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
     remaining_run_budget = max(0, context.config.workspace.question_budget_per_run - int(state.metadata.get("question_batches_used", 0)))
     if not resume_state and context.config.workspace.question_budget_per_stage > 0 and remaining_run_budget > 0 and not answer_pairs:
         context.emit_progress("[ainative] plan: evaluating whether clarification is needed")
-        question_prompt = context.prompt_library.render(
+        question_prompt = append_reference_prompt_block(
+            context.prompt_library.render(
             "plan_questions.md",
             spec_text=spec_text,
             context_report=context_report,
             grounding_notes=grounding_notes,
             max_questions=min(3, remaining_run_budget),
+            ),
+            Path(context.run_dir),
         )
         question_schema = context.template_root / "schemas" / "question-batch.json"
         question_response = context.builder.run(question_prompt, cwd=context.repo_root, schema_path=question_schema)
@@ -336,25 +346,31 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
 
     if not resume_state:
         context.emit_progress("[ainative] plan: intent")
-        intent_prompt = context.prompt_library.render(
+        intent_prompt = append_reference_prompt_block(
+            context.prompt_library.render(
             "plan_phase_intent.md",
             spec_text=spec_text,
             context_report=context_report,
             grounding_notes=grounding_notes,
             user_answers=user_answers,
+            ),
+            Path(context.run_dir),
         )
         intent_notes = context.builder.run(intent_prompt, cwd=context.repo_root).text
         write_text(intent_md, intent_notes)
         artifacts.append(intent_md)
 
         context.emit_progress("[ainative] plan: implementation")
-        implementation_prompt = context.prompt_library.render(
+        implementation_prompt = append_reference_prompt_block(
+            context.prompt_library.render(
             "plan_phase_implementation.md",
             spec_text=spec_text,
             context_report=context_report,
             grounding_notes=grounding_notes,
             intent_notes=intent_notes,
             user_answers=user_answers,
+            ),
+            Path(context.run_dir),
         )
         implementation_notes = context.builder.run(implementation_prompt, cwd=context.repo_root).text
         write_text(implementation_md, implementation_notes)
@@ -366,7 +382,8 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
         artifacts.append(approval_checklist_path)
     else:
         context.emit_progress("[ainative] plan: approval checklist")
-        checklist_prompt = context.prompt_library.render(
+        checklist_prompt = append_reference_prompt_block(
+            context.prompt_library.render(
             "plan_checklist.md",
             spec_text=spec_text,
             context_report=context_report,
@@ -374,6 +391,8 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
             intent_notes=intent_notes,
             implementation_notes=implementation_notes,
             user_answers=user_answers,
+            ),
+            Path(context.run_dir),
         )
         approval_checklist = context.builder.run(checklist_prompt, cwd=context.repo_root).text
         write_text(approval_checklist_path, approval_checklist)
@@ -438,7 +457,8 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
         write_text(attempt_plan_md, render_plan_markdown(plan))
         artifacts.extend([plan_json, plan_md, attempt_plan_json, attempt_plan_md])
 
-        review_prompt = context.prompt_library.render(
+        review_prompt = append_reference_prompt_block(
+            context.prompt_library.render(
             "plan_review.md",
             spec_text=spec_text,
             plan=plan.model_dump(mode="json"),
@@ -446,6 +466,8 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
             approval_checklist=approval_checklist,
             critique_history=critique_history,
             blocker_ledger=blocker_ledger,
+            ),
+            Path(context.run_dir),
         )
         review_response = context.critic.run(review_prompt, cwd=context.repo_root, schema_path=review_schema)
         review = ReviewReport.model_validate(review_response.json_data)

@@ -21,6 +21,7 @@
 6. Run `make run SPEC=specs/task-management.md TARGET_DIR=/path/to/target-repo`.
 
 The `Makefile` auto-detects whether it is running inside the devcontainer. Inside the devcontainer it runs `uv` commands directly. On the host it shells out through `docker compose run`.
+`make bootstrap` now syncs Python dependencies and installs Playwright Chromium, which the reference-driven web verification flow uses for screenshot capture.
 `TARGET_DIR` is mandatory for the workflow targets in `make`. The workflow runs the configured agent adapter, git operations, repository recon, and implementation inside that target directory rather than inside the template repo. Relative spec paths are resolved from `TARGET_DIR`.
 `TARGET_DIR` must be either a standalone directory that ai-native can initialize as a git repository or an existing repository root. Nested directories inside another repository are rejected to avoid binding worktrees, branches, and PRs to the wrong git root.
 If a relative spec path is not present under `TARGET_DIR`, the CLI falls back to the same relative path in the template repo.
@@ -53,6 +54,34 @@ Run registry publishing can be enabled separately with `registry.remote_url` and
 GitHub Copilot CLI is also supported as a first-class adapter. Use the standalone `copilot` binary rather than `gh copilot`, trust the target workspace in Copilot CLI first, and start from [docs/examples/ainative.copilot.yaml](docs/examples/ainative.copilot.yaml) if you want a ready-made agent profile set.
 See [docs/configuration.md](docs/configuration.md) for details.
 For the standalone registry backend and operator dashboard, see [docs/self-hosted-run-registry.md](docs/self-hosted-run-registry.md).
+
+## Reference-Driven Web Specs
+
+The workflow now supports an optional `reference_driven_web` profile declared in YAML frontmatter under `ainative`. This keeps the normal stage order, but adds reference-aware recon, planning, slicing, looping, and verification behavior for design-led web work.
+
+```md
+---
+ainative:
+  workflow_profile: reference_driven_web
+  references:
+    - id: landing-desktop
+      label: Approved desktop mock
+      kind: image
+      path: ./references/landing-desktop.png
+      route: /
+      viewport:
+        width: 1440
+        height: 1600
+        label: desktop
+  preview:
+    url: http://127.0.0.1:4173
+    command: npm run dev -- --host 127.0.0.1 --port 4173
+---
+```
+
+Reference items support `image`, `html_export`, and `url` inputs. AI Native normalizes the manifest into `reference-manifest.json`, produces a shared `reference-context.{json,md}` artifact during `recon`, and for this profile the `verify` stage captures implementation screenshots and runs a blocking visual critique before final verification passes.
+
+Codex gets the full multimodal path, including direct image attachments for references and verification screenshots. Copilot can still use the same workflow profile when the references include machine-readable sources such as `html_export` or `url`, but image-only runs fail early with a clear capability error instead of pretending parity exists. See [specs/examples/reference-driven-web.md](specs/examples/reference-driven-web.md) for a fuller example.
 
 ## Core Targets
 

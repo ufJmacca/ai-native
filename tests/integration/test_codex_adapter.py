@@ -29,6 +29,30 @@ def test_codex_exec_adapter_writes_schema_output(monkeypatch, tmp_path: Path) ->
     assert "--full-auto" in captured["command"]
 
 
+def test_codex_exec_adapter_includes_image_attachments(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+    image_path = tmp_path / "reference.png"
+    image_path.write_text("png", encoding="utf-8")
+
+    def fake_run(command, cwd, capture_output, text, check):  # type: ignore[no-untyped-def]
+        captured["command"] = command
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text("ok", encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr("ai_native.adapters.codex._running_in_container", lambda: False)
+    adapter = CodexExecAdapter(
+        AgentProfile(type="codex-exec", model="gpt-5-codex", sandbox="workspace-write", extra_args=["--full-auto"])
+    )
+
+    adapter.run("prompt", cwd=tmp_path, image_paths=[image_path])
+
+    assert "--image" in captured["command"]
+    assert str(image_path) in captured["command"]
+    assert adapter.supports_image_inputs() is True
+
+
 def test_codex_exec_adapter_defaults_to_unsandboxed_mode_in_container(monkeypatch, tmp_path: Path) -> None:
     captured: dict[str, object] = {}
 

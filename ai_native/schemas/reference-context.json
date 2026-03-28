@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "workflow_profile",
+    "summary",
+    "design_intent",
+    "stable_patterns",
+    "typography",
+    "colors",
+    "spacing",
+    "layout_patterns",
+    "repeated_components",
+    "responsive_behaviors",
+    "fidelity_constraints"
+  ],
+  "properties": {
+    "workflow_profile": {
+      "type": "string",
+      "enum": ["reference_driven_web"]
+    },
+    "summary": { "type": "string" },
+    "design_intent": { "type": "string" },
+    "stable_patterns": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "typography": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "colors": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "spacing": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "layout_patterns": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "repeated_components": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "responsive_behaviors": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "fidelity_constraints": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

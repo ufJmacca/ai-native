@@ -3,9 +3,11 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 
+from ai_native.reference_workflow import generate_reference_context, load_reference_manifest_for_run
 from ai_native.models import ContextReport, RunState
+from ai_native.specs import load_prompt_spec_text
 from ai_native.stages.common import ExecutionContext, dump_model, render_context_markdown
-from ai_native.utils import read_text, write_json, write_text
+from ai_native.utils import write_json, write_text
 
 IGNORE_DIRS = {
     ".git",
@@ -95,6 +97,7 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
     scan = _scan_repository(context.repo_root)
     scan_path = recon_dir / "scan.json"
     write_json(scan_path, scan)
+    spec_text = load_prompt_spec_text(Path(state.run_dir), context.spec_path)
 
     if scan["repo_state"] == "greenfield":
         report = ContextReport(
@@ -114,7 +117,7 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
         context.emit_progress("[ainative] recon: generating context report")
         prompt = context.prompt_library.render(
             "recon.md",
-            spec_text=read_text(context.spec_path),
+            spec_text=spec_text,
             scan_summary=scan,
         )
         schema_path = context.template_root / "schemas" / "context-report.json"
@@ -125,4 +128,9 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
     md_path = recon_dir / "context.md"
     dump_model(json_path, report)
     write_text(md_path, render_context_markdown(report))
-    return [scan_path, json_path, md_path]
+    artifacts = [scan_path, json_path, md_path]
+    manifest = load_reference_manifest_for_run(context)
+    if manifest is not None:
+        context.emit_progress("[ainative] recon: generating reference context")
+        artifacts.extend(generate_reference_context(context, spec_text, manifest, report.model_dump(mode="json")))
+    return artifacts

@@ -3,19 +3,24 @@ from __future__ import annotations
 from pathlib import Path
 
 from ai_native.models import RunState, SlicePlan
+from ai_native.reference_workflow import append_reference_prompt_block
+from ai_native.specs import load_prompt_spec_text
 from ai_native.stages.common import ExecutionContext, dump_model, render_slice_markdown
-from ai_native.utils import read_json, read_text, write_text
+from ai_native.utils import read_json, write_text
 
 
 def run(context: ExecutionContext, state: RunState) -> list[Path]:
     stage_dir = context.state_store.stage_dir(state, "slice")
     plan = read_json(Path(state.run_dir) / "plan" / "plan.json")
     prd = read_json(Path(state.run_dir) / "prd" / "prd.json")
-    prompt = context.prompt_library.render(
+    prompt = append_reference_prompt_block(
+        context.prompt_library.render(
         "slice.md",
-        spec_text=read_text(context.spec_path),
+        spec_text=load_prompt_spec_text(Path(state.run_dir), context.spec_path),
         plan=plan,
         prd=prd,
+        ),
+        Path(context.run_dir),
     )
     schema_path = context.template_root / "schemas" / "slice-plan.json"
     response = context.builder.run(prompt, cwd=context.repo_root, schema_path=schema_path)

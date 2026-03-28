@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 from ai_native.models import DiagramArtifact, ReviewReport, RunState
+from ai_native.specs import load_prompt_spec_text
 from ai_native.stages.common import ExecutionContext, StageError, write_diagram_artifacts, write_review
 from ai_native.utils import read_json, read_text, write_json
 
@@ -276,7 +277,7 @@ def _ask_to_continue_after_exhaustion(context: ExecutionContext, current_limit: 
 def run(context: ExecutionContext, state: RunState) -> list[Path]:
     stage_dir = context.state_store.stage_dir(state, "architecture")
     _materialize_legacy_attempt(stage_dir)
-    spec_text = read_text(context.spec_path)
+    spec_text = load_prompt_spec_text(Path(state.run_dir), context.spec_path)
     context_report = read_json(Path(state.run_dir) / "recon" / "context.json")
     plan = read_json(Path(state.run_dir) / "plan" / "plan.json")
     artifacts = _existing_architecture_artifacts(stage_dir)

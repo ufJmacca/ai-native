@@ -16,7 +16,16 @@ class AgentResult(BaseModel):
 
 
 class AgentAdapter(Protocol):
-    def run(self, prompt: str, cwd: Path, schema_path: Path | None = None) -> AgentResult:
+    def run(
+        self,
+        prompt: str,
+        cwd: Path,
+        schema_path: Path | None = None,
+        image_paths: list[Path] | None = None,
+    ) -> AgentResult:
+        ...
+
+    def supports_image_inputs(self) -> bool:
         ...
 
 
@@ -27,4 +36,3 @@ class ReviewAdapter(Protocol):
 
 class AdapterError(RuntimeError):
     pass
-
