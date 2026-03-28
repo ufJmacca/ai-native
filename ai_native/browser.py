@@ -51,8 +51,8 @@ def preview_session(preview: PreviewConfig, cwd: Path):
         process = subprocess.Popen(
             command,
             cwd=cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             text=True,
         )
     try:

@@ -16,7 +16,7 @@ from ai_native.reference_workflow import (
 from ai_native.slice_runtime import load_slice_plan, selected_slices
 from ai_native.specs import load_prompt_spec_text
 from ai_native.stages.common import ExecutionContext, StageError, dump_model, render_verification_markdown, write_review
-from ai_native.utils import ensure_dir, read_json, write_text
+from ai_native.utils import ensure_dir, read_json, slugify, write_text
 from ai_native.workspace_artifacts import mirror_files, workspace_slice_dir
 
 VERIFY_ATTEMPT_RE = re.compile(r"(?P<slice_id>.+)-attempt-(?P<attempt>\d+)\.json$")
@@ -280,7 +280,7 @@ def _copy_reference_image_artifacts(manifest, capture_dir: Path) -> list[Path]:
         source = Path(reference.path)
         if not source.exists():
             continue
-        target = capture_dir / f"{reference.id}-reference{source.suffix.lower()}"
+        target = capture_dir / f"{slugify(reference.id)}-reference{source.suffix.lower()}"
         shutil.copyfile(source, target)
         copied.append(target)
     return copied
