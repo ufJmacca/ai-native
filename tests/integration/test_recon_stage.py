@@ -179,6 +179,50 @@ def test_recon_stage_resolves_root_relative_stylesheets_within_export_bundle(app
     assert str((assets_dir / "landing.css").resolve()) in scan_text
 
 
+def test_recon_stage_resolves_stylesheets_with_query_strings_and_fragments(app_config, tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    (workspace_root / "package.json").write_text('{"name":"web-app"}\n', encoding="utf-8")
+    (workspace_root / "src").mkdir()
+    (workspace_root / "src" / "app.tsx").write_text("export const App = () => null;\n", encoding="utf-8")
+    assets_dir = tmp_path / "assets"
+    assets_dir.mkdir()
+    (assets_dir / "landing.css").write_text(
+        ".hero { color: #445566; margin: 24px; font-family: 'General Sans'; }\n",
+        encoding="utf-8",
+    )
+    spec_path = _write_reference_spec(
+        tmp_path,
+        '<html><head><link rel="stylesheet" href="/assets/landing.css?v=123#theme"></head><body><section><h1>Launch Faster</h1></section></body></html>\n',
+        kind="html_export",
+        reference_filename="landing-cache-busted.html",
+    )
+    state_store = StateStore(tmp_path / "artifacts")
+    state = state_store.create_run(spec_path, workspace_root)
+    run_dir = Path(state.run_dir)
+    builder = ReferenceReconBuilder(supports_images=False)
+    context = ExecutionContext(
+        config=app_config,
+        prompt_library=PromptLibrary(Path(__file__).resolve().parents[2] / "ai_native" / "prompts"),
+        state_store=state_store,
+        template_root=Path(__file__).resolve().parents[2] / "ai_native",
+        repo_root=workspace_root,
+        spec_path=spec_path,
+        run_dir=run_dir,
+        builder=builder,
+        critic=FakeWorkflowAdapter(),
+        verifier=FakeWorkflowAdapter(),
+        pr_reviewer=FakeWorkflowAdapter(),
+    )
+
+    run_recon(context, state)
+
+    scan_text = (run_dir / "recon" / "reference-scan.json").read_text(encoding="utf-8")
+    assert "#445566" in scan_text
+    assert "General Sans" in scan_text
+    assert str((assets_dir / "landing.css").resolve()) in scan_text
+
+
 def test_recon_stage_rejects_image_only_references_without_image_capability(app_config, tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()

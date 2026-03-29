@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from urllib.parse import urlsplit
 from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
@@ -181,7 +182,11 @@ def _linked_css_paths(html_text: str, html_path: Path) -> list[Path]:
         href = href_match.group(1)
         if href.startswith(("http://", "https://", "//")):
             continue
-        relative_href = href.lstrip("/") if href.startswith("/") else href
+        parsed_href = urlsplit(href)
+        normalized_href = parsed_href.path
+        if not normalized_href:
+            continue
+        relative_href = normalized_href.lstrip("/") if normalized_href.startswith("/") else normalized_href
         path = (export_root / relative_href).resolve()
         if path.exists():
             linked.append(path)
