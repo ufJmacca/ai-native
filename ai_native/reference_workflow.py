@@ -214,7 +214,7 @@ def _scan_html_export(reference: ReferenceInput) -> dict[str, Any]:
     if reference.path is None:
         return {}
     html_path = Path(reference.path)
-    if not html_path.exists():
+    if not html_path.is_file():
         raise StageError(
             f"Missing html_export reference file for `{reference.id}`: {html_path}. "
             "Fix the path in the spec or add the exported file before running recon."
