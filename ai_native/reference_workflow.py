@@ -190,6 +190,11 @@ def _scan_html_export(reference: ReferenceInput) -> dict[str, Any]:
     if reference.path is None:
         return {}
     html_path = Path(reference.path)
+    if not html_path.exists():
+        raise StageError(
+            f"Missing html_export reference file for `{reference.id}`: {html_path}. "
+            "Fix the path in the spec or add the exported file before running recon."
+        )
     html_text = read_text(html_path)
     parser = _HTMLReferenceParser()
     parser.feed(html_text)

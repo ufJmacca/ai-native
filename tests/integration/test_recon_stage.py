@@ -162,3 +162,33 @@ def test_recon_stage_rejects_image_only_references_without_image_capability(app_
 
     with pytest.raises(StageError, match="supports image inputs"):
         run_recon(context, state)
+
+
+def test_recon_stage_reports_missing_html_export_reference_file(app_config, tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    (workspace_root / "package.json").write_text('{"name":"web-app"}\n', encoding="utf-8")
+    (workspace_root / "src").mkdir()
+    (workspace_root / "src" / "app.tsx").write_text("export const App = () => null;\n", encoding="utf-8")
+    spec_path = _write_reference_spec(tmp_path, "<html></html>\n", kind="html_export", reference_filename="missing.html")
+    (tmp_path / "missing.html").unlink()
+    state_store = StateStore(tmp_path / "artifacts")
+    state = state_store.create_run(spec_path, workspace_root)
+    run_dir = Path(state.run_dir)
+    builder = ReferenceReconBuilder(supports_images=False)
+    context = ExecutionContext(
+        config=app_config,
+        prompt_library=PromptLibrary(Path(__file__).resolve().parents[2] / "ai_native" / "prompts"),
+        state_store=state_store,
+        template_root=Path(__file__).resolve().parents[2] / "ai_native",
+        repo_root=workspace_root,
+        spec_path=spec_path,
+        run_dir=run_dir,
+        builder=builder,
+        critic=FakeWorkflowAdapter(),
+        verifier=FakeWorkflowAdapter(),
+        pr_reviewer=FakeWorkflowAdapter(),
+    )
+
+    with pytest.raises(StageError, match="Missing html_export reference file"):
+        run_recon(context, state)

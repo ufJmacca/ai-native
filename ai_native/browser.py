@@ -97,7 +97,7 @@ def capture_implementation_screenshots(
                 try:
                     page = context.new_page()
                     target_url = urllib.parse.urljoin(preview.url.rstrip("/") + "/", reference.route.lstrip("/"))
-                    page.goto(target_url, wait_until="networkidle")
+                    page.goto(target_url, wait_until="load")
                     filename = f"{slugify(reference.id)}-{slugify(viewport.resolved_label)}-implementation.png"
                     output_path = output_dir / filename
                     page.screenshot(path=str(output_path), full_page=True)
