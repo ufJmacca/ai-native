@@ -223,6 +223,51 @@ def test_recon_stage_resolves_stylesheets_with_query_strings_and_fragments(app_c
     assert str((assets_dir / "landing.css").resolve()) in scan_text
 
 
+def test_recon_stage_ignores_stylesheets_outside_export_bundle(app_config, tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    (workspace_root / "package.json").write_text('{"name":"web-app"}\n', encoding="utf-8")
+    (workspace_root / "src").mkdir()
+    (workspace_root / "src" / "app.tsx").write_text("export const App = () => null;\n", encoding="utf-8")
+    export_dir = tmp_path / "exports"
+    export_dir.mkdir()
+    escaped_css = tmp_path / "secret.css"
+    escaped_css.write_text(
+        ".hero { color: #aa4400; padding: 48px; font-family: 'Leak Sans'; }\n",
+        encoding="utf-8",
+    )
+    spec_path = _write_reference_spec(
+        tmp_path,
+        '<html><head><link rel="stylesheet" href="../secret.css"></head><body><section><h1>Launch Faster</h1></section></body></html>\n',
+        kind="html_export",
+        reference_filename="exports/landing-escape.html",
+    )
+    state_store = StateStore(tmp_path / "artifacts")
+    state = state_store.create_run(spec_path, workspace_root)
+    run_dir = Path(state.run_dir)
+    builder = ReferenceReconBuilder(supports_images=False)
+    context = ExecutionContext(
+        config=app_config,
+        prompt_library=PromptLibrary(Path(__file__).resolve().parents[2] / "ai_native" / "prompts"),
+        state_store=state_store,
+        template_root=Path(__file__).resolve().parents[2] / "ai_native",
+        repo_root=workspace_root,
+        spec_path=spec_path,
+        run_dir=run_dir,
+        builder=builder,
+        critic=FakeWorkflowAdapter(),
+        verifier=FakeWorkflowAdapter(),
+        pr_reviewer=FakeWorkflowAdapter(),
+    )
+
+    run_recon(context, state)
+
+    scan_text = (run_dir / "recon" / "reference-scan.json").read_text(encoding="utf-8")
+    assert "#aa4400" not in scan_text
+    assert "Leak Sans" not in scan_text
+    assert str(escaped_css.resolve()) not in scan_text
+
+
 def test_recon_stage_rejects_image_only_references_without_image_capability(app_config, tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()

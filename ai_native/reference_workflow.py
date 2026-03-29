@@ -170,7 +170,7 @@ def _css_tokens(css_text: str) -> dict[str, list[str]]:
 
 def _linked_css_paths(html_text: str, html_path: Path) -> list[Path]:
     linked: list[Path] = []
-    export_root = html_path.parent
+    export_root = html_path.parent.resolve()
     for tag in re.findall(r"<link\b[^>]*>", html_text, flags=re.IGNORECASE):
         rel_match = re.search(r'\brel\s*=\s*["\']([^"\']+)["\']', tag, flags=re.IGNORECASE)
         href_match = re.search(r'\bhref\s*=\s*["\']([^"\']+)["\']', tag, flags=re.IGNORECASE)
@@ -188,6 +188,10 @@ def _linked_css_paths(html_text: str, html_path: Path) -> list[Path]:
             continue
         relative_href = normalized_href.lstrip("/") if normalized_href.startswith("/") else normalized_href
         path = (export_root / relative_href).resolve()
+        try:
+            path.relative_to(export_root)
+        except ValueError:
+            continue
         if path.exists():
             linked.append(path)
     return linked
