@@ -123,8 +123,8 @@ def load_prompt_spec_text(run_dir: Path, spec_path: Path) -> str:
     return parse_spec(spec_path).body
 
 
-def load_reference_manifest(run_dir: Path, spec_path: Path) -> ReferenceManifest | None:
+def load_reference_manifest(run_dir: Path, _spec_path: Path) -> ReferenceManifest | None:
     stored = reference_manifest_path(run_dir)
     if stored.exists():
         return ReferenceManifest.model_validate(read_json(stored))
-    return parse_spec(spec_path).reference_manifest
+    return None

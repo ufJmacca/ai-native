@@ -236,6 +236,11 @@ def build_reference_scan(manifest: ReferenceManifest) -> dict[str, Any]:
         if item.path:
             path = Path(item.path)
             entry["path"] = str(path)
+            if item.kind == "image" and not path.exists():
+                raise StageError(
+                    f"Missing image reference file for `{item.id}`: {path}. "
+                    "Fix the path in the spec or add the image before running recon."
+                )
             if path.exists():
                 entry["file"] = {"name": path.name, "suffix": path.suffix.lower(), "size_bytes": path.stat().st_size}
         if item.url:

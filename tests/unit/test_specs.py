@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ai_native.specs import parse_spec
+from ai_native.specs import load_reference_manifest, parse_spec, write_parsed_spec_artifacts
 
 
 def test_parse_spec_preserves_plain_markdown_body(tmp_path: Path) -> None:
@@ -149,3 +149,43 @@ Implement the page faithfully.
     assert parsed.reference_manifest.workflow_profile == "reference_driven_web"
     assert parsed.reference_manifest.references[0].path == str(export_path.resolve())
     assert parsed.reference_manifest.preview.url == "http://127.0.0.1:3000"
+
+
+def test_load_reference_manifest_uses_only_run_artifacts(tmp_path: Path) -> None:
+    reference_path = tmp_path / "reference.png"
+    reference_path.write_text("png", encoding="utf-8")
+    spec_path = tmp_path / "spec.md"
+    spec_path.write_text(
+        """
+---
+ainative:
+  workflow_profile: reference_driven_web
+  references:
+    - id: hero
+      label: Hero reference
+      kind: image
+      path: reference.png
+      route: /
+      viewport:
+        width: 1440
+        height: 900
+        label: desktop
+  preview:
+    url: http://127.0.0.1:3000
+---
+# Feature
+
+Build the page.
+""".lstrip(),
+        encoding="utf-8",
+    )
+    parsed = parse_spec(spec_path)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    write_parsed_spec_artifacts(run_dir, parsed)
+    (run_dir / "reference-manifest.json").unlink()
+    spec_path.write_text("# Changed Spec\n", encoding="utf-8")
+
+    manifest = load_reference_manifest(run_dir, spec_path)
+
+    assert manifest is None
