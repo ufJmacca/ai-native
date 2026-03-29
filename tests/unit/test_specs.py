@@ -151,6 +151,43 @@ Implement the page faithfully.
     assert parsed.reference_manifest.preview.url == "http://127.0.0.1:3000"
 
 
+def test_parse_spec_accepts_quoted_ainative_frontmatter_key(tmp_path: Path) -> None:
+    export_path = tmp_path / "stitch.html"
+    export_path.write_text("<html></html>\n", encoding="utf-8")
+    spec_path = tmp_path / "spec-quoted.md"
+    spec_path.write_text(
+        """
+---
+"ainative":
+  workflow_profile: reference_driven_web
+  references:
+    - id: landing
+      label: Landing export
+      kind: html_export
+      path: stitch.html
+      route: /
+      viewport:
+        width: 1440
+        height: 1024
+        label: desktop
+  preview:
+    url: http://127.0.0.1:3000
+---
+# Visual Spec
+
+Implement the page faithfully.
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    parsed = parse_spec(spec_path)
+
+    assert parsed.reference_manifest is not None
+    assert parsed.reference_manifest.workflow_profile == "reference_driven_web"
+    assert parsed.reference_manifest.references[0].path == str(export_path.resolve())
+    assert parsed.reference_manifest.preview.url == "http://127.0.0.1:3000"
+
+
 def test_load_reference_manifest_uses_only_run_artifacts(tmp_path: Path) -> None:
     reference_path = tmp_path / "reference.png"
     reference_path.write_text("png", encoding="utf-8")
