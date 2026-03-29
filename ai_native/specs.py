@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,7 @@ from ai_native.models import ReferenceManifest
 from ai_native.utils import read_json, read_text, write_json, write_text
 
 _FRONTMATTER_DELIMITER = "---"
+_AINATIVE_FRONTMATTER_RE = re.compile(r"(^|\r?\n)ainative\s*:", re.MULTILINE)
 
 
 class ParsedSpec(BaseModel):
@@ -30,6 +32,8 @@ def _split_frontmatter(raw_text: str) -> tuple[dict[str, Any], str]:
     if closing_index is None:
         return {}, raw_text
     frontmatter_text = "".join(lines[1:closing_index])
+    if _AINATIVE_FRONTMATTER_RE.search(frontmatter_text) is None:
+        return {}, raw_text
     body = "".join(lines[closing_index + 1 :])
     loaded = yaml.safe_load(frontmatter_text) or {}
     if not isinstance(loaded, dict):

@@ -88,3 +88,27 @@ def test_parse_spec_accepts_crlf_frontmatter(tmp_path: Path) -> None:
     assert parsed.reference_manifest.workflow_profile == "reference_driven_web"
     assert parsed.reference_manifest.references[0].path == str(export_path.resolve())
     assert parsed.reference_manifest.preview.url == "http://127.0.0.1:3000"
+
+
+def test_parse_spec_preserves_leading_delimiters_without_ainative_frontmatter(tmp_path: Path) -> None:
+    spec_path = tmp_path / "spec.md"
+    spec_text = "---\nWelcome\n---\n# Plain Spec\n\nShip the thing.\n"
+    spec_path.write_text(spec_text, encoding="utf-8")
+
+    parsed = parse_spec(spec_path)
+
+    assert parsed.body == spec_text
+    assert parsed.frontmatter == {}
+    assert parsed.reference_manifest is None
+
+
+def test_parse_spec_preserves_non_ainative_yaml_block(tmp_path: Path) -> None:
+    spec_path = tmp_path / "spec.md"
+    spec_text = "---\ntitle: Visual Spec\n---\n# Plain Spec\n\nShip the thing.\n"
+    spec_path.write_text(spec_text, encoding="utf-8")
+
+    parsed = parse_spec(spec_path)
+
+    assert parsed.body == spec_text
+    assert parsed.frontmatter == {}
+    assert parsed.reference_manifest is None
