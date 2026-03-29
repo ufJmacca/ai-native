@@ -11,8 +11,19 @@ class FakeWorkflowAdapter:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
 
-    def run(self, prompt: str, cwd: Path, schema_path: Path | None = None) -> AgentResult:
-        self.calls.append({"mode": "run", "prompt": prompt, "cwd": cwd, "schema_path": schema_path})
+    def supports_image_inputs(self) -> bool:
+        return False
+
+    def run(
+        self,
+        prompt: str,
+        cwd: Path,
+        schema_path: Path | None = None,
+        image_paths: list[Path] | None = None,
+    ) -> AgentResult:
+        self.calls.append(
+            {"mode": "run", "prompt": prompt, "cwd": cwd, "schema_path": schema_path, "image_paths": image_paths or []}
+        )
         if schema_path:
             payload = self._payload_for_schema(schema_path.name)
             return AgentResult(text=json.dumps(payload), json_data=payload)
@@ -104,6 +115,20 @@ class FakeWorkflowAdapter:
                 "summary": "The artifact is concrete and implementable.",
                 "findings": [],
                 "required_changes": [],
+            }
+        if name == "reference-context.json":
+            return {
+                "workflow_profile": "reference_driven_web",
+                "summary": "Reference-driven landing page with bold type and consistent card rhythm.",
+                "design_intent": "Translate the supplied references into a faithful implementation.",
+                "stable_patterns": ["Large hero headline", "Alternating content sections"],
+                "typography": ["Display headline with tight leading", "Body copy uses medium-weight sans serif"],
+                "colors": ["Warm neutral base", "Dark text on light cards"],
+                "spacing": ["Generous vertical rhythm", "Tight card padding"],
+                "layout_patterns": ["Wide desktop grid", "Single-column mobile stacking"],
+                "repeated_components": ["Feature cards", "Primary CTA buttons"],
+                "responsive_behaviors": ["Collapse to one column on mobile", "Preserve hero hierarchy across breakpoints"],
+                "fidelity_constraints": ["Do not reorder major sections", "Keep typography scale close to the reference"],
             }
         if name == "verification-report.json":
             return {

@@ -55,6 +55,16 @@ Before intent and implementation are locked in, the planning workflow may also e
 
 If the plan still fails critique, the workflow saves each attempt as `plan-attempt-N.*` and `plan-review-attempt-N.*`. A resumed run continues from the latest saved critique attempt instead of restarting the entire planning stage. When the configured attempt limit is exhausted, the CLI can ask whether to continue and how many extra attempts to grant.
 
+## Reference-Driven Web Fidelity
+
+Specs can opt into a reference-led web workflow by adding `ainative.workflow_profile: reference_driven_web` YAML frontmatter plus a `references[]` list and `preview` config. This does not add a new top-level stage. Instead, the existing stages receive extra reference-aware behavior:
+
+- `recon` persists a normalized `reference-manifest.json`, a deterministic `reference-scan.json`, and a synthesized `reference-context.{json,md}` artifact.
+- `plan`, `prd`, `slice`, and `loop` receive the reference context as an implementation constraint so the supplied design is treated as the target, not inspiration.
+- `verify` starts the configured preview when needed, captures full-page screenshots at the declared routes and viewports, runs a dedicated visual critique, and only allows final verification to pass after the visual review is approved.
+
+Codex supports the full multimodal path for this profile. Copilot can still participate when the references include machine-readable inputs such as `html_export` or `url`, but image-only reference sets fail early with an actionable capability error.
+
 ## Ralph Loop Contract
 
 Each slice runs through the following sequence:
@@ -65,6 +75,8 @@ Each slice runs through the following sequence:
 4. Implement until the slice is green and capture `green.log`.
 5. Refactor and record the reasoning in `refactor-notes.md`.
 6. Run a separate verifier agent before allowing commit or PR stages.
+
+For `reference_driven_web` slices, `verify` also runs a screenshot capture and visual-fidelity critique loop before the normal verification report is allowed to pass.
 
 When using `make run`, each ready slice runs `loop -> verify -> commit -> pr` inside its own worktree. Commits remain slice-specific, and blocked slices stay pending until their dependencies are merged into the configured base branch.
 

@@ -11,6 +11,7 @@ from typing import Callable, TypeVar, cast
 from ai_native.config import RegistryConfig
 from ai_native.models import RunDetailView, RunHeartbeat, RunLiveness, RunState, RunView, StageName, StageSnapshot
 from ai_native.run_registry import publish_run_snapshot
+from ai_native.specs import parse_spec, write_parsed_spec_artifacts
 from ai_native.utils import ensure_dir, read_json, read_text, sha256_file, slugify, utc_now, write_json, write_text
 
 T = TypeVar("T")
@@ -104,8 +105,8 @@ class StateStore:
         run_stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
         run_id = f"{run_stamp}-{feature_slug}"
         run_dir = ensure_dir(self.artifacts_root / run_id)
-        copied_spec = run_dir / "spec.md"
-        write_text(copied_spec, read_text(spec_path))
+        parsed_spec = parse_spec(spec_path)
+        write_parsed_spec_artifacts(run_dir, parsed_spec)
         state = RunState(
             run_id=run_id,
             feature_slug=feature_slug,

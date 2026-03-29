@@ -38,6 +38,26 @@ def test_copilot_cli_adapter_defaults_to_autonomous_mode(monkeypatch, tmp_path: 
     ]
 
 
+def test_copilot_cli_adapter_ignores_image_attachments(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+    image_path = tmp_path / "reference.png"
+    image_path.write_text("png", encoding="utf-8")
+
+    def fake_run(command, cwd, capture_output, text, check):  # type: ignore[no-untyped-def]
+        captured["command"] = command
+        return SimpleNamespace(returncode=0, stdout="builder ok\n", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    adapter = CopilotCLIAdapter(AgentProfile(type="copilot-cli"))
+
+    result = adapter.run("prompt", cwd=tmp_path, image_paths=[image_path])
+
+    assert result.text == "builder ok"
+    assert "--image" not in captured["command"]
+    assert str(image_path) not in captured["command"]
+    assert adapter.supports_image_inputs() is False
+
+
 def test_copilot_cli_adapter_parses_schema_output(monkeypatch, tmp_path: Path) -> None:
     captured: dict[str, object] = {}
     schema_path = tmp_path / "schema.json"

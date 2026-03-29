@@ -14,7 +14,16 @@ class ExternalCommandAdapter:
     def __init__(self, profile: AgentProfile):
         self.profile = profile
 
-    def run(self, prompt: str, cwd: Path, schema_path: Path | None = None) -> AgentResult:
+    def supports_image_inputs(self) -> bool:
+        return False
+
+    def run(
+        self,
+        prompt: str,
+        cwd: Path,
+        schema_path: Path | None = None,
+        image_paths: list[Path] | None = None,
+    ) -> AgentResult:
         if not self.profile.command:
             raise AdapterError("external-command adapter requires a command")
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -26,6 +35,8 @@ class ExternalCommandAdapter:
             env["AINATIVE_OUTPUT_FILE"] = str(output_path)
             if schema_path:
                 env["AINATIVE_SCHEMA_FILE"] = str(schema_path)
+            if image_paths:
+                env["AINATIVE_IMAGE_PATHS"] = os.pathsep.join(str(path) for path in image_paths)
             completed = subprocess.run(
                 self.profile.command,
                 cwd=cwd,
@@ -48,4 +59,3 @@ class ExternalCommandAdapter:
                 command=list(self.profile.command),
                 returncode=completed.returncode,
             )
-

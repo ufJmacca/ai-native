@@ -102,7 +102,13 @@ fi
 
 if command -v uv >/dev/null 2>&1; then
   if [[ -f "pyproject.toml" ]]; then
-    uv sync || true
+    if uv sync; then
+      if uv run python -m playwright install chromium; then
+        echo "[ok] Playwright Chromium installed"
+      else
+        echo "[warn] Failed to install Playwright Chromium during post-create. Run \`make bootstrap\` to retry." >&2
+      fi
+    fi
   fi
 fi
 

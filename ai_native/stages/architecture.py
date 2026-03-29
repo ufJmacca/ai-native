@@ -7,10 +7,22 @@ import tempfile
 from pathlib import Path
 
 from ai_native.models import DiagramArtifact, ReviewReport, RunState
+from ai_native.specs import load_prompt_spec_text
 from ai_native.stages.common import ExecutionContext, StageError, write_diagram_artifacts, write_review
 from ai_native.utils import read_json, read_text, write_json
 
 ATTEMPT_RE = re.compile(r"architecture-review-attempt-(?P<attempt>\d+)\.json$")
+MERMAID_BROWSER_DEPENDENCY_ERRORS = (
+    "Could not find Chrome",
+    "chrome-headless-shell",
+)
+MERMAID_BROWSER_LAUNCH_ERRORS = (
+    "Failed to launch the browser process",
+    "Running as root without --no-sandbox is not supported",
+    "No usable sandbox",
+    "zygote_host_impl_linux.cc",
+    "rosetta error",
+)
 
 
 def _existing_attempt_numbers(stage_dir: Path) -> list[int]:
@@ -207,8 +219,10 @@ def _validate_mermaid(context: ExecutionContext, diagram_path: Path) -> tuple[bo
         )
         if completed.returncode != 0:
             message = completed.stderr.strip() or completed.stdout.strip() or "Mermaid validation failed."
-            if "Could not find Chrome" in message or "chrome-headless-shell" in message:
+            if any(fragment in message for fragment in MERMAID_BROWSER_DEPENDENCY_ERRORS):
                 return True, f"Mermaid CLI browser dependency missing; validation skipped. {message}"
+            if any(fragment in message for fragment in MERMAID_BROWSER_LAUNCH_ERRORS):
+                return True, f"Mermaid CLI browser launch unavailable; validation skipped. {message}"
             return False, message
         return True, "Mermaid validation passed."
 
@@ -276,7 +290,7 @@ def _ask_to_continue_after_exhaustion(context: ExecutionContext, current_limit: 
 def run(context: ExecutionContext, state: RunState) -> list[Path]:
     stage_dir = context.state_store.stage_dir(state, "architecture")
     _materialize_legacy_attempt(stage_dir)
-    spec_text = read_text(context.spec_path)
+    spec_text = load_prompt_spec_text(Path(state.run_dir), context.spec_path)
     context_report = read_json(Path(state.run_dir) / "recon" / "context.json")
     plan = read_json(Path(state.run_dir) / "plan" / "plan.json")
     artifacts = _existing_architecture_artifacts(stage_dir)

@@ -5,6 +5,8 @@ import shutil
 from pathlib import Path
 
 from ai_native.models import ReviewReport, RunState, SlicePlan
+from ai_native.reference_workflow import append_reference_prompt_block
+from ai_native.specs import load_prompt_spec_text
 from ai_native.slice_runtime import load_slice_plan, selected_slices
 from ai_native.stages.common import ExecutionContext, StageError, write_review
 from ai_native.utils import read_json, read_text, write_text
@@ -208,7 +210,7 @@ def _render_loop_prompt(
     critique: ReviewReport | None = None,
 ) -> str:
     if prior_summary and critique:
-        return context.prompt_library.render(
+        prompt = context.prompt_library.render(
             "loop_revise.md",
             spec_text=spec_text,
             slice_definition=slice_definition,
@@ -219,7 +221,8 @@ def _render_loop_prompt(
             prior_summary=prior_summary,
             critique=critique.model_dump(mode="json"),
         )
-    return context.prompt_library.render(
+        return append_reference_prompt_block(prompt, Path(context.run_dir))
+    prompt = context.prompt_library.render(
         "loop.md",
         spec_text=spec_text,
         slice_definition=slice_definition,
@@ -228,6 +231,7 @@ def _render_loop_prompt(
         critique_history=critique_history,
         blocker_ledger=blocker_ledger,
     )
+    return append_reference_prompt_block(prompt, Path(context.run_dir))
 
 
 def _missing_output_review(slice_def_id: str, missing_files: list[str]) -> ReviewReport:
@@ -276,7 +280,7 @@ def _ask_to_continue_after_exhaustion(
 def run(context: ExecutionContext, state: RunState) -> list[Path]:
     slice_plan = load_slice_plan(Path(state.run_dir))
     artifacts: list[Path] = []
-    spec_text = read_text(context.spec_path)
+    spec_text = load_prompt_spec_text(Path(state.run_dir), context.spec_path)
     review_schema = context.template_root / "schemas" / "review-report.json"
 
     for slice_def in _target_slices(context, state, slice_plan):
@@ -354,13 +358,16 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
             if missing_files:
                 review = _missing_output_review(slice_def.id, missing_files)
             else:
-                review_prompt = context.prompt_library.render(
+                review_prompt = append_reference_prompt_block(
+                    context.prompt_library.render(
                     "test_review.md",
                     spec_text=spec_text,
                     slice_definition=slice_def.model_dump(mode="json"),
                     slice_dir=agent_slice_dir,
                     critique_history=critique_history,
                     blocker_ledger=blocker_ledger,
+                    ),
+                    Path(context.run_dir),
                 )
                 review_response = context.critic.run(review_prompt, cwd=context.repo_root, schema_path=review_schema)
                 review = ReviewReport.model_validate(review_response.json_data)

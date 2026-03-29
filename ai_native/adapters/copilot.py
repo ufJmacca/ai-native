@@ -77,6 +77,9 @@ class CopilotCLIAdapter:
     def __init__(self, profile: AgentProfile):
         self.profile = profile
 
+    def supports_image_inputs(self) -> bool:
+        return False
+
     def _resolved_autopilot(self) -> bool:
         return _DEFAULT_AUTOPILOT if self.profile.autopilot is None else self.profile.autopilot
 
@@ -148,7 +151,13 @@ class CopilotCLIAdapter:
         Draft202012Validator(_load_schema(schema_path)).validate(payload)
         return stripped, payload
 
-    def run(self, prompt: str, cwd: Path, schema_path: Path | None = None) -> AgentResult:
+    def run(
+        self,
+        prompt: str,
+        cwd: Path,
+        schema_path: Path | None = None,
+        image_paths: list[Path] | None = None,
+    ) -> AgentResult:
         original_prompt = _schema_prompt(prompt, schema_path) if schema_path else prompt
         command = self._build_command(original_prompt, use_autopilot=self._resolved_autopilot())
         completed = self._run_command(command, cwd=cwd)

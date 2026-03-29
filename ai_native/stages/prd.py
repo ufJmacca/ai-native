@@ -5,6 +5,8 @@ import shutil
 from pathlib import Path
 
 from ai_native.models import PRDArtifact, ReviewReport, RunState
+from ai_native.reference_workflow import append_reference_prompt_block
+from ai_native.specs import load_prompt_spec_text
 from ai_native.stages.common import ExecutionContext, StageError, dump_model, render_prd_markdown, write_review
 from ai_native.utils import read_json, read_text, write_text
 
@@ -170,7 +172,7 @@ def _render_prd_prompt(
     critique: ReviewReport | None = None,
 ) -> str:
     if prior_prd and critique:
-        return context.prompt_library.render(
+        prompt = context.prompt_library.render(
             "prd_revise.md",
             spec_text=spec_text,
             context_report=context_report,
@@ -181,7 +183,8 @@ def _render_prd_prompt(
             prior_prd=prior_prd.model_dump(mode="json"),
             critique=critique.model_dump(mode="json"),
         )
-    return context.prompt_library.render(
+        return append_reference_prompt_block(prompt, Path(context.run_dir))
+    prompt = context.prompt_library.render(
         "prd.md",
         spec_text=spec_text,
         context_report=context_report,
@@ -190,6 +193,7 @@ def _render_prd_prompt(
         critique_history=critique_history,
         blocker_ledger=blocker_ledger,
     )
+    return append_reference_prompt_block(prompt, Path(context.run_dir))
 
 
 def _parse_additional_attempts(answer: str, default_attempts: int) -> int:
@@ -224,7 +228,7 @@ def _ask_to_continue_after_exhaustion(context: ExecutionContext, current_limit: 
 def run(context: ExecutionContext, state: RunState) -> list[Path]:
     stage_dir = context.state_store.stage_dir(state, "prd")
     _materialize_legacy_attempt(stage_dir)
-    spec_text = read_text(context.spec_path)
+    spec_text = load_prompt_spec_text(Path(state.run_dir), context.spec_path)
     context_report = read_json(Path(state.run_dir) / "recon" / "context.json")
     plan = read_json(Path(state.run_dir) / "plan" / "plan.json")
     architecture = read_json(Path(state.run_dir) / "architecture" / "architecture.json")
@@ -289,7 +293,8 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
         write_text(attempt_prd_md, render_prd_markdown(prd))
         artifacts.extend([prd_json, prd_md, attempt_prd_json, attempt_prd_md])
 
-        review_prompt = context.prompt_library.render(
+        review_prompt = append_reference_prompt_block(
+            context.prompt_library.render(
             "prd_review.md",
             spec_text=spec_text,
             context_report=context_report,
@@ -298,6 +303,8 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
             prd=prd.model_dump(mode="json"),
             critique_history=critique_history,
             blocker_ledger=blocker_ledger,
+            ),
+            Path(context.run_dir),
         )
         review_response = context.critic.run(review_prompt, cwd=context.repo_root, schema_path=review_schema)
         review = ReviewReport.model_validate(review_response.json_data)

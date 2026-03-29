@@ -12,5 +12,6 @@ services:
       UV_LINK_MODE: copy
       UV_CACHE_DIR: /workspace/.cache/uv
       NPM_CONFIG_CACHE: /workspace/.cache/npm
+      PLAYWRIGHT_BROWSERS_PATH: /workspace/.cache/ms-playwright
     volumes:
       - .:/workspace

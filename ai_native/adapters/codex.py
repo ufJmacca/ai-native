@@ -28,10 +28,20 @@ class CodexExecAdapter:
                 extra_args.insert(0, "--dangerously-bypass-approvals-and-sandbox")
         return extra_args
 
-    def _build_command(self, cwd: Path, output_path: Path, prompt: str, schema_path: Path | None, sandbox: str | None) -> list[str]:
+    def _build_command(
+        self,
+        cwd: Path,
+        output_path: Path,
+        prompt: str,
+        schema_path: Path | None,
+        sandbox: str | None,
+        image_paths: list[Path] | None,
+    ) -> list[str]:
         command = ["codex", "exec", "-C", str(cwd)]
         if self.profile.model:
             command.extend(["-m", self.profile.model])
+        for image_path in image_paths or []:
+            command.extend(["--image", str(image_path)])
         if sandbox and sandbox != "danger-full-access":
             command.extend(["-s", sandbox])
         if self.profile.search:
@@ -76,11 +86,27 @@ class CodexExecAdapter:
             check=False,
         )
 
-    def run(self, prompt: str, cwd: Path, schema_path: Path | None = None) -> AgentResult:
+    def supports_image_inputs(self) -> bool:
+        return True
+
+    def run(
+        self,
+        prompt: str,
+        cwd: Path,
+        schema_path: Path | None = None,
+        image_paths: list[Path] | None = None,
+    ) -> AgentResult:
         with tempfile.TemporaryDirectory() as tmp_dir:
             output_path = Path(tmp_dir) / "codex-output.txt"
             sandbox = self._preferred_sandbox()
-            command = self._build_command(cwd=cwd, output_path=output_path, prompt=prompt, schema_path=schema_path, sandbox=sandbox)
+            command = self._build_command(
+                cwd=cwd,
+                output_path=output_path,
+                prompt=prompt,
+                schema_path=schema_path,
+                sandbox=sandbox,
+                image_paths=image_paths,
+            )
             completed = self._run_command(command, cwd=cwd)
 
             if self._should_retry_with_fallback(completed, sandbox):
@@ -92,6 +118,7 @@ class CodexExecAdapter:
                         prompt=prompt,
                         schema_path=schema_path,
                         sandbox=fallback_sandbox,
+                        image_paths=image_paths,
                     )
                     completed = self._run_command(command, cwd=cwd)
 
@@ -107,6 +134,7 @@ class CodexExecAdapter:
                         prompt=prompt,
                         schema_path=schema_path,
                         sandbox=fallback_sandbox,
+                        image_paths=image_paths,
                     )
                     completed = self._run_command(command, cwd=cwd)
                     text = output_path.read_text(encoding="utf-8").strip() if output_path.exists() else completed.stdout.strip()
@@ -164,5 +192,14 @@ class CodexReviewAdapter:
             returncode=completed.returncode,
         )
 
-    def run(self, prompt: str, cwd: Path, schema_path: Path | None = None) -> AgentResult:
+    def run(
+        self,
+        prompt: str,
+        cwd: Path,
+        schema_path: Path | None = None,
+        image_paths: list[Path] | None = None,
+    ) -> AgentResult:
         return self.review(cwd=cwd, prompt=prompt, base_branch=self.profile.base_branch)
+
+    def supports_image_inputs(self) -> bool:
+        return False

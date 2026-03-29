@@ -206,6 +206,36 @@ class ApprovingCritic:
         return AgentResult(text=json.dumps(payload), json_data=payload)
 
 
+class ReferenceAwarePlanBuilder:
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+
+    def run(
+        self,
+        prompt: str,
+        cwd: Path,
+        schema_path: Path | None = None,
+        image_paths: list[Path] | None = None,
+    ) -> AgentResult:
+        self.prompts.append(prompt)
+        if schema_path and schema_path.name == "question-batch.json":
+            payload = {"needs_user_input": False, "summary": "No clarification needed.", "questions": []}
+            return AgentResult(text=json.dumps(payload), json_data=payload)
+        if schema_path and schema_path.name == "plan-artifact.json":
+            payload = {
+                "title": "Reference-driven Plan",
+                "summary": "Implement the page with fidelity checks.",
+                "implementation_steps": ["Extract primitives", "Implement UI", "Run fidelity verify"],
+                "interfaces": ["Reference-driven spec frontmatter"],
+                "data_flow": ["Spec manifest -> reference context -> plan"],
+                "edge_cases": ["Missing preview command"],
+                "test_strategy": ["Stage tests cover fidelity prompts"],
+                "rollout_notes": ["Document reference workflow"],
+            }
+            return AgentResult(text=json.dumps(payload), json_data=payload)
+        return AgentResult(text="# Notes\nUse the reference context.")
+
+
 def test_plan_stage_passes_user_answers_back_into_planning(app_config, tmp_spec: Path, tmp_path: Path) -> None:
     app_config.workspace.plan_max_attempts = 1
     state_store = StateStore(tmp_path / "artifacts")
@@ -252,6 +282,87 @@ def test_plan_stage_passes_user_answers_back_into_planning(app_config, tmp_spec:
         }
     ]
     assert any("todo, in_progress, done" in prompt for prompt in builder.prompts)
+
+
+def test_plan_stage_includes_reference_prompt_block_when_reference_context_exists(app_config, tmp_path: Path) -> None:
+    spec_path = tmp_path / "spec.md"
+    reference_path = tmp_path / "landing.html"
+    reference_path.write_text("<html></html>\n", encoding="utf-8")
+    spec_path.write_text(
+        """
+---
+ainative:
+  workflow_profile: reference_driven_web
+  references:
+    - id: landing
+      label: Landing export
+      kind: html_export
+      path: landing.html
+      route: /
+      viewport:
+        width: 1440
+        height: 1024
+        label: desktop
+  preview:
+    url: http://127.0.0.1:3000
+---
+# Visual Spec
+
+Build the page.
+""".lstrip(),
+        encoding="utf-8",
+    )
+    state_store = StateStore(tmp_path / "artifacts")
+    state = state_store.create_run(spec_path, Path(__file__).resolve().parents[2])
+    run_dir = Path(state.run_dir)
+    (run_dir / "recon").mkdir(parents=True, exist_ok=True)
+    write_json(
+        run_dir / "recon" / "context.json",
+        {
+            "repo_state": "existing",
+            "languages": ["javascript"],
+            "manifests": ["package.json"],
+            "test_frameworks": ["pytest"],
+            "architecture_summary": "Existing frontend app.",
+            "risks": [],
+            "touched_areas": ["src"],
+            "recommended_questions": [],
+        },
+    )
+    write_json(
+        run_dir / "recon" / "reference-context.json",
+        {
+            "workflow_profile": "reference_driven_web",
+            "summary": "Faithful landing page recreation.",
+            "design_intent": "Keep the supplied hierarchy and card rhythm.",
+            "stable_patterns": ["Hero then card grid"],
+            "typography": ["Display headline"],
+            "colors": ["#112233"],
+            "spacing": ["32px"],
+            "layout_patterns": ["Wide hero"],
+            "repeated_components": ["Buttons"],
+            "responsive_behaviors": ["Collapse to one column"],
+            "fidelity_constraints": ["Keep section order"],
+        },
+    )
+    builder = ReferenceAwarePlanBuilder()
+    context = ExecutionContext(
+        config=app_config,
+        prompt_library=PromptLibrary(Path(__file__).resolve().parents[2] / "ai_native" / "prompts"),
+        state_store=state_store,
+        template_root=Path(__file__).resolve().parents[2] / "ai_native",
+        repo_root=Path(__file__).resolve().parents[2],
+        spec_path=spec_path,
+        run_dir=run_dir,
+        builder=builder,
+        critic=ApprovingCritic(),
+        verifier=FakeWorkflowAdapter(),
+        pr_reviewer=FakeWorkflowAdapter(),
+    )
+
+    run_plan(context, state)
+
+    assert any("Reference-driven web fidelity profile is active" in prompt for prompt in builder.prompts)
 
 
 class ResumeOnlyBuilder:

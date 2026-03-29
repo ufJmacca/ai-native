@@ -17,12 +17,14 @@ endif
 
 UV_RUN = $(RUNNER) uv run
 UV_SYNC = $(RUNNER) uv sync
+PLAYWRIGHT_INSTALL = $(RUNNER) uv run python -m playwright install chromium
 
-.PHONY: help bootstrap doctor test lint require-target-dir run plan architect prd slice loop verify commit pr
+.PHONY: help bootstrap browsers doctor test lint require-target-dir run plan architect prd slice loop verify commit pr
 
 help:
 	@printf "Targets:\n"
-	@printf "  make bootstrap          Install Python deps in the current runtime (and build the image when run on the host)\n"
+	@printf "  make bootstrap          Install Python deps and Playwright Chromium in the current runtime (and build the image when run on the host)\n"
+	@printf "  make browsers           Install Playwright Chromium in the current runtime\n"
 	@printf "  make doctor             Check runtime and auth mounts in the current runtime\n"
 	@printf "  make plan SPEC=... TARGET_DIR=/path/to/repo      Run intake, recon, and planning stages\n"
 	@printf "  make architect SPEC=... TARGET_DIR=/path/to/repo Run architecture stage and critique\n"
@@ -41,10 +43,15 @@ require-target-dir:
 bootstrap:
 ifeq ($(IN_CONTAINER),1)
 	uv sync
+	uv run python -m playwright install chromium
 else
 	$(DOCKER_COMPOSE) build $(WORKSPACE)
 	$(UV_SYNC)
+	$(PLAYWRIGHT_INSTALL)
 endif
+
+browsers:
+	$(PLAYWRIGHT_INSTALL)
 
 doctor:
 	$(UV_RUN) ainative doctor

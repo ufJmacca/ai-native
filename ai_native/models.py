@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 RunStatus = Literal["in_progress", "completed", "failed"]
@@ -49,6 +49,84 @@ class ContextReport(BaseModel):
     risks: list[str] = Field(default_factory=list)
     touched_areas: list[str] = Field(default_factory=list)
     recommended_questions: list[str] = Field(default_factory=list)
+
+
+class ViewportConfig(BaseModel):
+    width: int = Field(ge=320, le=7680)
+    height: int = Field(ge=320, le=4320)
+    label: str | None = None
+
+    @property
+    def resolved_label(self) -> str:
+        return self.label or f"{self.width}x{self.height}"
+
+
+class PreviewReadinessConfig(BaseModel):
+    timeout_seconds: float = Field(default=60.0, gt=0)
+    interval_seconds: float = Field(default=1.0, gt=0)
+    expect_status: int = Field(default=200, ge=100, le=599)
+
+
+class PreviewConfig(BaseModel):
+    url: str
+    command: str | list[str] | None = None
+    readiness: PreviewReadinessConfig = Field(default_factory=PreviewReadinessConfig)
+
+
+class ReferenceInput(BaseModel):
+    id: str
+    label: str
+    kind: Literal["image", "html_export", "url"]
+    route: str
+    viewport: ViewportConfig
+    notes: str | None = None
+    path: str | None = None
+    url: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_source(self) -> "ReferenceInput":
+        has_path = bool(self.path)
+        has_url = bool(self.url)
+        if self.kind in {"image", "html_export"} and not has_path:
+            raise ValueError(f"reference `{self.id}` with kind `{self.kind}` requires `path`")
+        if self.kind == "url" and not has_url:
+            raise ValueError(f"reference `{self.id}` with kind `url` requires `url`")
+        if has_path and has_url:
+            raise ValueError(f"reference `{self.id}` must define only one of `path` or `url`")
+        if not self.route.startswith("/"):
+            raise ValueError(f"reference `{self.id}` route must start with `/`")
+        return self
+
+
+class ReferenceManifest(BaseModel):
+    workflow_profile: Literal["reference_driven_web"]
+    references: list[ReferenceInput] = Field(default_factory=list)
+    preview: PreviewConfig
+
+    @model_validator(mode="after")
+    def _validate_references(self) -> "ReferenceManifest":
+        if not self.references:
+            raise ValueError("reference-driven web workflow requires at least one reference")
+        seen: set[str] = set()
+        for item in self.references:
+            if item.id in seen:
+                raise ValueError(f"duplicate reference id `{item.id}`")
+            seen.add(item.id)
+        return self
+
+
+class ReferenceContext(BaseModel):
+    workflow_profile: Literal["reference_driven_web"] = "reference_driven_web"
+    summary: str
+    design_intent: str
+    stable_patterns: list[str] = Field(default_factory=list)
+    typography: list[str] = Field(default_factory=list)
+    colors: list[str] = Field(default_factory=list)
+    spacing: list[str] = Field(default_factory=list)
+    layout_patterns: list[str] = Field(default_factory=list)
+    repeated_components: list[str] = Field(default_factory=list)
+    responsive_behaviors: list[str] = Field(default_factory=list)
+    fidelity_constraints: list[str] = Field(default_factory=list)
 
 
 class PlanArtifact(BaseModel):
