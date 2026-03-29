@@ -7,6 +7,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 
 from ai_native.models import PreviewConfig, ReferenceInput
@@ -34,10 +35,22 @@ def _wait_for_url(preview: PreviewConfig, process: subprocess.Popen[str] | None)
             with urllib.request.urlopen(request, timeout=5) as response:
                 if response.status == preview.readiness.expect_status:
                     return
+        except urllib.error.HTTPError as exc:
+            if exc.code == preview.readiness.expect_status:
+                return
+            last_error = exc
         except (urllib.error.URLError, TimeoutError) as exc:
             last_error = exc
         time.sleep(preview.readiness.interval_seconds)
     raise StageError(f"Preview URL {preview.url} did not become ready: {last_error or 'timed out'}")
+
+
+def _capture_filename(reference: ReferenceInput) -> str:
+    viewport = reference.viewport
+    route_fingerprint = sha256(
+        f"{reference.route}|{viewport.width}|{viewport.height}|{viewport.resolved_label}".encode("utf-8")
+    ).hexdigest()[:8]
+    return f"{slugify(reference.id)}-{slugify(viewport.resolved_label)}-{route_fingerprint}-implementation.png"
 
 
 @contextlib.contextmanager
@@ -98,7 +111,7 @@ def capture_implementation_screenshots(
                     page = context.new_page()
                     target_url = urllib.parse.urljoin(preview.url.rstrip("/") + "/", reference.route.lstrip("/"))
                     page.goto(target_url, wait_until="load")
-                    filename = f"{slugify(reference.id)}-{slugify(viewport.resolved_label)}-implementation.png"
+                    filename = _capture_filename(reference)
                     output_path = output_dir / filename
                     page.screenshot(path=str(output_path), full_page=True)
                     captures.append(

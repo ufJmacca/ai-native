@@ -44,10 +44,6 @@ def _existing_visual_attempt_numbers(verification_dir: Path, slice_id: str) -> l
     return sorted(attempts)
 
 
-def _existing_attempt_numbers(verification_dir: Path, slice_id: str) -> list[int]:
-    return sorted(set(_existing_verification_attempt_numbers(verification_dir, slice_id)) | set(_existing_visual_attempt_numbers(verification_dir, slice_id)))
-
-
 def _materialize_legacy_attempt(verification_dir: Path, slice_id: str) -> None:
     if _existing_verification_attempt_numbers(verification_dir, slice_id):
         return
@@ -91,16 +87,33 @@ def _existing_slice_artifacts(verification_dir: Path, slice_id: str) -> list[Pat
 
 
 def _load_resume_state(verification_dir: Path, slice_id: str) -> dict[str, object] | None:
-    attempts = _existing_attempt_numbers(verification_dir, slice_id)
-    if not attempts:
+    verification_attempts = _existing_verification_attempt_numbers(verification_dir, slice_id)
+    visual_attempts = _existing_visual_attempt_numbers(verification_dir, slice_id)
+    if not verification_attempts and not visual_attempts:
         return None
-    last_attempt = attempts[-1]
-    verification_path = verification_dir / f"{slice_id}-attempt-{last_attempt}.json"
-    visual_path = verification_dir / f"{slice_id}-visual-review-attempt-{last_attempt}.json"
+    last_verification_attempt = verification_attempts[-1] if verification_attempts else 0
+    latest_visual_attempt = visual_attempts[-1] if visual_attempts else 0
+    latest_visual_review = (
+        ReviewReport.model_validate(read_json(verification_dir / f"{slice_id}-visual-review-attempt-{latest_visual_attempt}.json"))
+        if latest_visual_attempt
+        else None
+    )
+    pending_verification_attempt = (
+        latest_visual_attempt
+        if latest_visual_attempt > last_verification_attempt and latest_visual_review is not None and latest_visual_review.verdict == "approved"
+        else None
+    )
+    latest_attempt = max(last_verification_attempt, latest_visual_attempt)
+    verification_path = verification_dir / f"{slice_id}-attempt-{last_verification_attempt}.json"
+    visual_attempt = pending_verification_attempt or latest_attempt
+    visual_path = verification_dir / f"{slice_id}-visual-review-attempt-{visual_attempt}.json"
     return {
-        "prior_verification": VerificationReport.model_validate(read_json(verification_path)) if verification_path.exists() else None,
+        "prior_verification": VerificationReport.model_validate(read_json(verification_path))
+        if last_verification_attempt and verification_path.exists()
+        else None,
         "prior_visual_review": ReviewReport.model_validate(read_json(visual_path)) if visual_path.exists() else None,
-        "last_attempt": last_attempt,
+        "next_attempt": pending_verification_attempt or latest_attempt + 1,
+        "resume_without_revision_attempt": pending_verification_attempt,
     }
 
 
@@ -416,10 +429,15 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
             continue
 
         attempt_limit = max(1, context.config.workspace.verification_max_attempts)
-        next_attempt = int(resume_state["last_attempt"]) + 1 if resume_state else 1
+        next_attempt = int(resume_state["next_attempt"]) if resume_state else 1
+        resume_without_revision_attempt = (
+            int(resume_state["resume_without_revision_attempt"])
+            if resume_state and resume_state["resume_without_revision_attempt"] is not None
+            else None
+        )
         if resume_state:
             context.emit_progress(
-                f"[ainative] verify: slice {slice_def.id} resuming from previous critique at attempt {int(resume_state['last_attempt']) + 1}"
+                f"[ainative] verify: slice {slice_def.id} resuming from previous critique at attempt {next_attempt}"
             )
 
         while True:
@@ -438,6 +456,11 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
             attempt = next_attempt
             if verification is None and visual_review is None:
                 context.emit_progress(f"[ainative] verify: slice {slice_def.id} verification attempt {attempt}/{attempt_limit}")
+            elif resume_without_revision_attempt == attempt:
+                context.emit_progress(
+                    f"[ainative] verify: slice {slice_def.id} resuming verification attempt {attempt}/{attempt_limit} "
+                    "after completed visual review"
+                )
             else:
                 context.emit_progress(f"[ainative] verify: slice {slice_def.id} revision attempt {attempt}/{attempt_limit}")
                 revise_prompt = _render_verify_revision_prompt(

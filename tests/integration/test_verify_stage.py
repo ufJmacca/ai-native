@@ -199,6 +199,32 @@ class ImageAwarePassingVerifier(PassingVerifier):
         return super().run(prompt, cwd=cwd, schema_path=schema_path)
 
 
+class ApprovingVisualCritic:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.image_paths: list[list[Path]] = []
+
+    def supports_image_inputs(self) -> bool:
+        return True
+
+    def run(
+        self,
+        prompt: str,
+        cwd: Path,
+        schema_path: Path | None = None,
+        image_paths: list[Path] | None = None,
+    ) -> AgentResult:
+        self.calls += 1
+        self.image_paths.append(list(image_paths or []))
+        payload = {
+            "verdict": "approved",
+            "summary": "Visual fidelity is materially aligned with the reference.",
+            "findings": [],
+            "required_changes": [],
+        }
+        return AgentResult(text=json.dumps(payload), json_data=payload)
+
+
 def _seed_slice_plan_and_artifacts(run_dir: Path) -> None:
     (run_dir / "slice").mkdir(parents=True, exist_ok=True)
     write_json(
@@ -330,6 +356,112 @@ def test_verify_stage_resumes_from_latest_attempt(app_config, tmp_spec: Path, tm
     assert any("resuming from previous critique at attempt 3" in event for event in progress)
     assert any("Add explicit verification for list behavior" in prompt for prompt in builder.prompts)
     assert (verify_dir / "S001-attempt-3.json").exists()
+
+
+def test_verify_stage_resumes_pending_verification_attempt_without_revision(
+    app_config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app_config.workspace.verification_max_attempts = 2
+    reference_image = tmp_path / "reference.png"
+    reference_image.write_bytes(b"reference-image")
+    spec_path = tmp_path / "reference-spec.md"
+    spec_path.write_text(
+        "\n".join(
+            [
+                "---",
+                "ainative:",
+                "  workflow_profile: reference_driven_web",
+                "  references:",
+                "    - id: hero",
+                "      label: Hero reference",
+                "      kind: image",
+                f"      path: {reference_image.name}",
+                "      route: /",
+                "      viewport:",
+                "        width: 1440",
+                "        height: 1200",
+                "        label: desktop",
+                "  preview:",
+                "    url: http://localhost:4173",
+                "---",
+                "# Reference Landing Page",
+                "",
+                "Recreate the supplied landing page faithfully.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    state_store = StateStore(tmp_path / "artifacts")
+    state = state_store.create_run(spec_path, Path(__file__).resolve().parents[2])
+    run_dir = Path(state.run_dir)
+    _seed_slice_plan_and_artifacts(run_dir)
+    _seed_reference_context(run_dir)
+    verify_dir = run_dir / "verify"
+    verify_dir.mkdir(parents=True, exist_ok=True)
+    write_json(
+        verify_dir / "S001-attempt-1.json",
+        {
+            "verdict": "failed",
+            "summary": "Need explicit list verification.",
+            "acceptance_checks": ["Can create a task"],
+            "evidence": ["red.log", "green.log"],
+            "gaps": ["Add explicit verification for list behavior"],
+        },
+    )
+    (verify_dir / "S001-attempt-1.md").write_text("# Prior Verification\n", encoding="utf-8")
+    write_json(
+        verify_dir / "S001-visual-review-attempt-2.json",
+        {
+            "verdict": "approved",
+            "summary": "Visual fidelity is materially aligned with the reference.",
+            "findings": [],
+            "required_changes": [],
+        },
+    )
+    (verify_dir / "S001-visual-review-attempt-2.md").write_text("# Prior Visual Review\n", encoding="utf-8")
+
+    capture_path = run_dir / "verify" / "captured-hero.png"
+    capture_path.parent.mkdir(parents=True, exist_ok=True)
+    capture_path.write_bytes(b"implementation-image")
+    capture = ImplementationCapture(
+        route="/",
+        viewport_label="desktop",
+        viewport_width=1440,
+        viewport_height=1200,
+        path=capture_path,
+    )
+
+    monkeypatch.setattr("ai_native.stages.verify.preview_session", lambda preview, cwd: contextlib.nullcontext())
+    monkeypatch.setattr("ai_native.stages.verify.capture_implementation_screenshots", lambda preview, references, output_dir: [capture])
+
+    builder = VerificationRevisionBuilder()
+    critic = ApprovingVisualCritic()
+    verifier = PassingVerifier()
+    progress: list[str] = []
+    context = ExecutionContext(
+        config=app_config,
+        prompt_library=PromptLibrary(Path(__file__).resolve().parents[2] / "ai_native" / "prompts"),
+        state_store=state_store,
+        template_root=Path(__file__).resolve().parents[2] / "ai_native",
+        repo_root=Path(__file__).resolve().parents[2],
+        spec_path=spec_path,
+        run_dir=run_dir,
+        builder=builder,
+        critic=critic,
+        verifier=verifier,
+        pr_reviewer=FakeWorkflowAdapter(),
+        emit_progress=progress.append,
+    )
+
+    run_verify(context, state)
+
+    assert builder.calls == 0
+    assert critic.calls == 1
+    assert verifier.calls == 1
+    assert any("resuming from previous critique at attempt 2" in event for event in progress)
+    assert any("resuming verification attempt 2/2 after completed visual review" in event for event in progress)
+    assert (verify_dir / "S001-attempt-2.json").exists()
 
 
 def test_verify_stage_can_continue_after_attempt_budget_is_exhausted(app_config, tmp_spec: Path, tmp_path: Path) -> None:
