@@ -68,7 +68,14 @@ def _existing_visual_image_paths(verification_dir: Path, slice_id: str, attempt:
             "Rerun visual review or restore the captured images before resuming verify."
         )
     implementation_paths = sorted(path for path in capture_dir.glob("*-implementation.*") if path.is_file())
-    reference_paths = sorted(path for path in capture_dir.glob("*-reference.*") if path.is_file())
+    reference_paths = sorted(
+        path for path in capture_dir.iterdir() if path.is_file() and path.name.endswith("-reference")
+    )
+    reference_paths.extend(
+        path
+        for path in sorted(path for path in capture_dir.glob("*-reference.*") if path.is_file())
+        if path not in reference_paths
+    )
     image_paths = implementation_paths + reference_paths
     if not image_paths:
         raise StageError(

@@ -401,3 +401,61 @@ def test_recon_stage_reports_missing_image_reference_file(app_config, tmp_path: 
 
     with pytest.raises(StageError, match="Missing image reference file"):
         run_recon(context, state)
+
+
+def test_recon_stage_rejects_image_reference_directory_path(app_config, tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    (workspace_root / "package.json").write_text('{"name":"web-app"}\n', encoding="utf-8")
+    (workspace_root / "src").mkdir()
+    (workspace_root / "src" / "app.tsx").write_text("export const App = () => null;\n", encoding="utf-8")
+    image_dir = tmp_path / "image-dir"
+    image_dir.mkdir()
+    spec_path = tmp_path / "spec.md"
+    spec_path.write_text(
+        "\n".join(
+            [
+                "---",
+                "ainative:",
+                "  workflow_profile: reference_driven_web",
+                "  references:",
+                "    - id: landing",
+                "      label: Landing reference",
+                "      kind: image",
+                f"      path: {image_dir.name}",
+                "      route: /",
+                "      viewport:",
+                "        width: 1440",
+                "        height: 1024",
+                "        label: desktop",
+                "  preview:",
+                "    url: http://127.0.0.1:3000",
+                "---",
+                "# Visual Spec",
+                "",
+                "Recreate the landing page faithfully.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    state_store = StateStore(tmp_path / "artifacts")
+    state = state_store.create_run(spec_path, workspace_root)
+    run_dir = Path(state.run_dir)
+    builder = ReferenceReconBuilder(supports_images=True)
+    context = ExecutionContext(
+        config=app_config,
+        prompt_library=PromptLibrary(Path(__file__).resolve().parents[2] / "ai_native" / "prompts"),
+        state_store=state_store,
+        template_root=Path(__file__).resolve().parents[2] / "ai_native",
+        repo_root=workspace_root,
+        spec_path=spec_path,
+        run_dir=run_dir,
+        builder=builder,
+        critic=FakeWorkflowAdapter(),
+        verifier=FakeWorkflowAdapter(),
+        pr_reviewer=FakeWorkflowAdapter(),
+    )
+
+    with pytest.raises(StageError, match="Missing image reference file"):
+        run_recon(context, state)
