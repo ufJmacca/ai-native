@@ -280,7 +280,10 @@ def _copy_reference_image_artifacts(manifest, capture_dir: Path) -> list[Path]:
             continue
         source = Path(reference.path)
         if not source.exists():
-            continue
+            raise StageError(
+                f"Missing image reference file for `{reference.id}`: {source}. "
+                "Fix the path in the spec or restore the reference image before running verify."
+            )
         target = capture_dir / f"{slugify(reference.id)}-reference{source.suffix.lower()}"
         shutil.copyfile(source, target)
         copied.append(target)

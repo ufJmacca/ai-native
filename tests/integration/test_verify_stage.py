@@ -714,3 +714,78 @@ def test_verify_stage_rejects_image_only_references_without_image_capable_critic
 
     with pytest.raises(StageError, match="critic that supports image inputs"):
         run_verify(context, state)
+
+
+def test_verify_stage_reports_missing_image_reference_file(
+    app_config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reference_image = tmp_path / "reference.png"
+    reference_image.write_bytes(b"reference-image")
+    spec_path = tmp_path / "reference-spec.md"
+    spec_path.write_text(
+        "\n".join(
+            [
+                "---",
+                "ainative:",
+                "  workflow_profile: reference_driven_web",
+                "  references:",
+                "    - id: hero",
+                "      label: Hero reference",
+                "      kind: image",
+                f"      path: {reference_image.name}",
+                "      route: /",
+                "      viewport:",
+                "        width: 1440",
+                "        height: 1200",
+                "        label: desktop",
+                "  preview:",
+                "    url: http://localhost:4173",
+                "---",
+                "# Reference Landing Page",
+                "",
+                "Recreate the supplied landing page faithfully.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    state_store = StateStore(tmp_path / "artifacts")
+    state = state_store.create_run(spec_path, Path(__file__).resolve().parents[2])
+    run_dir = Path(state.run_dir)
+    _seed_slice_plan_and_artifacts(run_dir)
+    _seed_reference_context(run_dir)
+
+    capture_path = run_dir / "verify" / "captured-hero.png"
+    capture_path.parent.mkdir(parents=True, exist_ok=True)
+    capture_path.write_bytes(b"implementation-image")
+    capture = ImplementationCapture(
+        route="/",
+        viewport_label="desktop",
+        viewport_width=1440,
+        viewport_height=1200,
+        path=capture_path,
+    )
+
+    reference_image.unlink()
+    monkeypatch.setattr("ai_native.stages.verify.preview_session", lambda preview, cwd: contextlib.nullcontext())
+    monkeypatch.setattr(
+        "ai_native.stages.verify.capture_implementation_screenshots", lambda preview, references, output_dir: [capture]
+    )
+
+    context = ExecutionContext(
+        config=app_config,
+        prompt_library=PromptLibrary(Path(__file__).resolve().parents[2] / "ai_native" / "prompts"),
+        state_store=state_store,
+        template_root=Path(__file__).resolve().parents[2] / "ai_native",
+        repo_root=Path(__file__).resolve().parents[2],
+        spec_path=spec_path,
+        run_dir=run_dir,
+        builder=VerificationRevisionBuilder(),
+        critic=OneRejectingVisualCritic(),
+        verifier=PassingVerifier(),
+        pr_reviewer=FakeWorkflowAdapter(),
+        emit_progress=lambda _message: None,
+    )
+
+    with pytest.raises(StageError, match="Missing image reference file"):
+        run_verify(context, state)
