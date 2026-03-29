@@ -428,23 +428,16 @@ def test_verify_stage_resumes_pending_verification_attempt_without_revision(
     )
     (verify_dir / "S001-visual-review-attempt-2.md").write_text("# Prior Visual Review\n", encoding="utf-8")
 
-    capture_path = run_dir / "verify" / "captured-hero.png"
-    capture_path.parent.mkdir(parents=True, exist_ok=True)
-    capture_path.write_bytes(b"implementation-image")
-    capture = ImplementationCapture(
-        route="/",
-        viewport_label="desktop",
-        viewport_width=1440,
-        viewport_height=1200,
-        path=capture_path,
-    )
-
-    monkeypatch.setattr("ai_native.stages.verify.preview_session", lambda preview, cwd: contextlib.nullcontext())
-    monkeypatch.setattr("ai_native.stages.verify.capture_implementation_screenshots", lambda preview, references, output_dir: [capture])
+    visual_attempt_dir = verify_dir / "visual" / "S001" / "attempt-2"
+    visual_attempt_dir.mkdir(parents=True, exist_ok=True)
+    implementation_capture = visual_attempt_dir / "hero-desktop-implementation.png"
+    implementation_capture.write_bytes(b"implementation-image")
+    reference_capture = visual_attempt_dir / "hero-reference.png"
+    reference_capture.write_bytes(b"reference-image")
 
     builder = VerificationRevisionBuilder()
     critic = ApprovingVisualCritic()
-    verifier = PassingVerifier()
+    verifier = ImageAwarePassingVerifier()
     progress: list[str] = []
     context = ExecutionContext(
         config=app_config,
@@ -464,8 +457,9 @@ def test_verify_stage_resumes_pending_verification_attempt_without_revision(
     run_verify(context, state)
 
     assert builder.calls == 0
-    assert critic.calls == 1
+    assert critic.calls == 0
     assert verifier.calls == 1
+    assert verifier.image_paths == [[implementation_capture, reference_capture]]
     assert any("resuming from previous critique at attempt 2" in event for event in progress)
     assert any("resuming verification attempt 2/2 after completed visual review" in event for event in progress)
     assert (verify_dir / "S001-attempt-2.json").exists()

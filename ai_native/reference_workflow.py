@@ -186,13 +186,26 @@ def _linked_css_paths(html_text: str, html_path: Path) -> list[Path]:
         normalized_href = parsed_href.path
         if not normalized_href:
             continue
-        relative_href = normalized_href.lstrip("/") if normalized_href.startswith("/") else normalized_href
-        path = (export_root / relative_href).resolve()
+        relative_path = Path(normalized_href.lstrip("/")) if normalized_href.startswith("/") else Path(normalized_href)
+        if normalized_href.startswith("/"):
+            for candidate_root in (export_root, *export_root.parents):
+                if candidate_root.parent == candidate_root:
+                    break
+                path = (candidate_root / relative_path).resolve()
+                try:
+                    path.relative_to(candidate_root)
+                except ValueError:
+                    continue
+                if path.is_file():
+                    linked.append(path)
+                    break
+            continue
+        path = (export_root / relative_path).resolve()
         try:
             path.relative_to(export_root)
         except ValueError:
             continue
-        if path.exists():
+        if path.is_file():
             linked.append(path)
     return linked
 

@@ -60,6 +60,24 @@ def _capture_dir(verification_dir: Path, slice_id: str, attempt: int) -> Path:
     return verification_dir / "visual" / slice_id / f"attempt-{attempt}"
 
 
+def _existing_visual_image_paths(verification_dir: Path, slice_id: str, attempt: int) -> list[Path]:
+    capture_dir = _capture_dir(verification_dir, slice_id, attempt)
+    if not capture_dir.exists():
+        raise StageError(
+            f"Visual review artifacts for slice {slice_id} attempt {attempt} are missing. "
+            "Rerun visual review or restore the captured images before resuming verify."
+        )
+    implementation_paths = sorted(path for path in capture_dir.glob("*-implementation.*") if path.is_file())
+    reference_paths = sorted(path for path in capture_dir.glob("*-reference.*") if path.is_file())
+    image_paths = implementation_paths + reference_paths
+    if not image_paths:
+        raise StageError(
+            f"Visual review artifacts for slice {slice_id} attempt {attempt} did not include reusable images. "
+            "Rerun visual review before resuming verify."
+        )
+    return image_paths
+
+
 def _existing_slice_artifacts(verification_dir: Path, slice_id: str) -> list[Path]:
     paths: list[Path] = []
     for candidate in (
@@ -485,29 +503,37 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
 
             visual_image_paths: list[Path] = []
             if reference_profile_active:
-                context.emit_progress(f"[ainative] verify: slice {slice_def.id} visual review attempt {attempt}/{attempt_limit}")
-                visual_review, visual_artifacts, visual_image_paths = _run_visual_review(
-                    context=context,
-                    spec_text=spec_text,
-                    verification_dir=verification_dir,
-                    slice_definition=slice_def.model_dump(mode="json"),
-                    attempt=attempt,
-                    critique_history=critique_history,
-                    blocker_ledger=blocker_ledger,
-                )
-                artifacts.extend(visual_artifacts)
-                visual_history = _load_visual_review_history(verification_dir, slice_def.id)
-                critique_history = _render_critique_history(verification_history, visual_history)
-                blocker_ledger = _render_blocker_ledger(_collect_blocker_ledger(verification_history, visual_history))
-                artifacts.extend(_write_guidance_artifacts(verification_dir, slice_def.id, critique_history, blocker_ledger))
-                if visual_review.verdict != "approved":
-                    verification = None
-                    if attempt < attempt_limit:
-                        context.emit_progress(
-                            f"[ainative] verify: slice {slice_def.id} visual critique requested changes, retrying - {visual_review.summary}"
+                if resume_without_revision_attempt == attempt:
+                    if visual_review is None or visual_review.verdict != "approved":
+                        raise StageError(
+                            f"Verification resume state for slice {slice_def.id} is missing an approved visual review "
+                            f"for attempt {attempt}."
                         )
-                    next_attempt = attempt + 1
-                    continue
+                    visual_image_paths = _existing_visual_image_paths(verification_dir, slice_def.id, attempt)
+                else:
+                    context.emit_progress(f"[ainative] verify: slice {slice_def.id} visual review attempt {attempt}/{attempt_limit}")
+                    visual_review, visual_artifacts, visual_image_paths = _run_visual_review(
+                        context=context,
+                        spec_text=spec_text,
+                        verification_dir=verification_dir,
+                        slice_definition=slice_def.model_dump(mode="json"),
+                        attempt=attempt,
+                        critique_history=critique_history,
+                        blocker_ledger=blocker_ledger,
+                    )
+                    artifacts.extend(visual_artifacts)
+                    visual_history = _load_visual_review_history(verification_dir, slice_def.id)
+                    critique_history = _render_critique_history(verification_history, visual_history)
+                    blocker_ledger = _render_blocker_ledger(_collect_blocker_ledger(verification_history, visual_history))
+                    artifacts.extend(_write_guidance_artifacts(verification_dir, slice_def.id, critique_history, blocker_ledger))
+                    if visual_review.verdict != "approved":
+                        verification = None
+                        if attempt < attempt_limit:
+                            context.emit_progress(
+                                f"[ainative] verify: slice {slice_def.id} visual critique requested changes, retrying - {visual_review.summary}"
+                            )
+                        next_attempt = attempt + 1
+                        continue
 
             prompt = context.prompt_library.render(
                 "verify.md",
