@@ -109,7 +109,7 @@ def capture_implementation_screenshots(
                 context = browser.new_context(viewport={"width": viewport.width, "height": viewport.height})
                 try:
                     page = context.new_page()
-                    target_url = urllib.parse.urljoin(preview.url.rstrip("/") + "/", reference.route.lstrip("/"))
+                    target_url = urllib.parse.urljoin(preview.url.rstrip("/") + "/", reference.route)
                     page.goto(target_url, wait_until="load")
                     filename = _capture_filename(reference)
                     output_path = output_dir / filename
