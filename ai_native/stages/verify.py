@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import shutil
+from hashlib import sha256
 from pathlib import Path
 
 from ai_native.browser import ImplementationCapture, capture_implementation_screenshots, preview_session
@@ -297,7 +298,8 @@ def _copy_reference_image_artifacts(manifest, capture_dir: Path) -> list[Path]:
                 f"Missing image reference file for `{reference.id}`: {source}. "
                 "Fix the path in the spec or restore the reference image before running verify."
             )
-        target = capture_dir / f"{slugify(reference.id)}-reference{source.suffix.lower()}"
+        reference_fingerprint = sha256(reference.id.encode("utf-8")).hexdigest()[:8]
+        target = capture_dir / f"{slugify(reference.id)}-{reference_fingerprint}-reference{source.suffix.lower()}"
         shutil.copyfile(source, target)
         copied.append(target)
     return copied

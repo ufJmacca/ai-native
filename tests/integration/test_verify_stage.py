@@ -273,6 +273,13 @@ def _seed_reference_context(run_dir: Path) -> None:
     )
 
 
+def _single_matching_file(directory: Path, pattern: str) -> Path:
+    matches = sorted(directory.glob(pattern))
+    if len(matches) != 1:
+        raise AssertionError(f"Expected exactly one file for pattern {pattern!r} in {directory}, found {matches!r}")
+    return matches[0]
+
+
 def test_verify_stage_revises_after_failed_verification(app_config, tmp_spec: Path, tmp_path: Path) -> None:
     app_config.workspace.verification_max_attempts = 3
     state_store = StateStore(tmp_path / "artifacts")
@@ -627,18 +634,20 @@ def test_verify_stage_runs_visual_review_before_final_verification(app_config, t
     assert (verify_dir / "S001-visual-review-attempt-2.json").exists()
     assert (verify_dir / "S001-attempt-2.json").exists()
     assert any(path.name == "S001-visual-review-attempt-2.md" for path in artifacts)
+    attempt_1_reference = _single_matching_file(verify_dir / "visual" / "S001" / "attempt-1", "hero-*-reference.png")
+    attempt_2_reference = _single_matching_file(verify_dir / "visual" / "S001" / "attempt-2", "hero-*-reference.png")
     assert critic.image_paths[0] == [
         capture_path,
-        verify_dir / "visual" / "S001" / "attempt-1" / "hero-reference.png",
+        attempt_1_reference,
     ]
     assert critic.image_paths[1] == [
         capture_path,
-        verify_dir / "visual" / "S001" / "attempt-2" / "hero-reference.png",
+        attempt_2_reference,
     ]
     assert verifier.image_paths == [
         [
             capture_path,
-            verify_dir / "visual" / "S001" / "attempt-2" / "hero-reference.png",
+            attempt_2_reference,
         ]
     ]
 
@@ -776,9 +785,103 @@ def test_verify_stage_slugifies_reference_image_artifact_names(
 
     run_verify(context, state)
 
-    expected_reference = run_dir / "verify" / "visual" / "S001" / "attempt-1" / "hero-mobile-reference.png"
+    expected_reference = _single_matching_file(
+        run_dir / "verify" / "visual" / "S001" / "attempt-1", "hero-mobile-*-reference.png"
+    )
     assert expected_reference.exists()
     assert critic.image_paths[0] == [capture_path, expected_reference]
+
+
+def test_verify_stage_disambiguates_copied_reference_image_filenames(
+    app_config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reference_image_a = tmp_path / "reference-a.png"
+    reference_image_b = tmp_path / "reference-b.png"
+    reference_image_a.write_bytes(b"reference-image-a")
+    reference_image_b.write_bytes(b"reference-image-b")
+    spec_path = tmp_path / "reference-spec.md"
+    spec_path.write_text(
+        "\n".join(
+            [
+                "---",
+                "ainative:",
+                "  workflow_profile: reference_driven_web",
+                "  references:",
+                "    - id: hero/mobile",
+                "      label: Hero mobile",
+                "      kind: image",
+                f"      path: {reference_image_a.name}",
+                "      route: /",
+                "      viewport:",
+                "        width: 1440",
+                "        height: 1200",
+                "        label: desktop",
+                "    - id: hero-mobile",
+                "      label: Hero mobile alt",
+                "      kind: image",
+                f"      path: {reference_image_b.name}",
+                "      route: /alternate",
+                "      viewport:",
+                "        width: 1440",
+                "        height: 1200",
+                "        label: desktop",
+                "  preview:",
+                "    url: http://localhost:4173",
+                "---",
+                "# Reference Landing Page",
+                "",
+                "Recreate the supplied landing page faithfully.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    state_store = StateStore(tmp_path / "artifacts")
+    state = state_store.create_run(spec_path, Path(__file__).resolve().parents[2])
+    run_dir = Path(state.run_dir)
+    _seed_slice_plan_and_artifacts(run_dir)
+    _seed_reference_context(run_dir)
+
+    capture_path = run_dir / "verify" / "captured-hero.png"
+    capture_path.parent.mkdir(parents=True, exist_ok=True)
+    capture_path.write_bytes(b"implementation-image")
+    capture = ImplementationCapture(
+        route="/",
+        viewport_label="desktop",
+        viewport_width=1440,
+        viewport_height=1200,
+        path=capture_path,
+    )
+
+    monkeypatch.setattr("ai_native.stages.verify.preview_session", lambda preview, cwd: contextlib.nullcontext())
+    monkeypatch.setattr(
+        "ai_native.stages.verify.capture_implementation_screenshots", lambda preview, references, output_dir: [capture]
+    )
+
+    critic = ApprovingVisualCritic()
+    context = ExecutionContext(
+        config=app_config,
+        prompt_library=PromptLibrary(Path(__file__).resolve().parents[2] / "ai_native" / "prompts"),
+        state_store=state_store,
+        template_root=Path(__file__).resolve().parents[2] / "ai_native",
+        repo_root=Path(__file__).resolve().parents[2],
+        spec_path=spec_path,
+        run_dir=run_dir,
+        builder=VerificationRevisionBuilder(),
+        critic=critic,
+        verifier=PassingVerifier(),
+        pr_reviewer=FakeWorkflowAdapter(),
+        emit_progress=lambda _message: None,
+    )
+
+    run_verify(context, state)
+
+    reference_dir = run_dir / "verify" / "visual" / "S001" / "attempt-1"
+    reference_files = sorted(reference_dir.glob("hero-mobile-*-reference.png"))
+    assert len(reference_files) == 2
+    assert reference_files[0] != reference_files[1]
+    assert critic.image_paths[0][0] == capture_path
+    assert sorted(critic.image_paths[0][1:]) == reference_files
 
 
 def test_verify_stage_rejects_image_only_references_without_image_capable_critic(
