@@ -1,4 +1,5 @@
 from __future__ import annotations
+import re
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,7 @@ from ai_native.models import ReferenceManifest
 from ai_native.utils import read_json, read_text, write_json, write_text
 
 _FRONTMATTER_DELIMITER = "---"
+_AINATIVE_FRONTMATTER_RE = re.compile(r'^\s*["\']?ainative["\']?\s*(?::|$)', re.MULTILINE)
 
 
 class ParsedSpec(BaseModel):
@@ -31,9 +33,13 @@ def _split_frontmatter(raw_text: str) -> tuple[dict[str, Any], str]:
     frontmatter_text = "".join(lines[1:closing_index])
     try:
         loaded = yaml.safe_load(frontmatter_text) or {}
-    except yaml.YAMLError:
+    except yaml.YAMLError as exc:
+        if _AINATIVE_FRONTMATTER_RE.search(frontmatter_text):
+            raise ValueError(f"Malformed `ainative` frontmatter: {exc}") from exc
         return {}, raw_text
     if not isinstance(loaded, dict):
+        if _AINATIVE_FRONTMATTER_RE.search(frontmatter_text):
+            raise ValueError("Malformed `ainative` frontmatter: expected a mapping at the top of the spec.")
         return {}, raw_text
     if "ainative" not in loaded:
         return {}, raw_text

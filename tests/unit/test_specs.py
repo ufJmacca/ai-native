@@ -188,6 +188,29 @@ Implement the page faithfully.
     assert parsed.reference_manifest.preview.url == "http://127.0.0.1:3000"
 
 
+def test_parse_spec_rejects_malformed_ainative_frontmatter(tmp_path: Path) -> None:
+    spec_path = tmp_path / "spec-malformed.md"
+    spec_path.write_text(
+        """
+---
+ainative:
+  workflow_profile: [reference_driven_web
+---
+# Visual Spec
+
+Implement the page faithfully.
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    try:
+        parse_spec(spec_path)
+    except ValueError as exc:
+        assert "Malformed `ainative` frontmatter" in str(exc)
+    else:
+        raise AssertionError("Expected malformed ainative frontmatter to raise ValueError")
+
+
 def test_load_reference_manifest_uses_only_run_artifacts(tmp_path: Path) -> None:
     reference_path = tmp_path / "reference.png"
     reference_path.write_text("png", encoding="utf-8")
