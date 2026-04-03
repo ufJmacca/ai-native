@@ -7,6 +7,13 @@
       "release-type": "python",
       "initial-version": "1.0.0",
       "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "pyproject.toml",
+          "jsonpath": "$.project.version"
+        }
+      ],
       "include-component-in-tag": true,
       "include-v-in-tag": true,
       "exclude-paths": [
