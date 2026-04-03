@@ -57,6 +57,7 @@ Telemetry secrets are masked in CLI output, and remote settings can also be over
 Run registry publishing can be enabled separately with `registry.remote_url` and `registry.auth_token` in `ainative.yaml`, or with `AINATIVE_RUN_REGISTRY_URL` and `AINATIVE_RUN_REGISTRY_AUTH_TOKEN`.
 GitHub Copilot CLI is also supported as a first-class adapter. Use the standalone `copilot` binary rather than `gh copilot`, trust the target workspace in Copilot CLI first, and start from [docs/examples/ainative.copilot.yaml](docs/examples/ainative.copilot.yaml) if you want a ready-made agent profile set.
 See [docs/configuration.md](docs/configuration.md) for details.
+For automated root-package releases and future component release reservations, see [docs/releases.md](docs/releases.md).
 For the standalone registry backend and operator dashboard, see [docs/self-hosted-run-registry.md](docs/self-hosted-run-registry.md).
 
 ## Reference-Driven Web Specs

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "separate-pull-requests": true,
+  "packages": {
+    ".": {
+      "component": "ai-native-base",
+      "release-type": "python",
+      "initial-version": "1.0.0",
+      "changelog-path": "CHANGELOG.md",
+      "include-component-in-tag": true,
+      "include-v-in-tag": true,
+      "exclude-paths": [
+        "README.md",
+        "docs/**",
+        "services/run_registry/**",
+        "services/run_registry_ui/**"
+      ]
+    }
+  }
+}
