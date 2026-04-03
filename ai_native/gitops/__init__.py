@@ -48,11 +48,17 @@ def _ensure_local_ignore(cwd: Path) -> None:
     exclude_path.write_text(f"{existing}{prefix}.ai-native/\n", encoding="utf-8")
 
 
+def discover_repo_root(cwd: Path) -> Path | None:
+    probe = _run_optional(["git", "rev-parse", "--show-toplevel"], cwd.resolve())
+    if probe.returncode != 0:
+        return None
+    return Path(probe.stdout.strip()).resolve()
+
+
 def ensure_repo(cwd: Path, default_branch: str = "main") -> None:
     cwd = cwd.resolve()
-    probe = _run_optional(["git", "rev-parse", "--show-toplevel"], cwd)
-    if probe.returncode == 0:
-        top_level = Path(probe.stdout.strip()).resolve()
+    top_level = discover_repo_root(cwd)
+    if top_level is not None:
         if top_level != cwd:
             raise RuntimeError(
                 f"Workspace root {cwd} is nested inside existing git repository {top_level}. "

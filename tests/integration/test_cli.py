@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -8,7 +9,7 @@ import pytest
 import yaml
 
 from ai_native.cli import _discover_config_path, _resolve_spec_path, _resolve_workspace_root, main
-from ai_native.config import AgentProfile
+from ai_native.config import AppConfig, AgentProfile, copilot_default_agents, default_agents
 from ai_native.models import RunState
 from ai_native.utils import utc_now
 
@@ -110,6 +111,193 @@ def test_discover_config_path_prefers_env_override(monkeypatch, tmp_path: Path) 
     discovered = _discover_config_path()
 
     assert discovered == custom_config.resolve()
+
+
+def test_cli_help_includes_init(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(sys, "argv", ["ainative", "--help"])
+
+    with pytest.raises(SystemExit) as excinfo:
+        main()
+
+    assert excinfo.value.code == 0
+    assert "init" in capsys.readouterr().out
+
+
+def test_cli_init_writes_explicit_minimal_config_and_round_trips(monkeypatch, capsys, tmp_path: Path) -> None:
+    config_path = tmp_path / "configs" / "ainative.yaml"
+    monkeypatch.setattr("ai_native.cli.sys.stdin", type("FakeStdin", (), {"isatty": lambda self: False})())
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ainative",
+            "init",
+            "--config",
+            str(config_path),
+            "--minimal",
+            "--copilot",
+            "--base-branch",
+            "develop",
+            "--dependency-policy",
+            "assume_committed",
+        ],
+    )
+
+    assert main() == 0
+
+    output = capsys.readouterr().out
+    assert str(config_path) in output
+
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert payload["workspace"] == {
+        "base_branch": "develop",
+        "dependency_policy": "assume_committed",
+    }
+    assert payload["agents"]["builder"]["type"] == "copilot-cli"
+    assert "registry" not in payload
+    assert "telemetry" not in payload
+    assert "specs_dir" not in config_path.read_text(encoding="utf-8")
+
+    loaded = AppConfig.load(config_path)
+    assert loaded.workspace.base_branch == "develop"
+    assert loaded.workspace.dependency_policy == "assume_committed"
+    assert loaded.agents["builder"].type == "copilot-cli"
+
+
+def test_cli_init_writes_to_repo_top_level_from_nested_directory(monkeypatch, tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    nested = repo_root / "apps" / "web"
+    nested.mkdir(parents=True)
+    subprocess.run(["git", "init", "-b", "main"], cwd=repo_root, check=True, capture_output=True, text=True)
+
+    monkeypatch.chdir(nested)
+    monkeypatch.setattr("ai_native.cli.sys.stdin", type("FakeStdin", (), {"isatty": lambda self: False})())
+    monkeypatch.setattr("ai_native.cli.default_agents_for_missing_config", lambda _which=None: default_agents())
+    monkeypatch.setattr(sys, "argv", ["ainative", "init", "--minimal"])
+
+    assert main() == 0
+    assert (repo_root / "ainative.yaml").exists()
+    assert not (nested / "ainative.yaml").exists()
+
+
+def test_cli_init_refuses_to_overwrite_without_force_and_force_rewrites(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text("workspace:\n  base_branch: main\n", encoding="utf-8")
+    monkeypatch.setattr("ai_native.cli.sys.stdin", type("FakeStdin", (), {"isatty": lambda self: False})())
+
+    monkeypatch.setattr(sys, "argv", ["ainative", "init", "--config", str(config_path), "--minimal"])
+    with pytest.raises(SystemExit, match="Config already exists"):
+        main()
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ainative",
+            "init",
+            "--config",
+            str(config_path),
+            "--minimal",
+            "--force",
+            "--base-branch",
+            "develop",
+        ],
+    )
+    assert main() == 0
+
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert payload["workspace"]["base_branch"] == "develop"
+    assert payload["agents"]["builder"]["type"] == "codex-exec"
+
+
+def test_cli_init_print_outputs_yaml_without_writing(monkeypatch, capsys, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    monkeypatch.setattr("ai_native.cli.sys.stdin", type("FakeStdin", (), {"isatty": lambda self: False})())
+    monkeypatch.setattr(sys, "argv", ["ainative", "init", "--config", str(config_path), "--minimal", "--print"])
+
+    assert main() == 0
+
+    captured = capsys.readouterr()
+    assert not config_path.exists()
+    assert "workspace:" in captured.out
+    assert "dependency_policy: wait_for_base_merge" in captured.out
+    assert f"preview for {config_path}" in captured.err
+
+
+def test_cli_init_auto_selects_copilot_when_default_profiles_are_copilot(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    monkeypatch.setattr("ai_native.cli.sys.stdin", type("FakeStdin", (), {"isatty": lambda self: False})())
+    monkeypatch.setattr("ai_native.cli.default_agents_for_missing_config", lambda _which=None: copilot_default_agents())
+    monkeypatch.setattr(sys, "argv", ["ainative", "init", "--config", str(config_path), "--minimal"])
+
+    assert main() == 0
+
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert payload["agents"]["builder"]["type"] == "copilot-cli"
+
+
+def test_cli_init_prompts_for_missing_values_in_tty_mode(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    responses = iter(["copilot", "develop", "assume_committed", "yes", "no"])
+
+    monkeypatch.setattr("ai_native.cli.sys.stdin", type("FakeStdin", (), {"isatty": lambda self: True})())
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(responses))
+    monkeypatch.setattr("ai_native.cli.default_agents_for_missing_config", lambda _which=None: default_agents())
+    monkeypatch.setattr(sys, "argv", ["ainative", "init", "--config", str(config_path)])
+
+    assert main() == 0
+
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert payload["workspace"]["base_branch"] == "develop"
+    assert payload["workspace"]["dependency_policy"] == "assume_committed"
+    assert payload["agents"]["builder"]["type"] == "copilot-cli"
+    assert "registry" in payload
+    assert "telemetry" not in payload
+
+
+def test_cli_init_non_interactive_mode_never_prompts(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    monkeypatch.setattr("ai_native.cli.sys.stdin", type("FakeStdin", (), {"isatty": lambda self: False})())
+    monkeypatch.setattr("builtins.input", lambda _prompt="": pytest.fail("input() should not be called"))
+    monkeypatch.setattr(sys, "argv", ["ainative", "init", "--config", str(config_path), "--minimal"])
+
+    assert main() == 0
+    assert config_path.exists()
+
+
+def test_cli_init_rejects_conflicting_provider_flags(monkeypatch, tmp_path: Path, capsys) -> None:
+    monkeypatch.setattr(sys, "argv", ["ainative", "init", "--config", str(tmp_path / "ainative.yaml"), "--codex", "--copilot"])
+
+    with pytest.raises(SystemExit) as excinfo:
+        main()
+
+    assert excinfo.value.code == 2
+    assert "not allowed with argument" in capsys.readouterr().err
+
+
+def test_cli_init_rejects_invalid_dependency_policy(monkeypatch, tmp_path: Path, capsys) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ainative", "init", "--config", str(tmp_path / "ainative.yaml"), "--dependency-policy", "later"],
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        main()
+
+    assert excinfo.value.code == 2
+    assert "invalid choice" in capsys.readouterr().err
+
+
+def test_cli_init_rejects_minimal_with_optional_placeholders(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ainative", "init", "--config", str(tmp_path / "ainative.yaml"), "--minimal", "--include-registry"],
+    )
+
+    with pytest.raises(SystemExit, match="--minimal cannot be combined"):
+        main()
 
 
 def test_resolve_workspace_root_defaults_to_current_directory(app_config, monkeypatch, tmp_path: Path) -> None:
