@@ -54,6 +54,18 @@ def test_discover_repo_root_returns_top_level_for_nested_directory(tmp_path: Pat
     assert discover_repo_root(nested_workspace) == repo_root.resolve()
 
 
+def test_discover_repo_root_returns_none_when_git_is_missing(monkeypatch, tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+
+    def fake_run(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(gitops.subprocess, "run", fake_run)
+
+    assert discover_repo_root(workspace_root) is None
+
+
 def test_git_commands_mark_explicit_directory_safe(monkeypatch, tmp_path: Path) -> None:
     recorded: list[list[str]] = []
 

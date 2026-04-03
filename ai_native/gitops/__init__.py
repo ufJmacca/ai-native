@@ -49,7 +49,10 @@ def _ensure_local_ignore(cwd: Path) -> None:
 
 
 def discover_repo_root(cwd: Path) -> Path | None:
-    probe = _run_optional(["git", "rev-parse", "--show-toplevel"], cwd.resolve())
+    try:
+        probe = _run_optional(["git", "rev-parse", "--show-toplevel"], cwd.resolve())
+    except FileNotFoundError:
+        return None
     if probe.returncode != 0:
         return None
     return Path(probe.stdout.strip()).resolve()
