@@ -37,12 +37,15 @@ def _config_path() -> Path:
     return _discover_config_path()
 
 
-def _discover_existing_config_path(start: Path | None = None) -> Path | None:
+def _discover_existing_config_path(start: Path | None = None, *, stop_at: Path | None = None) -> Path | None:
     current = start.resolve() if start is not None else Path.cwd().resolve()
+    stop_path = stop_at.resolve() if stop_at is not None else None
     for base in (current, *current.parents):
         candidate = base / "ainative.yaml"
         if candidate.exists():
             return candidate.resolve()
+        if stop_path is not None and base == stop_path:
+            break
     return None
 
 
@@ -68,13 +71,16 @@ def _resolve_init_config_path(explicit: str | None = None) -> Path:
     if env_path:
         return Path(env_path).expanduser().resolve()
 
+    repo_root = discover_repo_root(Path.cwd())
+    if repo_root is not None:
+        existing = _discover_existing_config_path(stop_at=repo_root)
+        if existing is not None:
+            return existing
+        return (repo_root / "ainative.yaml").resolve()
+
     existing = _discover_existing_config_path()
     if existing is not None:
         return existing
-
-    repo_root = discover_repo_root(Path.cwd())
-    if repo_root is not None:
-        return (repo_root / "ainative.yaml").resolve()
     return (Path.cwd().resolve() / "ainative.yaml").resolve()
 
 

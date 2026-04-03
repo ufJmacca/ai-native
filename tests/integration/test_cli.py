@@ -197,6 +197,23 @@ def test_cli_init_prefers_env_override_for_output_path(monkeypatch, tmp_path: Pa
     assert not (repo_root / "ainative.yaml").exists()
 
 
+def test_cli_init_ignores_parent_config_outside_current_repo(monkeypatch, tmp_path: Path) -> None:
+    parent_config = tmp_path / "ainative.yaml"
+    parent_config.write_text("workspace:\n  base_branch: trunk\n", encoding="utf-8")
+    repo_root = tmp_path / "repo"
+    nested = repo_root / "apps" / "web"
+    nested.mkdir(parents=True)
+    subprocess.run(["git", "init", "-b", "main"], cwd=repo_root, check=True, capture_output=True, text=True)
+
+    monkeypatch.chdir(nested)
+    monkeypatch.setattr("ai_native.cli.sys.stdin", type("FakeStdin", (), {"isatty": lambda self: False})())
+    monkeypatch.setattr(sys, "argv", ["ainative", "init", "--minimal"])
+
+    assert main() == 0
+    assert (repo_root / "ainative.yaml").exists()
+    assert "trunk" in parent_config.read_text(encoding="utf-8")
+
+
 def test_cli_init_refuses_to_overwrite_without_force_and_force_rewrites(monkeypatch, tmp_path: Path) -> None:
     config_path = tmp_path / "ainative.yaml"
     config_path.write_text("workspace:\n  base_branch: main\n", encoding="utf-8")
