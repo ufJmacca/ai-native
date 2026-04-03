@@ -9,20 +9,27 @@ import tomllib
 __all__ = ["__version__"]
 
 
-def _fallback_version() -> str:
+def _pyproject_version() -> str | None:
     pyproject_path = Path(__file__).resolve().parents[1] / "pyproject.toml"
     try:
         project = tomllib.loads(pyproject_path.read_text(encoding="utf-8")).get("project", {})
     except OSError:
-        return "0+unknown"
-    return str(project.get("version", "0+unknown"))
+        return None
+
+    version = project.get("version")
+    if version is None:
+        return None
+    return str(version)
 
 
 def _resolve_version() -> str:
+    if pyproject_version := _pyproject_version():
+        return pyproject_version
+
     try:
         return package_version("ai-native-base")
     except PackageNotFoundError:
-        return _fallback_version()
+        return "0+unknown"
 
 
 __version__ = _resolve_version()
