@@ -64,6 +64,10 @@ def _resolve_init_config_path(explicit: str | None = None) -> Path:
     if explicit:
         return Path(explicit).expanduser().resolve()
 
+    env_path = os.environ.get("AINATIVE_CONFIG")
+    if env_path:
+        return Path(env_path).expanduser().resolve()
+
     existing = _discover_existing_config_path()
     if existing is not None:
         return existing

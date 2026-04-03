@@ -180,6 +180,23 @@ def test_cli_init_writes_to_repo_top_level_from_nested_directory(monkeypatch, tm
     assert not (nested / "ainative.yaml").exists()
 
 
+def test_cli_init_prefers_env_override_for_output_path(monkeypatch, tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    nested = repo_root / "apps" / "web"
+    nested.mkdir(parents=True)
+    subprocess.run(["git", "init", "-b", "main"], cwd=repo_root, check=True, capture_output=True, text=True)
+    custom_config = tmp_path / "shared" / "ainative.yaml"
+
+    monkeypatch.chdir(nested)
+    monkeypatch.setenv("AINATIVE_CONFIG", str(custom_config))
+    monkeypatch.setattr("ai_native.cli.sys.stdin", type("FakeStdin", (), {"isatty": lambda self: False})())
+    monkeypatch.setattr(sys, "argv", ["ainative", "init", "--minimal"])
+
+    assert main() == 0
+    assert custom_config.exists()
+    assert not (repo_root / "ainative.yaml").exists()
+
+
 def test_cli_init_refuses_to_overwrite_without_force_and_force_rewrites(monkeypatch, tmp_path: Path) -> None:
     config_path = tmp_path / "ainative.yaml"
     config_path.write_text("workspace:\n  base_branch: main\n", encoding="utf-8")
