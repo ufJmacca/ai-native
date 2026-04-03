@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from ai_native import __version__
 from ai_native.cli import _discover_config_path, _resolve_spec_path, _resolve_workspace_root, main
 from ai_native.config import AppConfig, AgentProfile, copilot_default_agents, default_agents
 from ai_native.models import RunState
@@ -121,6 +122,16 @@ def test_cli_help_includes_init(monkeypatch, capsys) -> None:
 
     assert excinfo.value.code == 0
     assert "init" in capsys.readouterr().out
+
+
+def test_cli_version_reports_package_version(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(sys, "argv", ["ainative", "--version"])
+
+    with pytest.raises(SystemExit) as excinfo:
+        main()
+
+    assert excinfo.value.code == 0
+    assert capsys.readouterr().out.strip() == f"ainative {__version__}"
 
 
 def test_cli_init_writes_explicit_minimal_config_and_round_trips(monkeypatch, capsys, tmp_path: Path) -> None:

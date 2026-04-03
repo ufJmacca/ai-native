@@ -13,6 +13,7 @@ from typing import Any
 
 import yaml
 
+from ai_native import __version__
 from ai_native.config import (
     AppConfig,
     copilot_default_agents,
@@ -755,6 +756,7 @@ def command_telemetry_profile_list(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ainative")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--config")
