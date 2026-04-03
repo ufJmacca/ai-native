@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from ai_native import gitops
-from ai_native.gitops import ensure_repo
+from ai_native.gitops import discover_repo_root, ensure_repo
 
 
 def test_ensure_repo_initializes_standalone_directory(tmp_path: Path) -> None:
@@ -36,6 +36,34 @@ def test_ensure_repo_rejects_nested_directory_inside_existing_repo(tmp_path: Pat
 
     with pytest.raises(RuntimeError, match="nested inside existing git repository"):
         ensure_repo(nested_workspace, "main")
+
+
+def test_discover_repo_root_returns_none_outside_repo(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+
+    assert discover_repo_root(workspace_root) is None
+
+
+def test_discover_repo_root_returns_top_level_for_nested_directory(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    nested_workspace = repo_root / "apps" / "web"
+    nested_workspace.mkdir(parents=True)
+    subprocess.run(["git", "init", "-b", "main"], cwd=repo_root, check=True, capture_output=True, text=True)
+
+    assert discover_repo_root(nested_workspace) == repo_root.resolve()
+
+
+def test_discover_repo_root_returns_none_when_git_is_missing(monkeypatch, tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+
+    def fake_run(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(gitops.subprocess, "run", fake_run)
+
+    assert discover_repo_root(workspace_root) is None
 
 
 def test_git_commands_mark_explicit_directory_safe(monkeypatch, tmp_path: Path) -> None:

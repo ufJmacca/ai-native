@@ -13,7 +13,15 @@ from typing import Any
 
 import yaml
 
-from ai_native.config import AppConfig, provider_readiness, provider_runtime_checks
+from ai_native.config import (
+    AppConfig,
+    copilot_default_agents,
+    default_agents,
+    default_agents_for_missing_config,
+    provider_readiness,
+    provider_runtime_checks,
+)
+from ai_native.gitops import discover_repo_root
 from ai_native.orchestrator import WorkflowOrchestrator
 from ai_native.state import StateStore
 
@@ -21,10 +29,24 @@ _AUTH_TYPES = ("api_key", "bearer", "basic", "none")
 _SECRET_KEYS = {"api_key", "token", "password"}
 _CODEX_AGENT_TYPES = {"codex-exec", "codex-review"}
 _COPILOT_AGENT_TYPES = {"copilot-cli"}
+_INIT_PROVIDERS = ("codex", "copilot")
+_DEPENDENCY_POLICIES = ("wait_for_base_merge", "assume_committed")
 
 
 def _config_path() -> Path:
     return _discover_config_path()
+
+
+def _discover_existing_config_path(start: Path | None = None, *, stop_at: Path | None = None) -> Path | None:
+    current = start.resolve() if start is not None else Path.cwd().resolve()
+    stop_path = stop_at.resolve() if stop_at is not None else None
+    for base in (current, *current.parents):
+        candidate = base / "ainative.yaml"
+        if candidate.exists():
+            return candidate.resolve()
+        if stop_path is not None and base == stop_path:
+            break
+    return None
 
 
 def _discover_config_path(explicit: str | None = None) -> Path:
@@ -35,12 +57,31 @@ def _discover_config_path(explicit: str | None = None) -> Path:
     if env_path:
         return Path(env_path).expanduser().resolve()
 
-    current = Path.cwd().resolve()
-    for base in (current, *current.parents):
-        candidate = base / "ainative.yaml"
-        if candidate.exists():
-            return candidate.resolve()
-    return (current / "ainative.yaml").resolve()
+    existing = _discover_existing_config_path()
+    if existing is not None:
+        return existing
+    return (Path.cwd().resolve() / "ainative.yaml").resolve()
+
+
+def _resolve_init_config_path(explicit: str | None = None) -> Path:
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+
+    env_path = os.environ.get("AINATIVE_CONFIG")
+    if env_path:
+        return Path(env_path).expanduser().resolve()
+
+    repo_root = discover_repo_root(Path.cwd())
+    if repo_root is not None:
+        existing = _discover_existing_config_path(stop_at=repo_root)
+        if existing is not None:
+            return existing
+        return (repo_root / "ainative.yaml").resolve()
+
+    existing = _discover_existing_config_path()
+    if existing is not None:
+        return existing
+    return (Path.cwd().resolve() / "ainative.yaml").resolve()
 
 
 def _selected_provider_summary(config: AppConfig, readiness: dict[str, bool]) -> dict[str, dict[str, bool]]:
@@ -210,18 +251,123 @@ def _write_raw_config_file(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
 
 
-def _prompt_if_missing(current: str | None, prompt: str, *, secret: bool = False) -> str | None:
+def _prompt_if_missing(
+    current: str | None,
+    prompt: str,
+    *,
+    secret: bool = False,
+    default: str | None = None,
+) -> str | None:
     if current is not None:
         return current
     if not sys.stdin.isatty():
-        return None
+        return default
+    rendered_prompt = prompt if default is None else f"{prompt} [{default}]"
     if secret:
         import getpass
 
-        entered = getpass.getpass(f"{prompt}: ").strip()
+        entered = getpass.getpass(f"{rendered_prompt}: ").strip()
     else:
-        entered = input(f"{prompt}: ").strip()
-    return entered or None
+        entered = input(f"{rendered_prompt}: ").strip()
+    return entered or default
+
+
+def _prompt_choice_if_missing(current: str | None, prompt: str, choices: tuple[str, ...], *, default: str) -> str:
+    if current is not None:
+        return current
+    if not sys.stdin.isatty():
+        return default
+    while True:
+        value = _prompt_if_missing(None, f"{prompt} ({', '.join(choices)})", default=default)
+        assert value is not None
+        normalized = value.strip().lower()
+        if normalized in choices:
+            return normalized
+        print(
+            f"Invalid {prompt.lower()}: {value}. Expected one of: {', '.join(choices)}.",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
+def _prompt_yes_no(prompt: str, *, default: bool = False) -> bool:
+    if not sys.stdin.isatty():
+        return default
+    suffix = "Y/n" if default else "y/N"
+    while True:
+        value = input(f"{prompt} [{suffix}]: ").strip().lower()
+        if not value:
+            return default
+        if value in {"y", "yes"}:
+            return True
+        if value in {"n", "no"}:
+            return False
+        print("Please answer yes or no.", file=sys.stderr, flush=True)
+
+
+def _default_init_provider() -> str:
+    selected_types = {profile.type for profile in default_agents_for_missing_config(shutil.which).values()}
+    if selected_types & _COPILOT_AGENT_TYPES:
+        return "copilot"
+    return "codex"
+
+
+def _selected_init_agents(provider: str, *, base_branch: str) -> dict[str, dict[str, Any]]:
+    profiles = default_agents() if provider == "codex" else copilot_default_agents()
+    payload: dict[str, dict[str, Any]] = {}
+    for name, profile in profiles.items():
+        serialized = profile.model_dump(mode="json", exclude_none=True, exclude_defaults=True)
+        if serialized.get("type") == "codex-review":
+            serialized["base_branch"] = base_branch
+        payload[name] = serialized
+    return payload
+
+
+def _build_init_config(
+    *,
+    provider: str,
+    base_branch: str,
+    dependency_policy: str,
+    include_registry: bool,
+    include_telemetry: bool,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "workspace": {
+            "base_branch": base_branch,
+            "dependency_policy": dependency_policy,
+        },
+        "agents": _selected_init_agents(provider, base_branch=base_branch),
+    }
+    if include_registry:
+        payload["registry"] = {
+            "remote_url": None,
+            "auth_token": None,
+        }
+    if include_telemetry:
+        payload["telemetry"] = {
+            "enabled": False,
+            "url": None,
+            "auth_type": "none",
+            "api_key": None,
+            "token": None,
+            "username": None,
+            "password": None,
+            "tenant": None,
+        }
+    return payload
+
+
+def _render_yaml(payload: dict[str, Any]) -> str:
+    return yaml.safe_dump(payload, sort_keys=False)
+
+
+def _print_init_follow_up(config_path: Path, *, preview: bool) -> None:
+    if preview:
+        print(f"[ainative] preview for {config_path}", file=sys.stderr, flush=True)
+        print("[ainative] no file written", file=sys.stderr, flush=True)
+    else:
+        print(f"[ainative] starter config written to {config_path}", flush=True)
+    print("[ainative] next steps: run `ainative doctor`, then `ainative run --spec ...`", file=sys.stderr if preview else sys.stdout, flush=True)
 
 
 
@@ -384,6 +530,58 @@ def command_telemetry_test(args: argparse.Namespace) -> int:
             )
         )
         return 1
+
+
+def command_init(args: argparse.Namespace) -> int:
+    if args.minimal and (args.include_registry or args.include_telemetry):
+        raise SystemExit("--minimal cannot be combined with --include-registry or --include-telemetry.")
+
+    config_path = _resolve_init_config_path(args.config)
+    if config_path.exists() and not args.force and not args.preview:
+        raise SystemExit(f"Config already exists at {config_path}. Re-run with --force to overwrite it.")
+
+    provider = None
+    if args.codex:
+        provider = "codex"
+    elif args.copilot:
+        provider = "copilot"
+    provider = _prompt_choice_if_missing(provider, "Provider", _INIT_PROVIDERS, default=_default_init_provider())
+
+    base_branch = _prompt_if_missing(args.base_branch, "Base branch", default="main")
+    assert base_branch is not None
+
+    dependency_policy = _prompt_choice_if_missing(
+        args.dependency_policy,
+        "Dependency policy",
+        _DEPENDENCY_POLICIES,
+        default="wait_for_base_merge",
+    )
+
+    include_registry = args.include_registry
+    include_telemetry = args.include_telemetry
+    if not args.minimal:
+        if not include_registry:
+            include_registry = _prompt_yes_no("Include registry placeholders?", default=False)
+        if not include_telemetry:
+            include_telemetry = _prompt_yes_no("Include telemetry placeholders?", default=False)
+
+    payload = _build_init_config(
+        provider=provider,
+        base_branch=base_branch,
+        dependency_policy=dependency_policy,
+        include_registry=include_registry,
+        include_telemetry=include_telemetry,
+    )
+    rendered = _render_yaml(payload)
+
+    if args.preview:
+        print(rendered, end="")
+        _print_init_follow_up(config_path, preview=True)
+        return 0
+
+    _write_raw_config(config_path, payload)
+    _print_init_follow_up(config_path, preview=False)
+    return 0
 
 
 def command_doctor(args: argparse.Namespace) -> int:
@@ -563,6 +761,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor = subparsers.add_parser("doctor", parents=[common])
     doctor.set_defaults(func=command_doctor)
+
+    init = subparsers.add_parser("init", parents=[common])
+    init.add_argument("--force", action="store_true")
+    init.add_argument("--print", action="store_true", dest="preview")
+    init.add_argument("--minimal", action="store_true")
+    provider_group = init.add_mutually_exclusive_group()
+    provider_group.add_argument("--codex", action="store_true")
+    provider_group.add_argument("--copilot", action="store_true")
+    init.add_argument("--base-branch")
+    init.add_argument("--dependency-policy", choices=list(_DEPENDENCY_POLICIES))
+    init.add_argument("--include-registry", action="store_true")
+    init.add_argument("--include-telemetry", action="store_true")
+    init.set_defaults(func=command_init)
 
     run = subparsers.add_parser("run", parents=[common])
     run.add_argument("--spec", required=True)

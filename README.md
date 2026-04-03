@@ -39,8 +39,12 @@ Because the scheduler creates worktrees from the base branch, the target reposit
 You can also install `ai-native-base` as a reusable CLI and run it from other repositories:
 
 1. Install it with `uv tool install /path/to/ai-native-base` for local development, or publish it and install with `uv tool install ai-native-base`.
-2. From the target repository, run `ainative doctor` to confirm the runtime and selected-provider auth setup.
-3. Run the workflow directly from that repository, for example `ainative run --spec specs/my-feature.md`.
+2. From the target repository, run `ainative init` to scaffold a starter `ainative.yaml` before the first run.
+3. Run `ainative doctor` to confirm the runtime and selected-provider auth setup.
+4. Run the workflow directly from that repository, for example `ainative run --spec specs/my-feature.md`.
+
+`ainative init` is the recommended onboarding path for new repositories because it makes key workflow choices explicit up front instead of silently relying on no-config defaults.
+Use `ainative init --copilot` if you want to pin Copilot immediately, or `ainative init --print` to preview the generated YAML without writing it yet.
 
 The installed CLI now loads prompts and schemas from the package itself, so it does not need this template checkout at runtime.
 If `ainative.yaml` exists in the current repository or one of its parent directories, the CLI uses it automatically.

@@ -2,6 +2,22 @@
 
 AI Native loads configuration from `ainative.yaml` in the current repository (or nearest parent), unless you pass `--config` or set `AINATIVE_CONFIG`.
 
+## Bootstrapping a new repo
+
+For a new repository, start with `ainative init` to generate a starter `ainative.yaml` instead of relying on the implicit no-config path.
+
+```bash
+ainative init
+ainative doctor
+ainative run --spec specs/my-feature.md
+```
+
+Useful variants:
+
+- `ainative init --print` previews the generated YAML without writing it.
+- `ainative init --codex` or `ainative init --copilot` pins the initial provider preset.
+- `ainative init --include-registry` and `ainative init --include-telemetry` add optional placeholder sections.
+
 ## Agent adapters
 
 AI Native ships with Codex defaults, but you can point any role at GitHub Copilot CLI with `type: copilot-cli`.
