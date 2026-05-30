@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/ufJmacca/ai-native/compare/ai-native-base-v1.0.0...ai-native-base-v1.1.0) (2026-05-30)
+
+
+### Features
+
+* add PR review repair loop ([#26](https://github.com/ufJmacca/ai-native/issues/26)) ([211d0cc](https://github.com/ufJmacca/ai-native/commit/211d0ccb56b6b5bf155e0913703d41779bdb45a2))
+
 ## 1.0.0 (2026-04-03)
 
 
