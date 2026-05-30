@@ -124,6 +124,28 @@ def test_push_branch_avoids_setting_upstream_tracking(monkeypatch, tmp_path: Pat
     assert recorded == [["git", "-c", "safe.directory=*", "push", "origin", "codex/example-S001"]]
 
 
+def test_amend_all_stages_amends_and_returns_new_head(
+    monkeypatch, tmp_path: Path
+) -> None:
+    recorded: list[list[str]] = []
+
+    def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
+        recorded.append(list(command))
+        stdout = "newsha\n" if command[-2:] == ["rev-parse", "HEAD"] else ""
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(gitops.subprocess, "run", fake_run)
+
+    sha = gitops.amend_all(tmp_path)
+
+    assert sha == "newsha"
+    assert recorded == [
+        ["git", "-c", "safe.directory=*", "add", "-A"],
+        ["git", "-c", "safe.directory=*", "commit", "--amend", "--no-edit"],
+        ["git", "-c", "safe.directory=*", "rev-parse", "HEAD"],
+    ]
+
+
 def test_merge_commit_aborts_and_reports_conflicted_files(monkeypatch, tmp_path: Path) -> None:
     recorded: list[list[str]] = []
 

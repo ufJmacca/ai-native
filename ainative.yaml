@@ -14,6 +14,7 @@ workspace:
   prd_max_attempts: 10
   loop_max_attempts: 25
   verification_max_attempts: 10
+  pr_review_max_attempts: 3
   mermaid_validate_command:
     - mmdc
   mermaid_validate_args:
@@ -63,6 +64,7 @@ quality_gates:
   require_prd_approval: true
   require_test_critique: true
   require_red_green_refactor: true
+  require_pr_review_approval: true
 
 registry:
   heartbeat_interval_seconds: 15

@@ -29,6 +29,7 @@ class WorkspaceConfig(BaseModel):
     prd_max_attempts: int = 3
     loop_max_attempts: int = 3
     verification_max_attempts: int = 3
+    pr_review_max_attempts: int = 3
     mermaid_validate_command: list[str] = Field(default_factory=lambda: ["mmdc"])
     mermaid_validate_args: list[str] = Field(default_factory=lambda: ["--quiet"])
 
@@ -64,6 +65,7 @@ class QualityGates(BaseModel):
     require_prd_approval: bool = True
     require_test_critique: bool = True
     require_red_green_refactor: bool = True
+    require_pr_review_approval: bool = True
 
 
 class RegistryConfig(BaseModel):
