@@ -82,9 +82,13 @@ def test_codex_review_adapter_uses_profile_model_and_extra_args(monkeypatch, tmp
 
     def fake_run(command, cwd, capture_output, text, check):  # type: ignore[no-untyped-def]
         captured["command"] = command
-        return SimpleNamespace(returncode=0, stdout="review ok", stderr="")
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text("review ok", encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr("ai_native.adapters.codex._running_in_container", lambda: False)
+    monkeypatch.delenv("AINATIVE_CODEX_CONTAINER_SANDBOX", raising=False)
     adapter = CodexReviewAdapter(
         AgentProfile(
             type="codex-review",
@@ -97,11 +101,19 @@ def test_codex_review_adapter_uses_profile_model_and_extra_args(monkeypatch, tmp
     result = adapter.run("prompt", cwd=tmp_path)
 
     assert result.text == "review ok"
-    assert captured["command"] == [
+    command = captured["command"]
+    assert command[:8] == [
         "codex",
+        "exec",
+        "-C",
+        str(tmp_path),
         "review",
-        "-c",
-        'model="gpt-5.4"',
+        "-m",
+        "gpt-5.4",
+        "-o",
+    ]
+    assert Path(command[8]).name == "codex-review.txt"
+    assert command[9:] == [
         "-c",
         'model_reasoning_effort="xhigh"',
         "--base",
@@ -114,9 +126,13 @@ def test_codex_review_adapter_uses_prompt_when_no_base_branch(monkeypatch, tmp_p
 
     def fake_run(command, cwd, capture_output, text, check):  # type: ignore[no-untyped-def]
         captured["command"] = command
-        return SimpleNamespace(returncode=0, stdout="review ok", stderr="")
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text("review ok", encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr("ai_native.adapters.codex._running_in_container", lambda: False)
+    monkeypatch.delenv("AINATIVE_CODEX_CONTAINER_SANDBOX", raising=False)
     adapter = CodexReviewAdapter(
         AgentProfile(
             type="codex-review",
@@ -128,11 +144,19 @@ def test_codex_review_adapter_uses_prompt_when_no_base_branch(monkeypatch, tmp_p
     result = adapter.review(cwd=tmp_path, prompt="prompt", base_branch=None)
 
     assert result.text == "review ok"
-    assert captured["command"] == [
+    command = captured["command"]
+    assert command[:8] == [
         "codex",
+        "exec",
+        "-C",
+        str(tmp_path),
         "review",
-        "-c",
-        'model="gpt-5.4"',
+        "-m",
+        "gpt-5.4",
+        "-o",
+    ]
+    assert Path(command[8]).name == "codex-review.txt"
+    assert command[9:] == [
         "-c",
         'model_reasoning_effort="xhigh"',
         "prompt",
@@ -210,3 +234,100 @@ def test_codex_exec_adapter_retries_when_agent_message_contains_landlock(monkeyp
     assert "-s" not in commands[1]
     assert "--dangerously-bypass-approvals-and-sandbox" in commands[1]
     assert "--full-auto" not in commands[1]
+
+
+def test_codex_review_adapter_defaults_to_unsandboxed_mode_in_container(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(command, cwd, capture_output, text, check):  # type: ignore[no-untyped-def]
+        captured["command"] = command
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text("review from file", encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr("ai_native.adapters.codex._running_in_container", lambda: True)
+    monkeypatch.delenv("AINATIVE_CODEX_CONTAINER_SANDBOX", raising=False)
+    adapter = CodexReviewAdapter(
+        AgentProfile(
+            type="codex-review",
+            model="gpt-5.4",
+            base_branch="main",
+            extra_args=["-c", 'model_reasoning_effort="xhigh"'],
+        )
+    )
+
+    result = adapter.review(cwd=tmp_path, prompt="prompt", base_branch="main")
+
+    command = captured["command"]
+    assert result.text == "review from file"
+    assert command[:5] == ["codex", "exec", "-C", str(tmp_path), "review"]
+    assert "-s" not in command
+    assert "--dangerously-bypass-approvals-and-sandbox" in command
+    assert "--full-auto" not in command
+
+
+def test_codex_review_adapter_retries_without_workspace_write_when_bubblewrap_fails(monkeypatch, tmp_path: Path) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(command, cwd, capture_output, text, check):  # type: ignore[no-untyped-def]
+        commands.append(command)
+        output_path = Path(command[command.index("-o") + 1])
+        if len(commands) == 1:
+            return SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr="bwrap: Creating new namespace failed: Operation not permitted",
+            )
+        output_path.write_text("# Review\nRecovered.\n", encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr("ai_native.adapters.codex._running_in_container", lambda: True)
+    monkeypatch.setenv("AINATIVE_CODEX_CONTAINER_SANDBOX", "workspace-write")
+    adapter = CodexReviewAdapter(
+        AgentProfile(
+            type="codex-review",
+            model="gpt-5.4",
+            base_branch="main",
+            sandbox="workspace-write",
+            extra_args=["-c", 'model_reasoning_effort="xhigh"'],
+        )
+    )
+
+    result = adapter.review(cwd=tmp_path, prompt="prompt", base_branch="main")
+
+    assert result.text == "# Review\nRecovered."
+    assert len(commands) == 2
+    assert commands[0][commands[0].index("-s") + 1] == "workspace-write"
+    assert "-s" not in commands[1]
+    assert "--dangerously-bypass-approvals-and-sandbox" in commands[1]
+
+
+def test_codex_review_adapter_keeps_profile_sandbox_outside_container(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(command, cwd, capture_output, text, check):  # type: ignore[no-untyped-def]
+        captured["command"] = command
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text("review ok", encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr("ai_native.adapters.codex._running_in_container", lambda: False)
+    monkeypatch.delenv("AINATIVE_CODEX_CONTAINER_SANDBOX", raising=False)
+    adapter = CodexReviewAdapter(
+        AgentProfile(
+            type="codex-review",
+            model="gpt-5.4",
+            base_branch="main",
+            sandbox="workspace-write",
+        )
+    )
+
+    result = adapter.review(cwd=tmp_path, prompt="prompt", base_branch="main")
+
+    command = captured["command"]
+    assert result.text == "review ok"
+    assert command[:7] == ["codex", "exec", "-C", str(tmp_path), "-s", "workspace-write", "review"]
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
