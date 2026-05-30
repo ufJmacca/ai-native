@@ -126,6 +126,12 @@ def commit_all(cwd: Path, subject: str, body: str | None = None) -> str:
     return _run(["git", "rev-parse", "HEAD"], cwd)
 
 
+def amend_all(cwd: Path) -> str:
+    _run(["git", "add", "-A"], cwd)
+    _run(["git", "commit", "--amend", "--no-edit"], cwd)
+    return _run(["git", "rev-parse", "HEAD"], cwd)
+
+
 def push_branch(cwd: Path, branch_name: str) -> None:
     _run(["git", "push", "origin", branch_name], cwd)
 
