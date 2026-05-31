@@ -24,4 +24,6 @@ Prior PR critique history:
 PR blocker ledger:
 {blocker_ledger}
 
+Treat the prior critique history and blocker ledger as context, not proof that old blockers still exist. Do not copy a historical blocker into `required_changes` unless the latest raw review or current branch evidence explicitly shows it remains unresolved. If the latest raw review says there are no blocking issues, return `approved` unless it also contains a concrete unresolved failure.
+
 Return only JSON matching the ReviewReport schema.

@@ -304,12 +304,15 @@ class WorkflowOrchestrator:
             for stage in ORDERED_STAGES:
                 stage_context = context
                 skip_completed = True
+                stage_slice_id: str | None = None
                 if stage in SLICE_SPECIFIC_STAGES:
                     if resolved_slice_id is None:
                         resolved_slice_id = self._resolve_slice_id(state, target_stage, None)
-                    stage_slice_id = resolved_slice_id if stage in SLICE_SPECIFIC_STAGES else None
+                    stage_slice_id = resolved_slice_id
                     state.active_slice = stage_slice_id
                     try:
+                        if stage_slice_id:
+                            self._ensure_slice_state(state, stage_slice_id)
                         repo_root = self._slice_repo_root(state, stage_slice_id) if stage_slice_id else Path(state.workspace_root)
                         stage_context = self._context(spec_path.resolve(), state, repo_root=repo_root, slice_id=stage_slice_id)
                     except Exception as exc:
@@ -317,7 +320,24 @@ class WorkflowOrchestrator:
                             self._record_slice_failure_once(state, stage_slice_id, stage, str(exc))
                         raise
                     skip_completed = False
-                self._run_stage(stage_context, state, stage, dry_run_pr=dry_run_pr, skip_completed=skip_completed)
+                if stage in SLICE_SPECIFIC_STAGES and stage_slice_id:
+                    self._mark_slice_stage_start(state, stage_slice_id, stage)
+                    try:
+                        artifacts = self._run_stage(
+                            stage_context,
+                            state,
+                            stage,
+                            dry_run_pr=dry_run_pr,
+                            skip_completed=skip_completed,
+                        )
+                    except StageError as exc:
+                        self._record_slice_failure_once(
+                            state, stage_slice_id, stage, str(exc)
+                        )
+                        raise
+                    self._mark_slice_success(state, stage_slice_id, stage, artifacts or [])
+                else:
+                    self._run_stage(stage_context, state, stage, dry_run_pr=dry_run_pr, skip_completed=skip_completed)
                 if stage == target_stage:
                     return state
             return state
@@ -377,6 +397,26 @@ class WorkflowOrchestrator:
                 merge_commit(repo_root, dependency_state.commit_sha)
             except MergeConflictError as exc:
                 raise StageError(self._dependency_merge_conflict_message(slice_def, dependency_id, exc)) from exc
+
+    def _ensure_slice_state(self, state: RunState, slice_id: str) -> None:
+        if slice_id in state.slice_states:
+            return
+        slice_plan = load_slice_plan(Path(state.run_dir))
+        slice_def = slice_by_id(slice_plan, slice_id)
+        worktrees_root = self.config.resolve_worktrees_dir(Path(state.workspace_root))
+        inferred = infer_slice_state(
+            state, slice_def, self.config.git.branch_prefix, worktrees_root
+        )
+        if state.base_ref is None:
+            # Direct run_until calls may execute from detached or shallow checkouts
+            # where no local base branch exists. Keep status tracking without
+            # forcing scheduler-style worktree creation.
+            inferred.worktree_path = None
+
+        def mutate(locked: RunState) -> None:
+            locked.slice_states.setdefault(slice_id, inferred)
+
+        self._mutate_state(state, mutate)
 
     def _evaluate_ready_slices(
         self,

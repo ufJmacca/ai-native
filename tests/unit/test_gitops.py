@@ -9,6 +9,46 @@ from ai_native import gitops
 from ai_native.gitops import discover_repo_root, ensure_repo
 
 
+def _init_repo(cwd: Path) -> None:
+    cwd.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["git", "init", "-b", "main"],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.invalid"],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    (cwd / "README.md").write_text("# Test\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "README.md"],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "initial"],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_ensure_repo_initializes_standalone_directory(tmp_path: Path) -> None:
     workspace_root = tmp_path / "target-repo"
     workspace_root.mkdir()
@@ -122,6 +162,66 @@ def test_push_branch_avoids_setting_upstream_tracking(monkeypatch, tmp_path: Pat
     gitops.push_branch(tmp_path, "codex/example-S001")
 
     assert recorded == [["git", "-c", "safe.directory=*", "push", "origin", "codex/example-S001"]]
+
+
+def test_status_porcelain_reports_tracked_and_untracked_changes(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+
+    (tmp_path / "README.md").write_text("# Changed\n", encoding="utf-8")
+    (tmp_path / "new.txt").write_text("new\n", encoding="utf-8")
+
+    status = gitops.status_porcelain(tmp_path)
+
+    assert " M README.md" in status
+    assert "?? new.txt" in status
+
+
+def test_head_diff_is_clean_checks_head_tracked_diff_only(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+
+    assert gitops.head_diff_is_clean(tmp_path) is True
+
+    (tmp_path / "new.txt").write_text("new\n", encoding="utf-8")
+    assert gitops.head_diff_is_clean(tmp_path) is True
+
+    (tmp_path / "README.md").write_text("# Changed\n", encoding="utf-8")
+    assert gitops.head_diff_is_clean(tmp_path) is False
+
+
+def test_worktree_is_clean_requires_no_tracked_or_untracked_changes(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+
+    assert gitops.worktree_is_clean(tmp_path) is True
+
+    (tmp_path / "new.txt").write_text("new\n", encoding="utf-8")
+
+    assert gitops.worktree_is_clean(tmp_path) is False
+
+
+def test_amend_all_stages_tracked_and_untracked_repairs_cleanly(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+    (tmp_path / "README.md").write_text("# Changed\n", encoding="utf-8")
+    (tmp_path / "new.txt").write_text("new\n", encoding="utf-8")
+
+    sha = gitops.amend_all(tmp_path)
+
+    assert sha
+    assert gitops.worktree_is_clean(tmp_path) is True
+    committed_files = subprocess.run(
+        ["git", "show", "--name-only", "--format=", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    assert "README.md" in committed_files
+    assert "new.txt" in committed_files
 
 
 def test_amend_all_stages_amends_and_returns_new_head(

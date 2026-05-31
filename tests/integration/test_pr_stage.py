@@ -93,6 +93,14 @@ class FailingAdapter:
         return False
 
 
+@pytest.fixture(autouse=True)
+def clean_pr_worktree(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(
+        "ai_native.stages.git_pr.worktree_is_clean", lambda cwd: True
+    )
+    monkeypatch.setattr("ai_native.stages.git_pr.status_porcelain", lambda cwd: "")
+
+
 def _approved_report(summary: str = "No blocking PR findings.") -> dict[str, object]:
     return {
         "verdict": "approved",
@@ -434,6 +442,57 @@ def test_create_prs_repairs_actionable_review_and_amends_slice_commit(
     assert prs == ["S001: Create todos"]
 
 
+def test_create_prs_fails_when_repair_amend_leaves_dirty_worktree(
+    monkeypatch, app_config, tmp_path: Path
+) -> None:
+    reviewer = SequencedReviewAdapter(["# Review\nThe edge case is unhandled."])
+    critic = SequencedCriticAdapter([_changes_required_report()])
+    builder = RecordingBuilderAdapter(
+        "# PR Repair Summary\nAttempted the missing edge case fix."
+    )
+    context, state, _run_dir = _create_single_slice_pr_context(
+        app_config,
+        tmp_path,
+        builder=builder,
+        critic=critic,
+        verifier=FakeWorkflowAdapter(),
+        pr_reviewer=reviewer,
+    )
+    clean_checks = iter([True, False])
+    pushed: list[str] = []
+    opened: list[str] = []
+
+    monkeypatch.setattr(
+        "ai_native.stages.git_pr.worktree_is_clean",
+        lambda cwd: next(clean_checks),
+    )
+    monkeypatch.setattr(
+        "ai_native.stages.git_pr.status_porcelain",
+        lambda cwd: " M tests/test_repo_hygiene.py",
+    )
+    monkeypatch.setattr("ai_native.stages.git_pr.has_changes", lambda cwd: True)
+    monkeypatch.setattr("ai_native.stages.git_pr.ensure_branch", lambda cwd, branch: None)
+    monkeypatch.setattr("ai_native.stages.git_pr.amend_all", lambda cwd: "newsha")
+    monkeypatch.setattr("ai_native.stages.git_pr.run_verify", lambda context_arg, state_arg: [])
+    monkeypatch.setattr(
+        "ai_native.stages.git_pr.push_branch",
+        lambda cwd, branch: pushed.append(branch),
+    )
+    monkeypatch.setattr(
+        "ai_native.stages.git_pr.create_pull_request",
+        lambda cwd, title, body_file, draft, base_branch=None: opened.append(title)
+        or "https://example.invalid/pr",
+    )
+
+    with pytest.raises(StageError, match="after PR repair amend"):
+        create_prs(context, state, dry_run=False)
+
+    assert len(builder.calls) == 1
+    assert len(reviewer.calls) == 1
+    assert pushed == []
+    assert opened == []
+
+
 def test_create_prs_exhausted_review_attempts_do_not_push_or_open(
     monkeypatch, app_config, tmp_path: Path
 ) -> None:
@@ -473,6 +532,54 @@ def test_create_prs_exhausted_review_attempts_do_not_push_or_open(
     assert builder.calls == []
     assert pushed == []
     assert opened == []
+
+
+def test_create_prs_uses_latest_report_for_pr_blocker_ledger(
+    monkeypatch, app_config, tmp_path: Path
+) -> None:
+    reviewer = SequencedReviewAdapter(["# Review\nNo blocking issues found."])
+    critic = SequencedCriticAdapter([_approved_report()])
+    builder = RecordingBuilderAdapter()
+    context, state, run_dir = _create_single_slice_pr_context(
+        app_config,
+        tmp_path,
+        builder=builder,
+        critic=critic,
+        verifier=FakeWorkflowAdapter(),
+        pr_reviewer=reviewer,
+    )
+    pr_dir = run_dir / "pr"
+    pr_dir.mkdir(parents=True, exist_ok=True)
+    write_json(
+        pr_dir / "S001-review-report-attempt-1.json",
+        _changes_required_report("Old blocker."),
+    )
+    write_json(
+        pr_dir / "S001-review-report-attempt-2.json",
+        _approved_report("Previously approved."),
+    )
+    monkeypatch.setattr(
+        "ai_native.stages.git_pr.ensure_branch", lambda cwd, branch: None
+    )
+    monkeypatch.setattr("ai_native.stages.git_pr.push_branch", lambda cwd, branch: None)
+    monkeypatch.setattr(
+        "ai_native.stages.git_pr.create_pull_request",
+        lambda cwd,
+        title,
+        body_file,
+        draft,
+        base_branch=None: "https://example.invalid/pr",
+    )
+
+    create_prs(context, state, dry_run=False)
+
+    assert len(critic.calls) == 1
+    prompt = str(critic.calls[0]["prompt"])
+    assert "Old blocker." in prompt
+    assert "No active PR review blockers exist in the latest triage report." in prompt
+    assert "S001-review-report-attempt-3.json" in {
+        path.name for path in (run_dir / "pr").glob("*.json")
+    }
 
 
 def test_create_prs_can_keep_pr_review_advisory(

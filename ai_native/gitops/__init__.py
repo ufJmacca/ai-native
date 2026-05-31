@@ -113,8 +113,29 @@ def ensure_base_commit(cwd: Path, base_branch: str) -> None:
     )
 
 
+def status_porcelain(cwd: Path) -> str:
+    completed = _run_optional(
+        ["git", "status", "--porcelain", "--untracked-files=all"], cwd
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            completed.stderr.strip()
+            or completed.stdout.strip()
+            or "command failed"
+        )
+    return completed.stdout.rstrip()
+
+
+def head_diff_is_clean(cwd: Path) -> bool:
+    return _run_optional(["git", "diff", "--quiet", "HEAD", "--"], cwd).returncode == 0
+
+
+def worktree_is_clean(cwd: Path) -> bool:
+    return not status_porcelain(cwd) and head_diff_is_clean(cwd)
+
+
 def has_changes(cwd: Path) -> bool:
-    return bool(_run(["git", "status", "--porcelain"], cwd).strip())
+    return bool(status_porcelain(cwd))
 
 
 def commit_all(cwd: Path, subject: str, body: str | None = None) -> str:

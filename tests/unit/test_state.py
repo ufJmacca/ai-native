@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ai_native.config import RegistryConfig
+from ai_native.models import SliceExecutionState
 from ai_native.state import StateStore
 
 
@@ -24,6 +25,67 @@ def test_state_store_creates_and_updates_runs(tmp_path: Path) -> None:
 
     assert reloaded.stage_status["intake"].status == "completed"
     assert reloaded.status == "in_progress"
+
+
+def test_state_store_failed_stage_update_preserves_existing_artifacts(
+    tmp_path: Path,
+) -> None:
+    spec = tmp_path / "feature.md"
+    spec.write_text("# Feature\n", encoding="utf-8")
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    store = StateStore(tmp_path / "artifacts")
+    state = store.create_run(spec, workspace_root)
+    artifact = Path(state.run_dir) / "pr" / "S001-review.md"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text("# Review\n", encoding="utf-8")
+
+    store.update_stage(state, stage="pr", status="pending", artifacts=[artifact])
+    store.update_stage(state, stage="pr", status="failed", notes=["blocked"])
+
+    reloaded = store.load(Path(state.run_dir))
+    assert reloaded.stage_status["pr"].status == "failed"
+    assert reloaded.stage_status["pr"].artifacts == [str(artifact)]
+
+
+def test_state_store_successful_rerun_clears_stale_failed_run_status(
+    tmp_path: Path,
+) -> None:
+    spec = tmp_path / "feature.md"
+    spec.write_text("# Feature\n", encoding="utf-8")
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    store = StateStore(tmp_path / "artifacts")
+    state = store.create_run(spec, workspace_root)
+
+    store.update_stage(state, stage="pr", status="failed", notes=["old failure"])
+    store.update_stage(state, stage="pr", status="completed")
+
+    reloaded = store.load(Path(state.run_dir))
+    assert reloaded.stage_status["pr"].status == "completed"
+    assert reloaded.status == "in_progress"
+
+
+def test_state_store_successful_rerun_keeps_run_failed_when_slice_failed(
+    tmp_path: Path,
+) -> None:
+    spec = tmp_path / "feature.md"
+    spec.write_text("# Feature\n", encoding="utf-8")
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    store = StateStore(tmp_path / "artifacts")
+    state = store.create_run(spec, workspace_root)
+    state.slice_states["S001"] = SliceExecutionState(
+        slice_id="S001", status="failed", current_stage="pr"
+    )
+    store.save(state)
+
+    store.update_stage(state, stage="pr", status="failed", notes=["old failure"])
+    store.update_stage(state, stage="pr", status="completed")
+
+    reloaded = store.load(Path(state.run_dir))
+    assert reloaded.stage_status["pr"].status == "completed"
+    assert reloaded.status == "failed"
 
 
 def test_state_store_persists_normalized_reference_manifest_and_spec_body(tmp_path: Path) -> None:

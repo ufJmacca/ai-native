@@ -12,7 +12,7 @@ from ai_native.config import RegistryConfig
 from ai_native.models import RunDetailView, RunHeartbeat, RunLiveness, RunState, RunView, StageName, StageSnapshot
 from ai_native.run_registry import publish_run_snapshot
 from ai_native.specs import parse_spec, write_parsed_spec_artifacts
-from ai_native.utils import ensure_dir, read_json, read_text, sha256_file, slugify, utc_now, write_json, write_text
+from ai_native.utils import ensure_dir, read_json, sha256_file, slugify, utc_now, write_json
 
 T = TypeVar("T")
 _LOCKS: dict[Path, threading.Lock] = {}
@@ -176,22 +176,36 @@ class StateStore:
         notes: list[str] | None = None,
     ) -> RunState:
         def mutate_state(locked: RunState) -> RunState:
+            existing = locked.stage_status.get(stage)
             snapshot = StageSnapshot(
                 stage=stage,
                 status=status,
-                artifacts=[str(path) for path in (artifacts or [])],
+                artifacts=(
+                    [str(path) for path in artifacts]
+                    if artifacts is not None
+                    else (existing.artifacts if existing is not None else [])
+                ),
                 notes=notes or [],
             )
             locked.current_stage = stage
             locked.stage_status[stage] = snapshot
-            if locked.status == "failed" and status != "failed":
-                pass
-            elif status == "failed":
+            has_failed_slice = any(
+                slice_state.status == "failed"
+                for slice_state in locked.slice_states.values()
+            )
+            if status == "failed":
                 locked.status = "failed"
             elif stage == "pr" and status == "completed":
-                locked.status = "completed" if locked.scheduler_status == "completed" else "in_progress"
+                if has_failed_slice:
+                    locked.status = "failed"
+                else:
+                    locked.status = (
+                        "completed"
+                        if locked.scheduler_status == "completed"
+                        else "in_progress"
+                    )
             elif status == "completed":
-                locked.status = "in_progress"
+                locked.status = "failed" if has_failed_slice else "in_progress"
             state.current_stage = locked.current_stage
             state.stage_status = locked.stage_status
             state.status = locked.status
