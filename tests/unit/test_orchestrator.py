@@ -91,6 +91,78 @@ def test_run_until_emits_stage_progress(app_config, tmp_spec: Path) -> None:
     assert "[ainative] plan: completed" in events
 
 
+def test_run_until_slice_stage_without_base_ref_uses_workspace_root(
+    app_config, tmp_spec: Path, tmp_path: Path, monkeypatch
+) -> None:
+    workspace_root = tmp_path / "target-repo"
+    workspace_root.mkdir()
+    orchestrator = WorkflowOrchestrator(app_config)
+    stage_repos: list[tuple[str, Path]] = []
+
+    def fail_ensure_worktree(_repo_root, _branch_name, _worktree_path, _base_ref):  # type: ignore[no-untyped-def]
+        raise AssertionError("direct run_until should not create a slice worktree without a base ref")
+
+    monkeypatch.setattr("ai_native.orchestrator.ensure_worktree", fail_ensure_worktree)
+
+    def fake_stage(context, state):  # type: ignore[no-untyped-def]
+        return []
+
+    def fake_slice(context, state):  # type: ignore[no-untyped-def]
+        stage_dir = context.state_store.stage_dir(state, "slice")
+        write_json(
+            stage_dir / "slices.json",
+            SlicePlan(
+                title="Slices",
+                summary="Summary",
+                slices=[
+                    {
+                        "id": "S001",
+                        "name": "First slice",
+                        "goal": "Ship slice one.",
+                        "acceptance_criteria": ["One"],
+                        "file_impact": ["a.ts"],
+                        "test_plan": ["test one"],
+                        "dependencies": [],
+                    }
+                ],
+            ).model_dump(mode="json"),
+        )
+        return [stage_dir / "slices.json"]
+
+    def fake_loop(context, state):  # type: ignore[no-untyped-def]
+        stage_repos.append(("loop", context.repo_root))
+        return []
+
+    def fake_verify(context, state):  # type: ignore[no-untyped-def]
+        stage_repos.append(("verify", context.repo_root))
+        return []
+
+    orchestrator.stage_handlers.update(
+        {
+            "intake": fake_stage,
+            "recon": fake_stage,
+            "plan": fake_stage,
+            "architecture": fake_stage,
+            "prd": fake_stage,
+            "slice": fake_slice,
+            "loop": fake_loop,
+            "verify": fake_verify,
+        }
+    )
+
+    state = orchestrator.run_until(
+        tmp_spec, "verify", workspace_root=workspace_root, slice_id="S001"
+    )
+
+    assert state.base_ref is None
+    assert state.slice_states["S001"].worktree_path is None
+    assert state.slice_states["S001"].status == "verified"
+    assert stage_repos == [
+        ("loop", workspace_root.resolve()),
+        ("verify", workspace_root.resolve()),
+    ]
+
+
 def test_run_all_continues_with_committed_dependencies_when_policy_assumes_merge(app_config, tmp_spec: Path, tmp_path: Path, monkeypatch) -> None:
     workspace_root = tmp_path / "target-repo"
     workspace_root.mkdir()

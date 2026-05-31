@@ -407,6 +407,11 @@ class WorkflowOrchestrator:
         inferred = infer_slice_state(
             state, slice_def, self.config.git.branch_prefix, worktrees_root
         )
+        if state.base_ref is None:
+            # Direct run_until calls may execute from detached or shallow checkouts
+            # where no local base branch exists. Keep status tracking without
+            # forcing scheduler-style worktree creation.
+            inferred.worktree_path = None
 
         def mutate(locked: RunState) -> None:
             locked.slice_states.setdefault(slice_id, inferred)
