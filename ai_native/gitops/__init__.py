@@ -226,7 +226,62 @@ def ensure_worktree(cwd: Path, branch_name: str, worktree_path: Path, base_ref: 
     return worktree_path.resolve()
 
 
-def merge_commit(cwd: Path, commit_sha: str) -> None:
+def _merge_conflict_error(
+    cwd: Path,
+    commit_sha: str,
+    completed: subprocess.CompletedProcess[str],
+    *,
+    abort_on_conflict: bool,
+) -> MergeConflictError:
+    conflicted_probe = _run_optional(
+        ["git", "diff", "--name-only", "--diff-filter=U"], cwd
+    )
+    conflicted_files = [
+        line.strip() for line in conflicted_probe.stdout.splitlines() if line.strip()
+    ]
+    details = "\n".join(
+        part
+        for part in [completed.stderr.strip(), completed.stdout.strip()]
+        if part
+    )
+    is_conflict = (
+        bool(conflicted_files)
+        or "conflict" in details.lower()
+        or "unmerged files" in details.lower()
+    )
+    if not is_conflict:
+        raise RuntimeError(details or "command failed")
+
+    merge_aborted = False
+    if abort_on_conflict:
+        abort = _run_optional(["git", "merge", "--abort"], cwd)
+        merge_aborted = abort.returncode == 0
+    file_lines = (
+        "\n".join(f"- {path}" for path in conflicted_files)
+        if conflicted_files
+        else "- unknown files"
+    )
+    if abort_on_conflict:
+        cleanup = (
+            "The worktree merge was aborted so the slice can be retried."
+            if merge_aborted
+            else "Git could not automatically abort the conflicted merge; inspect the worktree before retrying."
+        )
+    else:
+        cleanup = "The conflicted merge was left in the worktree for repair."
+    return MergeConflictError(
+        (
+            f"Merge conflict while applying dependency commit {commit_sha[:12]}.\n"
+            f"{cleanup}\n"
+            f"Conflicted files:\n{file_lines}"
+        ),
+        commit_sha=commit_sha,
+        conflicted_files=conflicted_files,
+        merge_aborted=merge_aborted,
+    )
+
+
+def _merge_commit(cwd: Path, commit_sha: str, *, abort_on_conflict: bool) -> None:
     completed = _run_optional(
         [
             "git",
@@ -242,32 +297,44 @@ def merge_commit(cwd: Path, commit_sha: str) -> None:
     )
     if completed.returncode == 0:
         return
-
-    conflicted_probe = _run_optional(["git", "diff", "--name-only", "--diff-filter=U"], cwd)
-    conflicted_files = [line.strip() for line in conflicted_probe.stdout.splitlines() if line.strip()]
-    details = "\n".join(part for part in [completed.stderr.strip(), completed.stdout.strip()] if part)
-    is_conflict = bool(conflicted_files) or "conflict" in details.lower() or "unmerged files" in details.lower()
-    if not is_conflict:
-        raise RuntimeError(details or "command failed")
-
-    abort = _run_optional(["git", "merge", "--abort"], cwd)
-    merge_aborted = abort.returncode == 0
-    file_lines = "\n".join(f"- {path}" for path in conflicted_files) if conflicted_files else "- unknown files"
-    cleanup = (
-        "The worktree merge was aborted so the slice can be retried."
-        if merge_aborted
-        else "Git could not automatically abort the conflicted merge; inspect the worktree before retrying."
+    raise _merge_conflict_error(
+        cwd, commit_sha, completed, abort_on_conflict=abort_on_conflict
     )
-    raise MergeConflictError(
-        (
-            f"Merge conflict while applying dependency commit {commit_sha[:12]}.\n"
-            f"{cleanup}\n"
-            f"Conflicted files:\n{file_lines}"
-        ),
-        commit_sha=commit_sha,
-        conflicted_files=conflicted_files,
-        merge_aborted=merge_aborted,
+
+
+def merge_commit(cwd: Path, commit_sha: str) -> None:
+    _merge_commit(cwd, commit_sha, abort_on_conflict=True)
+
+
+def merge_commit_for_repair(cwd: Path, commit_sha: str) -> None:
+    _merge_commit(cwd, commit_sha, abort_on_conflict=False)
+
+
+def merge_in_progress(cwd: Path) -> bool:
+    return (_git_dir(cwd) / "MERGE_HEAD").exists()
+
+
+def abort_merge(cwd: Path) -> bool:
+    return _run_optional(["git", "merge", "--abort"], cwd).returncode == 0
+
+
+def continue_merge(cwd: Path) -> str:
+    if not merge_in_progress(cwd):
+        return _run(["git", "rev-parse", "HEAD"], cwd)
+    _run(["git", "add", "-A"], cwd)
+    _run(
+        [
+            "git",
+            "-c",
+            "user.name=ai-native",
+            "-c",
+            "user.email=ai-native@example.invalid",
+            "commit",
+            "--no-edit",
+        ],
+        cwd,
     )
+    return _run(["git", "rev-parse", "HEAD"], cwd)
 
 
 def remove_worktree(worktree_path: Path) -> None:

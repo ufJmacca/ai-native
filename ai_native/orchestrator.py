@@ -9,16 +9,22 @@ from ai_native.adapters import build_role_adapters
 from ai_native.config import AppConfig, TelemetryDestination
 from ai_native.gitops import (
     MergeConflictError,
+    abort_merge,
+    continue_merge,
     ensure_base_commit,
     ensure_repo,
     ensure_worktree,
     is_ancestor,
     merge_commit,
+    merge_commit_for_repair,
     non_ai_native_changes,
     resolve_base_ref,
+    status_porcelain,
+    worktree_is_clean,
 )
 from ai_native.models import RunHeartbeat, RunState, SliceDefinition, SliceExecutionState
 from ai_native.prompting import PromptLibrary
+from ai_native.specs import load_prompt_spec_text
 from ai_native.slice_runtime import (
     SLICE_SPECIFIC_STAGES,
     infer_slice_state,
@@ -33,7 +39,7 @@ from ai_native.slice_runtime import (
 from ai_native.state import StateStore
 from ai_native.stages import ORDERED_STAGES, commit_run, create_prs, run_architecture, run_intake, run_loop, run_plan, run_prd, run_recon, run_slice, run_verify
 from ai_native.stages.common import ExecutionContext, StageError
-from ai_native.utils import sha256_file, utc_now, write_json, write_text
+from ai_native.utils import read_text, sha256_file, utc_now, write_json, write_text
 
 PRE_SLICE_STAGES = ("intake", "recon", "plan", "architecture", "prd", "slice")
 SLICE_PIPELINE_STAGES = ("loop", "verify", "commit", "pr")
@@ -272,7 +278,14 @@ class WorkflowOrchestrator:
             f"Stage {target_stage} requires --slice-id/SLICE because multiple candidate slices remain: {', '.join(candidates)}"
         )
 
-    def _slice_repo_root(self, state: RunState, slice_id: str) -> Path:
+    def _slice_repo_root(
+        self,
+        state: RunState,
+        slice_id: str,
+        *,
+        spec_path: Path | None = None,
+        dependency_artifacts: list[Path] | None = None,
+    ) -> Path:
         repo_root = Path(state.workspace_root)
         ensure_base_commit(repo_root, self.config.workspace.base_branch)
         slice_state = state.slice_states.get(slice_id)
@@ -281,7 +294,14 @@ class WorkflowOrchestrator:
         worktree_path = ensure_worktree(repo_root, slice_state.branch_name, Path(slice_state.worktree_path), state.base_ref or self.config.workspace.base_branch)
         slice_plan = load_slice_plan(Path(state.run_dir))
         slice_def = slice_by_id(slice_plan, slice_id)
-        self._materialize_dependency_commits(state, slice_def, worktree_path)
+        artifacts = self._materialize_dependency_commits(
+            state,
+            slice_def,
+            worktree_path,
+            spec_path=spec_path,
+        )
+        if dependency_artifacts is not None:
+            dependency_artifacts.extend(artifacts)
         if str(worktree_path) != slice_state.worktree_path:
             self._mutate_state(state, lambda locked: setattr(locked.slice_states[slice_id], "worktree_path", str(worktree_path)))
         return worktree_path
@@ -313,7 +333,15 @@ class WorkflowOrchestrator:
                     try:
                         if stage_slice_id:
                             self._ensure_slice_state(state, stage_slice_id)
-                        repo_root = self._slice_repo_root(state, stage_slice_id) if stage_slice_id else Path(state.workspace_root)
+                        repo_root = (
+                            self._slice_repo_root(
+                                state,
+                                stage_slice_id,
+                                spec_path=spec_path.resolve(),
+                            )
+                            if stage_slice_id
+                            else Path(state.workspace_root)
+                        )
                         stage_context = self._context(spec_path.resolve(), state, repo_root=repo_root, slice_id=stage_slice_id)
                     except Exception as exc:
                         if stage_slice_id:
@@ -386,9 +414,206 @@ class WorkflowOrchestrator:
                 return f"Waiting for dependency {dependency_id} to merge into {self.config.workspace.base_branch}"
         return None
 
-    def _materialize_dependency_commits(self, state: RunState, slice_def: SliceDefinition, repo_root: Path) -> None:
+    def _dependency_merge_artifact_dir(
+        self, state: RunState, slice_id: str
+    ) -> Path:
+        path = Path(state.run_dir) / "dependencies" / slice_id
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @staticmethod
+    def _format_conflicted_files(conflicted_files: list[str]) -> str:
+        if not conflicted_files:
+            return "- unknown files"
+        return "\n".join(f"- {path}" for path in conflicted_files)
+
+    def _write_dependency_repair_summary(
+        self,
+        state: RunState,
+        slice_id: str,
+        dependency_id: str,
+        attempt: int,
+        summary: str,
+    ) -> list[Path]:
+        artifact_dir = self._dependency_merge_artifact_dir(state, slice_id)
+        latest_path = artifact_dir / f"{dependency_id}-merge-repair.md"
+        attempt_path = artifact_dir / f"{dependency_id}-merge-repair-attempt-{attempt}.md"
+        write_text(latest_path, summary)
+        write_text(attempt_path, summary)
+        return [latest_path, attempt_path]
+
+    def _record_dependency_merge_head(
+        self,
+        state: RunState,
+        slice_def: SliceDefinition,
+        sha: str,
+    ) -> list[Path]:
+        slice_state = state.slice_states.get(slice_def.id)
+        if slice_state is None or not slice_state.commit_sha:
+            return []
+        commit_path = Path(state.run_dir) / "commit" / f"{slice_def.id}.txt"
+        if commit_path.exists():
+            lines = read_text(commit_path).splitlines()
+            for index in range(len(lines) - 1, -1, -1):
+                if lines[index].strip():
+                    lines[index] = sha
+                    break
+            else:
+                lines = [sha]
+        else:
+            lines = [sha]
+        write_text(commit_path, "\n".join(lines) + "\n")
+
+        def mutate(locked: RunState) -> None:
+            locked.slice_states[slice_def.id].commit_sha = sha
+            locked.slice_states[slice_def.id].updated_at = utc_now()
+
+        self._mutate_state(state, mutate)
+        return [commit_path]
+
+    def _dependency_merge_failed_message(
+        self,
+        slice_def: SliceDefinition,
+        dependency_id: str,
+        error: MergeConflictError,
+        detail: str,
+        *,
+        aborted: bool,
+    ) -> str:
+        status_note = (
+            "The conflicted merge was aborted automatically so the slice can be retried."
+            if aborted
+            else "Git could not automatically abort the conflicted merge; inspect the worktree before retrying."
+        )
+        return "\n".join(
+            [
+                self._dependency_merge_conflict_message(
+                    slice_def, dependency_id, error
+                ),
+                "",
+                "Dependency merge repair failed.",
+                status_note,
+                detail,
+            ]
+        )
+
+    def _repair_dependency_merge_conflict(
+        self,
+        state: RunState,
+        slice_def: SliceDefinition,
+        dependency_id: str,
+        dependency_commit: str,
+        repo_root: Path,
+        spec_path: Path,
+        error: MergeConflictError,
+    ) -> list[Path]:
+        if not error.merge_aborted:
+            raise StageError(
+                self._dependency_merge_conflict_message(
+                    slice_def, dependency_id, error
+                )
+            )
+        artifacts: list[Path] = []
+        attempt_limit = max(1, self.config.workspace.loop_max_attempts)
+        spec_text = load_prompt_spec_text(Path(state.run_dir), spec_path)
+        for attempt in range(1, attempt_limit + 1):
+            self._emit(
+                f"[ainative] slice {slice_def.id}: repairing dependency {dependency_id} merge "
+                f"conflict attempt {attempt}/{attempt_limit}"
+            )
+            try:
+                merge_commit_for_repair(repo_root, dependency_commit)
+                return artifacts
+            except MergeConflictError as repair_error:
+                prompt = self.prompt_library.render(
+                    "dependency_merge_repair.md",
+                    spec_text=spec_text,
+                    slice_definition=slice_def.model_dump(mode="json"),
+                    dependency_id=dependency_id,
+                    dependency_commit=dependency_commit,
+                    conflicted_files=self._format_conflicted_files(
+                        repair_error.conflicted_files
+                    ),
+                    git_status=status_porcelain(repo_root) or "clean",
+                    run_dir=state.run_dir,
+                )
+                try:
+                    result = self.adapters["builder"].run(prompt, cwd=repo_root)
+                except Exception as exc:
+                    aborted = abort_merge(repo_root)
+                    if attempt == attempt_limit or not aborted:
+                        raise StageError(
+                            self._dependency_merge_failed_message(
+                                slice_def,
+                                dependency_id,
+                                repair_error,
+                                str(exc),
+                                aborted=aborted,
+                            )
+                        ) from exc
+                    continue
+                artifacts.extend(
+                    self._write_dependency_repair_summary(
+                        state,
+                        slice_def.id,
+                        dependency_id,
+                        attempt,
+                        result.text or "# Dependency Merge Repair\n",
+                    )
+                )
+                try:
+                    merge_sha = continue_merge(repo_root)
+                    if not worktree_is_clean(repo_root):
+                        raise RuntimeError(
+                            "dependency merge repair left the worktree dirty:\n"
+                            f"{status_porcelain(repo_root) or 'git diff --quiet HEAD reported differences.'}"
+                        )
+                    artifacts.extend(
+                        self._record_dependency_merge_head(
+                            state, slice_def, merge_sha
+                        )
+                    )
+                    self._emit(
+                        f"[ainative] slice {slice_def.id}: dependency {dependency_id} merge repaired"
+                    )
+                    return artifacts
+                except Exception as exc:
+                    aborted = abort_merge(repo_root)
+                    if attempt == attempt_limit:
+                        raise StageError(
+                            self._dependency_merge_failed_message(
+                                slice_def,
+                                dependency_id,
+                                repair_error,
+                                str(exc),
+                                aborted=aborted,
+                            )
+                        ) from exc
+                    if not aborted:
+                        raise StageError(
+                            self._dependency_merge_failed_message(
+                                slice_def,
+                                dependency_id,
+                                repair_error,
+                                str(exc),
+                                aborted=False,
+                            )
+                        ) from exc
+        raise StageError(
+            f"Dependency merge repair failed for slice {slice_def.id} after {attempt_limit} attempts."
+        )
+
+    def _materialize_dependency_commits(
+        self,
+        state: RunState,
+        slice_def: SliceDefinition,
+        repo_root: Path,
+        *,
+        spec_path: Path | None,
+    ) -> list[Path]:
+        artifacts: list[Path] = []
         if self.config.workspace.dependency_policy != "assume_committed":
-            return
+            return artifacts
         for dependency_id in slice_def.dependencies:
             dependency_state = state.slice_states.get(dependency_id)
             if dependency_state is None or not dependency_state.commit_sha:
@@ -396,7 +621,18 @@ class WorkflowOrchestrator:
             try:
                 merge_commit(repo_root, dependency_state.commit_sha)
             except MergeConflictError as exc:
-                raise StageError(self._dependency_merge_conflict_message(slice_def, dependency_id, exc)) from exc
+                artifacts.extend(
+                    self._repair_dependency_merge_conflict(
+                        state,
+                        slice_def,
+                        dependency_id,
+                        dependency_state.commit_sha,
+                        repo_root,
+                        spec_path or Path(state.spec_path),
+                        exc,
+                    )
+                )
+        return artifacts
 
     def _ensure_slice_state(self, state: RunState, slice_id: str) -> None:
         if slice_id in state.slice_states:
@@ -583,7 +819,13 @@ class WorkflowOrchestrator:
         try:
             local_state = self._copy_state(state)
             local_state.active_slice = slice_def.id
-            repo_root = self._slice_repo_root(state, slice_def.id)
+            dependency_artifacts: list[Path] = []
+            repo_root = self._slice_repo_root(
+                state,
+                slice_def.id,
+                spec_path=spec_path,
+                dependency_artifacts=dependency_artifacts,
+            )
             local_context = self._context(spec_path, local_state, repo_root=repo_root, slice_id=slice_def.id)
         except Exception as exc:
             self._record_slice_failure_once(state, slice_def.id, fallback_stage, str(exc))
@@ -591,6 +833,7 @@ class WorkflowOrchestrator:
 
         self._emit(f"[ainative] slice {slice_def.id}: worktree ready at {repo_root}")
         artifacts: dict[str, list[Path]] = {stage: [] for stage in SLICE_PIPELINE_STAGES}
+        artifacts["loop"].extend(dependency_artifacts)
         for stage in self._slice_pipeline_stages(slice_state):
             self._emit(f"[ainative] slice {slice_def.id}: {stage} started")
             self._mark_slice_stage_start(state, slice_def.id, stage)
