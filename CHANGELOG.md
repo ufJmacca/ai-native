@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/ufJmacca/ai-native/compare/ai-native-base-v1.2.0...ai-native-base-v1.3.0) (2026-05-31)
+
+
+### Features
+
+* repair dependency merge conflicts in slice worktrees ([#30](https://github.com/ufJmacca/ai-native/issues/30)) ([f3d424e](https://github.com/ufJmacca/ai-native/commit/f3d424e006635c7bf48b9f42db9f8bb4bc46509e))
+
 ## [1.2.0](https://github.com/ufJmacca/ai-native/compare/ai-native-base-v1.1.0...ai-native-base-v1.2.0) (2026-05-31)
 
 
