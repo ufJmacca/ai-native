@@ -289,3 +289,65 @@ def test_merge_commit_aborts_and_reports_conflicted_files(monkeypatch, tmp_path:
         ["git", "-c", "safe.directory=*", "diff", "--name-only", "--diff-filter=U"],
         ["git", "-c", "safe.directory=*", "merge", "--abort"],
     ]
+
+
+def test_merge_commit_for_repair_leaves_conflicted_merge(monkeypatch, tmp_path: Path) -> None:
+    recorded: list[list[str]] = []
+
+    def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
+        recorded.append(list(command))
+        if "merge" in command:
+            return subprocess.CompletedProcess(
+                command,
+                1,
+                stdout="Auto-merging src/app.py\nCONFLICT (content): Merge conflict in src/app.py\n",
+                stderr="Automatic merge failed; fix conflicts and then commit the result.\n",
+            )
+        if command[-3:] == ["diff", "--name-only", "--diff-filter=U"]:
+            return subprocess.CompletedProcess(command, 0, stdout="src/app.py\n", stderr="")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(gitops.subprocess, "run", fake_run)
+
+    with pytest.raises(gitops.MergeConflictError) as excinfo:
+        gitops.merge_commit_for_repair(tmp_path, "deadbeefcafebabe")
+
+    assert excinfo.value.conflicted_files == ["src/app.py"]
+    assert excinfo.value.merge_aborted is False
+    assert "left in the worktree for repair" in str(excinfo.value)
+    assert ["git", "-c", "safe.directory=*", "merge", "--abort"] not in recorded
+
+
+def test_continue_merge_commits_merge_and_returns_head(monkeypatch, tmp_path: Path) -> None:
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "MERGE_HEAD").write_text("deadbeef\n", encoding="utf-8")
+    recorded: list[list[str]] = []
+
+    def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
+        recorded.append(list(command))
+        if command[-2:] == ["rev-parse", "--git-dir"]:
+            return subprocess.CompletedProcess(command, 0, stdout=".git\n", stderr="")
+        if command[-2:] == ["rev-parse", "HEAD"]:
+            return subprocess.CompletedProcess(command, 0, stdout="merge-sha\n", stderr="")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(gitops.subprocess, "run", fake_run)
+
+    assert gitops.continue_merge(tmp_path) == "merge-sha"
+    assert recorded == [
+        ["git", "-c", "safe.directory=*", "rev-parse", "--git-dir"],
+        ["git", "-c", "safe.directory=*", "add", "-A"],
+        [
+            "git",
+            "-c",
+            "safe.directory=*",
+            "-c",
+            "user.name=ai-native",
+            "-c",
+            "user.email=ai-native@example.invalid",
+            "commit",
+            "--no-edit",
+        ],
+        ["git", "-c", "safe.directory=*", "rev-parse", "HEAD"],
+    ]
