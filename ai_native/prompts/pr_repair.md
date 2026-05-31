@@ -27,3 +27,5 @@ Prior PR critique history:
 
 PR blocker ledger:
 {blocker_ledger}
+
+Use the blocker ledger as the latest active blocker set. Prior critique history is context only; do not reintroduce old blockers unless the structured review report still marks them as required changes.

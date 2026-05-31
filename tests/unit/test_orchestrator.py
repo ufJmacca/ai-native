@@ -391,6 +391,100 @@ def test_run_all_blocks_dependent_slices_until_prerequisites_merge_to_base_when_
     assert state.status == "in_progress"
 
 
+def test_run_until_pr_rerun_clears_stale_failed_slice_state(
+    app_config, tmp_spec: Path, tmp_path: Path, monkeypatch
+) -> None:
+    workspace_root = tmp_path / "target-repo"
+    workspace_root.mkdir()
+    orchestrator = WorkflowOrchestrator(app_config)
+    fail_pr = True
+
+    def fake_ensure_worktree(_repo_root, _branch_name, worktree_path, _base_ref):  # type: ignore[no-untyped-def]
+        worktree_path.mkdir(parents=True, exist_ok=True)
+        return worktree_path.resolve()
+
+    monkeypatch.setattr("ai_native.orchestrator.ensure_worktree", fake_ensure_worktree)
+
+    def fake_stage(context, state):  # type: ignore[no-untyped-def]
+        return []
+
+    def fake_slice(context, state):  # type: ignore[no-untyped-def]
+        stage_dir = context.state_store.stage_dir(state, "slice")
+        write_json(
+            stage_dir / "slices.json",
+            SlicePlan(
+                title="Slices",
+                summary="Summary",
+                slices=[
+                    {
+                        "id": "S001",
+                        "name": "First slice",
+                        "goal": "Ship slice one.",
+                        "acceptance_criteria": ["One"],
+                        "file_impact": ["a.ts"],
+                        "test_plan": ["test one"],
+                        "dependencies": [],
+                    }
+                ],
+            ).model_dump(mode="json"),
+        )
+        return [stage_dir / "slices.json"]
+
+    def fake_commit(context, state):  # type: ignore[no-untyped-def]
+        commit_path = context.state_store.stage_dir(state, "commit") / "S001.txt"
+        commit_path.write_text("sha-S001\n", encoding="utf-8")
+        return [commit_path]
+
+    def fake_pr(context, state, dry_run=False):  # type: ignore[no-untyped-def]
+        nonlocal fail_pr
+        if fail_pr:
+            raise StageError("old PR review failure")
+        url_path = context.state_store.stage_dir(state, "pr") / "S001-url.txt"
+        url_path.write_text("https://example.invalid/pr/1\n", encoding="utf-8")
+        return [url_path]
+
+    orchestrator.stage_handlers.update(
+        {
+            "intake": fake_stage,
+            "recon": fake_stage,
+            "plan": fake_stage,
+            "architecture": fake_stage,
+            "prd": fake_stage,
+            "slice": fake_slice,
+            "loop": fake_stage,
+            "verify": fake_stage,
+            "commit": fake_commit,
+            "pr": fake_pr,
+        }
+    )
+
+    with pytest.raises(StageError, match="old PR review failure"):
+        orchestrator.run_until(
+            tmp_spec, "pr", workspace_root=workspace_root, slice_id="S001"
+        )
+
+    failed_state = orchestrator.prepare_state(tmp_spec, workspace_root=workspace_root)
+    assert failed_state.status == "failed"
+    assert failed_state.slice_states["S001"].status == "failed"
+
+    fail_pr = False
+    repaired_state = orchestrator.run_until(
+        tmp_spec,
+        "pr",
+        run_dir=Path(failed_state.run_dir),
+        workspace_root=workspace_root,
+        slice_id="S001",
+    )
+
+    assert repaired_state.stage_status["pr"].status == "completed"
+    assert repaired_state.status == "in_progress"
+    assert repaired_state.slice_states["S001"].status == "pr_opened"
+    assert (
+        repaired_state.slice_states["S001"].pr_url
+        == "https://example.invalid/pr/1"
+    )
+
+
 def test_context_resolves_active_telemetry_profile(app_config, tmp_spec: Path) -> None:
     app_config.telemetry.enabled = True
     app_config.telemetry.profile = "default"

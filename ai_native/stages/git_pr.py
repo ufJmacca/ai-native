@@ -11,7 +11,9 @@ from ai_native.gitops import (
     create_pull_request,
     ensure_branch,
     has_changes,
+    status_porcelain,
     push_branch,
+    worktree_is_clean,
 )
 from ai_native.models import ReviewReport, RunState, SliceDefinition, SlicePlan
 from ai_native.slice_runtime import (
@@ -172,15 +174,19 @@ def _normalize_blocker(text: str) -> str:
 
 
 def _collect_blocker_ledger(history: list[tuple[int, ReviewReport]]) -> list[str]:
+    if not history:
+        return []
+    latest_review = history[-1][1]
+    if latest_review.verdict == "approved":
+        return []
     blockers: list[str] = []
     seen: set[str] = set()
-    for _attempt, review in history:
-        for blocker in review.required_changes:
-            key = _normalize_blocker(blocker)
-            if key in seen:
-                continue
-            seen.add(key)
-            blockers.append(blocker)
+    for blocker in latest_review.required_changes:
+        key = _normalize_blocker(blocker)
+        if key in seen:
+            continue
+        seen.add(key)
+        blockers.append(blocker)
     return blockers
 
 
@@ -196,7 +202,7 @@ def _render_critique_history(history: list[tuple[int, ReviewReport]]) -> str:
     lines = [
         "# PR Critique History",
         "",
-        "Carry forward unresolved PR review blockers unless the repaired slice resolves them explicitly.",
+        "Prior PR review triage attempts. Historical blockers are context only; the latest current-branch review decides what still blocks.",
     ]
     for attempt, review in history:
         lines.extend(
@@ -222,14 +228,14 @@ def _render_blocker_ledger(blockers: list[str]) -> str:
             [
                 "# PR Blocker Ledger",
                 "",
-                "No carried-forward PR review blockers exist yet.",
+                "No active PR review blockers exist in the latest triage report.",
             ]
         )
     return "\n".join(
         [
             "# PR Blocker Ledger",
             "",
-            "These are the stable PR review blockers accumulated so far. Resolve them instead of silently bypassing them.",
+            "These are the active PR review blockers from the latest triage report.",
             "",
             *[f"- {blocker}" for blocker in blockers],
         ]
@@ -258,6 +264,45 @@ def _review_history_artifacts(
         blocker_ledger,
         _write_guidance_artifacts(pr_dir, slice_id, critique_history, blocker_ledger),
     )
+
+
+def _dedupe_paths(paths: list[Path]) -> list[Path]:
+    return list(dict.fromkeys(paths))
+
+
+def _record_pr_progress(
+    context: ExecutionContext,
+    state: RunState,
+    artifacts: list[Path],
+    note: str,
+) -> None:
+    if not (Path(state.run_dir) / "state.json").exists():
+        return
+    context.state_store.update_stage(
+        state,
+        stage="pr",
+        status="pending",
+        artifacts=_dedupe_paths(artifacts),
+        notes=[note],
+    )
+
+
+def _dirty_worktree_message(context: ExecutionContext, slice_id: str, phase: str) -> str:
+    status = status_porcelain(context.repo_root)
+    details = status or "git diff --quiet HEAD reported differences."
+    return (
+        f"PR stage requires a clean worktree for slice {slice_id} {phase}.\n"
+        f"Repository: {context.repo_root}\n"
+        f"Git status:\n{details}"
+    )
+
+
+def _require_clean_worktree(
+    context: ExecutionContext, slice_id: str, phase: str
+) -> None:
+    if worktree_is_clean(context.repo_root):
+        return
+    raise StageError(_dirty_worktree_message(context, slice_id, phase))
 
 
 def _write_raw_review(
@@ -293,6 +338,7 @@ def _run_pr_review(
     review_prompt: str,
     pr_base: str,
 ) -> tuple[str, list[Path]]:
+    _require_clean_worktree(context, slice_id, f"before PR review attempt {attempt}")
     review_method = getattr(context.pr_reviewer, "review", None)
     if callable(review_method):
         review_text = review_method(
@@ -371,6 +417,31 @@ def _ask_to_continue_after_exhaustion(
     return _parse_additional_attempts(
         responses[1] if len(responses) > 1 else "", current_limit
     )
+
+
+def _ensure_follow_up_review_attempt(
+    context: ExecutionContext,
+    slice_id: str,
+    attempt: int,
+    attempt_limit: int,
+    review: ReviewReport,
+) -> int:
+    if attempt < attempt_limit:
+        return attempt_limit
+    context.emit_progress(f"[ainative] pr: slice {slice_id} attempt budget exhausted")
+    additional_attempts = _ask_to_continue_after_exhaustion(
+        context, slice_id, attempt_limit, review
+    )
+    if additional_attempts is None:
+        raise StageError(
+            f"PR review failed for slice {slice_id} after {attempt_limit} attempts: {review.summary}"
+        )
+    new_limit = attempt_limit + additional_attempts
+    context.emit_progress(
+        f"[ainative] pr: slice {slice_id} continuing with {additional_attempts} additional attempts "
+        f"(new limit {new_limit})"
+    )
+    return new_limit
 
 
 def _write_repair_summary(
@@ -618,8 +689,14 @@ def _run_gated_pr_review(
             _review_history_artifacts(pr_dir, slice_def.id)
         )
         artifacts.extend(guidance_artifacts)
+        _record_pr_progress(
+            context,
+            state,
+            artifacts,
+            f"review attempt {attempt}: {latest_review.verdict} - {latest_review.summary}",
+        )
         if latest_review.verdict == "approved":
-            return list(dict.fromkeys(artifacts))
+            return _dedupe_paths(artifacts)
 
         context.emit_progress(
             f"[ainative] pr: slice {slice_def.id} review requested changes - {latest_review.summary}"
@@ -633,26 +710,19 @@ def _run_gated_pr_review(
                     _dry_run_repair_summary(latest_review),
                 )
             )
+            _record_pr_progress(
+                context,
+                state,
+                artifacts,
+                f"dry-run review attempt {attempt}: changes required - {latest_review.summary}",
+            )
             raise StageError(
                 f"PR review found required changes for slice {slice_def.id} during dry run: {latest_review.summary}"
             )
 
-        if attempt >= attempt_limit:
-            context.emit_progress(
-                f"[ainative] pr: slice {slice_def.id} attempt budget exhausted"
-            )
-            additional_attempts = _ask_to_continue_after_exhaustion(
-                context, slice_def.id, attempt_limit, latest_review
-            )
-            if additional_attempts is None:
-                raise StageError(
-                    f"PR review failed for slice {slice_def.id} after {attempt_limit} attempts: {latest_review.summary}"
-                )
-            attempt_limit += additional_attempts
-            context.emit_progress(
-                f"[ainative] pr: slice {slice_def.id} continuing with {additional_attempts} additional attempts "
-                f"(new limit {attempt_limit})"
-            )
+        attempt_limit = _ensure_follow_up_review_attempt(
+            context, slice_def.id, attempt, attempt_limit, latest_review
+        )
 
         context.emit_progress(
             f"[ainative] pr: slice {slice_def.id} repair attempt {attempt}/{attempt_limit}"
@@ -672,6 +742,12 @@ def _run_gated_pr_review(
                 attempt=attempt,
             )
         )
+        _record_pr_progress(
+            context,
+            state,
+            artifacts,
+            f"repair attempt {attempt}: repair completed, verification pending",
+        )
         context.emit_progress(
             f"[ainative] pr: slice {slice_def.id} re-running verification after PR repair"
         )
@@ -685,8 +761,41 @@ def _run_gated_pr_review(
                 attempt=attempt,
             )
         )
+        _record_pr_progress(
+            context,
+            state,
+            artifacts,
+            f"repair attempt {attempt}: archived prior verification artifacts",
+        )
         artifacts.extend(run_verify(context, verify_state))
-        artifacts.extend(amend_slice_commit(context, state, slice_def, branch_name))
+        _record_pr_progress(
+            context,
+            state,
+            artifacts,
+            f"repair attempt {attempt}: verification completed, amend pending",
+        )
+        try:
+            artifacts.extend(
+                amend_slice_commit(context, state, slice_def, branch_name)
+            )
+        except Exception as exc:
+            raise StageError(
+                f"PR repair failed to amend slice {slice_def.id}: {exc}\n"
+                f"{_dirty_worktree_message(context, slice_def.id, 'after failed amend')}"
+            ) from exc
+        _record_pr_progress(
+            context,
+            state,
+            artifacts,
+            f"repair attempt {attempt}: commit amend completed",
+        )
+        _require_clean_worktree(context, slice_def.id, "after PR repair amend")
+        _record_pr_progress(
+            context,
+            state,
+            artifacts,
+            f"repair attempt {attempt}: worktree clean, re-review pending",
+        )
         attempt += 1
 
 
