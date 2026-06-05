@@ -27,8 +27,6 @@ def _is_stage_completed(state: RunState, stage: str) -> bool:
     return bool(snapshot and snapshot.status == "completed")
 
 
-
-
 def _slice_stage_prefix(slice_id: str, stage: str) -> list[str]:
     completed: list[str] = []
     for pipeline_stage in SLICE_PIPELINE:
@@ -37,11 +35,35 @@ def _slice_stage_prefix(slice_id: str, stage: str) -> list[str]:
         completed.append(f"{slice_id}:{pipeline_stage}")
     return completed
 
+
+def _dependency_policy(state: RunState) -> str:
+    return str(state.metadata.get("dependency_policy") or "assume_committed")
+
+
+def _dry_run_pr(state: RunState) -> bool:
+    return bool(state.metadata.get("dry_run_pr"))
+
+
 def _dependency_reason(state: RunState, dependency_ids: list[str]) -> str | None:
+    dependency_policy = _dependency_policy(state)
+    dry_run_pr = _dry_run_pr(state)
     for dependency_id in dependency_ids:
         dependency_state = state.slice_states.get(dependency_id)
-        if dependency_state is None or dependency_state.status not in {"committed", "pr_opened"}:
-            return f"Waiting for dependency {dependency_id} to reach commit stage"
+        if dependency_policy == "assume_committed":
+            if dependency_state is None or not dependency_state.commit_sha:
+                return f"Waiting for dependency {dependency_id} to reach commit stage"
+            continue
+        if dependency_policy == "wait_for_pr_opened":
+            if dependency_state is None or not dependency_state.commit_sha:
+                return f"Waiting for dependency {dependency_id} to complete PR stage"
+            if dependency_state.status != "pr_opened":
+                return f"Waiting for dependency {dependency_id} to complete PR stage"
+            if not dry_run_pr and not dependency_state.pr_url:
+                return f"Waiting for dependency {dependency_id} to create GitHub PR"
+            continue
+        if dependency_state is None or not dependency_state.commit_sha:
+            return f"Waiting for dependency {dependency_id} to merge into base branch"
+        return f"Waiting for dependency {dependency_id} to merge into base branch"
     return None
 
 
@@ -108,6 +130,9 @@ def build_run_projection(state: RunState, slice_plan: SlicePlan | None = None) -
             completed_steps.extend(_slice_stage_prefix(slice_def.id, slice_state.current_stage))
             next_executable_steps.append(f"{slice_def.id}:{slice_state.current_stage}")
             continue
+        if slice_state.status == "ready":
+            next_executable_steps.append(f"{slice_def.id}:loop")
+            continue
 
         if not pre_slice_gate_open:
             blocked_steps.append(
@@ -118,11 +143,6 @@ def build_run_projection(state: RunState, slice_plan: SlicePlan | None = None) -
             )
             continue
 
-        dependency_reason = _dependency_reason(state, slice_def.dependencies)
-        if dependency_reason:
-            blocked_steps.append(RunProjectionBlockedStep(step=f"{slice_def.id}:loop", reason=dependency_reason))
-            continue
-
         if slice_state.status == "blocked":
             blocked_steps.append(
                 RunProjectionBlockedStep(
@@ -130,6 +150,11 @@ def build_run_projection(state: RunState, slice_plan: SlicePlan | None = None) -
                     reason=slice_state.block_reason or "Slice is blocked by scheduler constraints.",
                 )
             )
+            continue
+
+        dependency_reason = _dependency_reason(state, slice_def.dependencies)
+        if dependency_reason:
+            blocked_steps.append(RunProjectionBlockedStep(step=f"{slice_def.id}:loop", reason=dependency_reason))
             continue
 
         next_executable_steps.append(f"{slice_def.id}:loop")

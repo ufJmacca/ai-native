@@ -31,7 +31,11 @@ _SECRET_KEYS = {"api_key", "token", "password"}
 _CODEX_AGENT_TYPES = {"codex-exec", "codex-review"}
 _COPILOT_AGENT_TYPES = {"copilot-cli"}
 _INIT_PROVIDERS = ("codex", "copilot")
-_DEPENDENCY_POLICIES = ("wait_for_base_merge", "assume_committed")
+_DEPENDENCY_POLICIES = (
+    "wait_for_base_merge",
+    "wait_for_pr_opened",
+    "assume_committed",
+)
 
 
 def _config_path() -> Path:

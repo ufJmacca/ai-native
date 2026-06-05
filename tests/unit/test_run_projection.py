@@ -111,3 +111,98 @@ def test_build_run_projection_retries_failed_slice_from_failed_stage(tmp_path: P
     assert "a:verify" in projection.completed_steps
     assert "a:commit" in projection.next_executable_steps
     assert "a:loop" not in projection.next_executable_steps
+
+
+def test_build_run_projection_wait_for_pr_opened_blocks_until_pr_stage(
+    tmp_path: Path,
+) -> None:
+    state = _base_state(tmp_path)
+    state.metadata["dependency_policy"] = "wait_for_pr_opened"
+    for stage in ("intake", "recon", "plan", "architecture", "prd", "slice"):
+        state.stage_status[stage] = StageSnapshot(stage=stage, status="completed")
+    state.slice_states = {
+        "a": SliceExecutionState(
+            slice_id="a",
+            status="committed",
+            commit_sha="sha-a",
+        ),
+        "b": SliceExecutionState(slice_id="b", status="pending"),
+    }
+    plan = SlicePlan(
+        title="t",
+        summary="s",
+        slices=[
+            SliceDefinition(id="a", name="A", goal="A"),
+            SliceDefinition(id="b", name="B", goal="B", dependencies=["a"]),
+        ],
+    )
+
+    projection = build_run_projection(state, plan)
+
+    assert any(
+        step.step == "b:loop" and "complete PR stage" in step.reason
+        for step in projection.blocked_steps
+    )
+
+
+def test_build_run_projection_wait_for_pr_opened_requires_github_pr_when_not_dry_run(
+    tmp_path: Path,
+) -> None:
+    state = _base_state(tmp_path)
+    state.metadata["dependency_policy"] = "wait_for_pr_opened"
+    state.metadata["dry_run_pr"] = False
+    for stage in ("intake", "recon", "plan", "architecture", "prd", "slice"):
+        state.stage_status[stage] = StageSnapshot(stage=stage, status="completed")
+    state.slice_states = {
+        "a": SliceExecutionState(
+            slice_id="a",
+            status="pr_opened",
+            commit_sha="sha-a",
+        ),
+        "b": SliceExecutionState(slice_id="b", status="pending"),
+    }
+    plan = SlicePlan(
+        title="t",
+        summary="s",
+        slices=[
+            SliceDefinition(id="a", name="A", goal="A"),
+            SliceDefinition(id="b", name="B", goal="B", dependencies=["a"]),
+        ],
+    )
+
+    projection = build_run_projection(state, plan)
+
+    assert any(
+        step.step == "b:loop" and "create GitHub PR" in step.reason
+        for step in projection.blocked_steps
+    )
+
+
+def test_build_run_projection_wait_for_pr_opened_allows_dry_run_without_url(
+    tmp_path: Path,
+) -> None:
+    state = _base_state(tmp_path)
+    state.metadata["dependency_policy"] = "wait_for_pr_opened"
+    state.metadata["dry_run_pr"] = True
+    for stage in ("intake", "recon", "plan", "architecture", "prd", "slice"):
+        state.stage_status[stage] = StageSnapshot(stage=stage, status="completed")
+    state.slice_states = {
+        "a": SliceExecutionState(
+            slice_id="a",
+            status="pr_opened",
+            commit_sha="sha-a",
+        ),
+        "b": SliceExecutionState(slice_id="b", status="pending"),
+    }
+    plan = SlicePlan(
+        title="t",
+        summary="s",
+        slices=[
+            SliceDefinition(id="a", name="A", goal="A"),
+            SliceDefinition(id="b", name="B", goal="B", dependencies=["a"]),
+        ],
+    )
+
+    projection = build_run_projection(state, plan)
+
+    assert "b:loop" in projection.next_executable_steps
