@@ -6,7 +6,7 @@ import pytest
 
 from ai_native.config import TelemetryDestination
 from ai_native.gitops import MergeConflictError
-from ai_native.models import SlicePlan
+from ai_native.models import SliceDefinition, SliceExecutionState, SlicePlan
 from ai_native.utils import write_json
 
 from ai_native.orchestrator import WorkflowOrchestrator
@@ -267,8 +267,170 @@ def test_run_all_continues_with_committed_dependencies_when_policy_assumes_merge
     assert state.status == "completed"
 
 
-def test_run_all_repairs_dependency_merge_conflicts(app_config, tmp_spec: Path, tmp_path: Path, monkeypatch) -> None:
-    app_config.workspace.dependency_policy = "assume_committed"
+def test_dependency_block_reason_wait_for_pr_opened_requires_pr_stage_and_url(
+    app_config, tmp_spec: Path
+) -> None:
+    app_config.workspace.dependency_policy = "wait_for_pr_opened"
+    orchestrator = WorkflowOrchestrator(app_config)
+    state = orchestrator.prepare_state(tmp_spec)
+    state.base_ref = "origin/main"
+    dependent = SliceDefinition(
+        id="S002",
+        name="Second slice",
+        goal="Ship slice two.",
+        dependencies=["S001"],
+    )
+
+    state.metadata["dry_run_pr"] = False
+    state.slice_states["S001"] = SliceExecutionState(
+        slice_id="S001",
+        status="committed",
+        commit_sha="commit-sha-S001",
+    )
+
+    assert (
+        orchestrator._dependency_block_reason(state, dependent)
+        == "Waiting for dependency S001 to complete PR stage"
+    )
+
+    state.slice_states["S001"].status = "pr_opened"
+    assert (
+        orchestrator._dependency_block_reason(state, dependent)
+        == "Waiting for dependency S001 to create GitHub PR"
+    )
+
+    state.metadata["dry_run_pr"] = True
+    assert orchestrator._dependency_block_reason(state, dependent) is None
+
+    state.metadata["dry_run_pr"] = False
+    state.slice_states["S001"].pr_url = "https://example.invalid/pr/1"
+    assert orchestrator._dependency_block_reason(state, dependent) is None
+
+
+def test_run_all_wait_for_pr_opened_merges_final_pr_stage_commit(
+    app_config, tmp_spec: Path, tmp_path: Path, monkeypatch
+) -> None:
+    app_config.workspace.dependency_policy = "wait_for_pr_opened"
+    workspace_root = tmp_path / "target-repo"
+    workspace_root.mkdir()
+    orchestrator = WorkflowOrchestrator(app_config)
+    events: list[tuple[str, str | None]] = []
+    merged_dependencies: list[tuple[str, str]] = []
+    orchestrator.progress = lambda _message: None
+
+    def fake_ensure_worktree(_repo_root, _branch_name, worktree_path, _base_ref):  # type: ignore[no-untyped-def]
+        worktree_path.mkdir(parents=True, exist_ok=True)
+        return worktree_path.resolve()
+
+    def fake_merge_commit(repo_root, commit_sha):  # type: ignore[no-untyped-def]
+        merged_dependencies.append((Path(repo_root).name, commit_sha))
+
+    monkeypatch.setattr("ai_native.orchestrator.ensure_worktree", fake_ensure_worktree)
+    monkeypatch.setattr("ai_native.orchestrator.merge_commit", fake_merge_commit)
+
+    def fake_stage(context, state):  # type: ignore[no-untyped-def]
+        return []
+
+    def fake_slice(context, state):  # type: ignore[no-untyped-def]
+        stage_dir = context.state_store.stage_dir(state, "slice")
+        write_json(
+            stage_dir / "slices.json",
+            SlicePlan(
+                title="Slices",
+                summary="Summary",
+                slices=[
+                    {
+                        "id": "S001",
+                        "name": "First slice",
+                        "goal": "Ship slice one.",
+                        "acceptance_criteria": ["One"],
+                        "file_impact": ["a.ts"],
+                        "test_plan": ["test one"],
+                        "dependencies": [],
+                    },
+                    {
+                        "id": "S002",
+                        "name": "Second slice",
+                        "goal": "Ship slice two.",
+                        "acceptance_criteria": ["Two"],
+                        "file_impact": ["b.ts"],
+                        "test_plan": ["test two"],
+                        "dependencies": ["S001"],
+                    },
+                ],
+            ).model_dump(mode="json"),
+        )
+        return [stage_dir / "slices.json"]
+
+    def fake_loop(context, state):  # type: ignore[no-untyped-def]
+        events.append(("loop", state.active_slice))
+        return [Path(state.run_dir) / "slices" / str(state.active_slice) / "builder-summary.md"]
+
+    def fake_verify(context, state):  # type: ignore[no-untyped-def]
+        events.append(("verify", state.active_slice))
+        return [Path(state.run_dir) / "verify" / f"{state.active_slice}.md"]
+
+    def fake_commit(context, state):  # type: ignore[no-untyped-def]
+        events.append(("commit", state.active_slice))
+        commit_path = context.state_store.stage_dir(state, "commit") / f"{state.active_slice}.txt"
+        commit_path.write_text(f"commit-sha-{state.active_slice}\n", encoding="utf-8")
+        return [commit_path]
+
+    def fake_pr(context, state, dry_run=False):  # type: ignore[no-untyped-def]
+        events.append(("pr", state.active_slice))
+        commit_path = context.state_store.stage_dir(state, "commit") / f"{state.active_slice}.txt"
+        if state.active_slice == "S001":
+            commit_path.write_text("final-pr-sha-S001\n", encoding="utf-8")
+        url_path = context.state_store.stage_dir(state, "pr") / f"{state.active_slice}-url.txt"
+        url_path.write_text(f"https://example.invalid/pr/{state.active_slice}\n", encoding="utf-8")
+        return [url_path]
+
+    orchestrator.stage_handlers.update(
+        {
+            "intake": fake_stage,
+            "recon": fake_stage,
+            "plan": fake_stage,
+            "architecture": fake_stage,
+            "prd": fake_stage,
+            "slice": fake_slice,
+            "loop": fake_loop,
+            "verify": fake_verify,
+            "commit": fake_commit,
+            "pr": fake_pr,
+        }
+    )
+
+    state = orchestrator.run_all(tmp_spec, workspace_root=workspace_root, dry_run_pr=False)
+
+    assert events == [
+        ("loop", "S001"),
+        ("verify", "S001"),
+        ("commit", "S001"),
+        ("pr", "S001"),
+        ("loop", "S002"),
+        ("verify", "S002"),
+        ("commit", "S002"),
+        ("pr", "S002"),
+    ]
+    assert merged_dependencies == [("S002", "final-pr-sha-S001")]
+    assert state.metadata["dependency_policy"] == "wait_for_pr_opened"
+    assert state.metadata["dry_run_pr"] is False
+    assert state.slice_states["S001"].commit_sha == "final-pr-sha-S001"
+    assert state.slice_states["S001"].pr_url == "https://example.invalid/pr/S001"
+    assert state.slice_states["S002"].status == "pr_opened"
+
+
+@pytest.mark.parametrize(
+    "dependency_policy", ["assume_committed", "wait_for_pr_opened"]
+)
+def test_run_all_repairs_dependency_merge_conflicts(
+    app_config,
+    tmp_spec: Path,
+    tmp_path: Path,
+    monkeypatch,
+    dependency_policy: str,
+) -> None:
+    app_config.workspace.dependency_policy = dependency_policy
     workspace_root = tmp_path / "target-repo"
     workspace_root.mkdir()
     orchestrator = WorkflowOrchestrator(app_config)
@@ -415,10 +577,17 @@ def test_run_all_repairs_dependency_merge_conflicts(app_config, tmp_spec: Path, 
     assert "src/app.py" in str(builder.calls[0]["prompt"])
 
 
+@pytest.mark.parametrize(
+    "dependency_policy", ["assume_committed", "wait_for_pr_opened"]
+)
 def test_run_all_fails_when_dependency_merge_repair_does_not_resolve_conflict(
-    app_config, tmp_spec: Path, tmp_path: Path, monkeypatch
+    app_config,
+    tmp_spec: Path,
+    tmp_path: Path,
+    monkeypatch,
+    dependency_policy: str,
 ) -> None:
-    app_config.workspace.dependency_policy = "assume_committed"
+    app_config.workspace.dependency_policy = dependency_policy
     app_config.workspace.loop_max_attempts = 1
     workspace_root = tmp_path / "target-repo"
     workspace_root.mkdir()

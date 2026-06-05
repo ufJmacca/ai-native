@@ -199,6 +199,15 @@ class WorkflowOrchestrator:
         self._sync_state(state, latest)
         return latest
 
+    def _record_run_execution_options(self, state: RunState, *, dry_run_pr: bool) -> None:
+        dependency_policy = self.config.workspace.dependency_policy
+
+        def mutate(locked: RunState) -> None:
+            locked.metadata["dependency_policy"] = dependency_policy
+            locked.metadata["dry_run_pr"] = dry_run_pr
+
+        self._mutate_state(state, mutate)
+
     def _run_stage(
         self,
         context: ExecutionContext,
@@ -316,6 +325,7 @@ class WorkflowOrchestrator:
         slice_id: str | None = None,
     ) -> RunState:
         state = self.prepare_state(spec_path, workspace_root=workspace_root, run_dir=run_dir)
+        self._record_run_execution_options(state, dry_run_pr=dry_run_pr)
         with _HeartbeatEmitter(self, state):
             self._emit(f"[ainative] run-dir: {state.run_dir}")
             self._emit(f"[ainative] workspace-dir: {state.workspace_root}")
@@ -402,15 +412,26 @@ class WorkflowOrchestrator:
     def _dependency_block_reason(self, state: RunState, slice_def: SliceDefinition) -> str | None:
         if not state.base_ref:
             return f"Waiting for base reference {self.config.workspace.base_branch} to be resolved."
-        wait_for_base_merge = self.config.workspace.dependency_policy == "wait_for_base_merge"
+        dependency_policy = self.config.workspace.dependency_policy
+        dry_run_pr = bool(state.metadata.get("dry_run_pr"))
         repo_root = Path(state.workspace_root)
         for dependency_id in slice_def.dependencies:
             dependency_state = state.slice_states.get(dependency_id)
+            if dependency_policy == "assume_committed":
+                if dependency_state is None or not dependency_state.commit_sha:
+                    return f"Waiting for dependency {dependency_id} to reach commit stage"
+                continue
+            if dependency_policy == "wait_for_pr_opened":
+                if dependency_state is None or not dependency_state.commit_sha:
+                    return f"Waiting for dependency {dependency_id} to complete PR stage"
+                if dependency_state.status != "pr_opened":
+                    return f"Waiting for dependency {dependency_id} to complete PR stage"
+                if not dry_run_pr and not dependency_state.pr_url:
+                    return f"Waiting for dependency {dependency_id} to create GitHub PR"
+                continue
             if dependency_state is None or not dependency_state.commit_sha:
-                if wait_for_base_merge:
-                    return f"Waiting for dependency {dependency_id} to merge into {self.config.workspace.base_branch}"
-                return f"Waiting for dependency {dependency_id} to reach commit stage"
-            if wait_for_base_merge and not is_ancestor(repo_root, dependency_state.commit_sha, state.base_ref):
+                return f"Waiting for dependency {dependency_id} to merge into {self.config.workspace.base_branch}"
+            if not is_ancestor(repo_root, dependency_state.commit_sha, state.base_ref):
                 return f"Waiting for dependency {dependency_id} to merge into {self.config.workspace.base_branch}"
         return None
 
@@ -612,7 +633,10 @@ class WorkflowOrchestrator:
         spec_path: Path | None,
     ) -> list[Path]:
         artifacts: list[Path] = []
-        if self.config.workspace.dependency_policy != "assume_committed":
+        if self.config.workspace.dependency_policy not in {
+            "assume_committed",
+            "wait_for_pr_opened",
+        }:
             return artifacts
         for dependency_id in slice_def.dependencies:
             dependency_state = state.slice_states.get(dependency_id)
@@ -904,6 +928,7 @@ class WorkflowOrchestrator:
         workspace_root: Path | None = None,
     ) -> RunState:
         state = self.prepare_state(spec_path, workspace_root=workspace_root, run_dir=run_dir)
+        self._record_run_execution_options(state, dry_run_pr=dry_run_pr)
         with _HeartbeatEmitter(self, state):
             self._emit(f"[ainative] run-dir: {state.run_dir}")
             self._emit(f"[ainative] workspace-dir: {state.workspace_root}")

@@ -175,6 +175,31 @@ def test_cli_init_writes_explicit_minimal_config_and_round_trips(monkeypatch, ca
     assert loaded.agents["builder"].type == "copilot-cli"
 
 
+def test_cli_init_accepts_wait_for_pr_opened_dependency_policy(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    monkeypatch.setattr("ai_native.cli.sys.stdin", type("FakeStdin", (), {"isatty": lambda self: False})())
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ainative",
+            "init",
+            "--config",
+            str(config_path),
+            "--minimal",
+            "--dependency-policy",
+            "wait_for_pr_opened",
+        ],
+    )
+
+    assert main() == 0
+
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert payload["workspace"]["dependency_policy"] == "wait_for_pr_opened"
+    loaded = AppConfig.load(config_path)
+    assert loaded.workspace.dependency_policy == "wait_for_pr_opened"
+
+
 def test_cli_init_writes_to_repo_top_level_from_nested_directory(monkeypatch, tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     nested = repo_root / "apps" / "web"

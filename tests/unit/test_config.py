@@ -34,6 +34,18 @@ def test_load_config_prefers_codex_defaults_when_no_provider_is_ready(monkeypatc
     assert config.agents["pr_reviewer"].type == "codex-review"
 
 
+def test_load_config_accepts_wait_for_pr_opened_dependency_policy(tmp_path: Path) -> None:
+    config_path = tmp_path / "ainative.yaml"
+    config_path.write_text(
+        "workspace:\n  dependency_policy: wait_for_pr_opened\n",
+        encoding="utf-8",
+    )
+
+    config = AppConfig.load(config_path)
+
+    assert config.workspace.dependency_policy == "wait_for_pr_opened"
+
+
 def test_load_config_uses_copilot_defaults_when_only_copilot_is_ready_with_auth_signal(
     monkeypatch, tmp_path: Path
 ) -> None:
