@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/ufJmacca/ai-native/compare/ai-native-base-v1.3.0...ai-native-base-v1.4.0) (2026-06-05)
+
+
+### Features
+
+* add wait-for-pr-opened dependency policy ([#32](https://github.com/ufJmacca/ai-native/issues/32)) ([a849178](https://github.com/ufJmacca/ai-native/commit/a84917863830afbe51b36f5d84d9beb73e53b3a4))
+
 ## [1.3.0](https://github.com/ufJmacca/ai-native/compare/ai-native-base-v1.2.0...ai-native-base-v1.3.0) (2026-05-31)
 
 
