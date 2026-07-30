@@ -1,0 +1,52 @@
+{
+  "manifest_version": 1,
+  "plan": "docs/factory/AI_NATIVE_FACTORY_RUNNER_IMPLEMENTATION_PLAN.md",
+  "protocol": "factory-runner-protocol/v1",
+  "repository": "ufJmacca/ai-native",
+  "phases": [
+    {
+      "id": "AN-00",
+      "title": "Baseline characterisation and boundary lock",
+      "depends_on": [],
+      "branch": "factory-runner/an-00-boundary",
+      "completion_gate": "Human-reviewed and merged PR with boundary ADR"
+    },
+    {
+      "id": "AN-01",
+      "title": "Factory runner protocol v1 contracts",
+      "depends_on": [
+        "AN-00"
+      ],
+      "branch": "factory-runner/an-01-contracts",
+      "completion_gate": "Human-reviewed and merged PR with stable v1 schemas"
+    },
+    {
+      "id": "AN-02",
+      "title": "Non-interactive factory runner",
+      "depends_on": [
+        "AN-01"
+      ],
+      "branch": "factory-runner/an-02-runner",
+      "completion_gate": "Human-reviewed and merged PR with unattended author and verify operations"
+    },
+    {
+      "id": "AN-03",
+      "title": "Event, checkpoint, evidence and change-set outputs",
+      "depends_on": [
+        "AN-02"
+      ],
+      "branch": "factory-runner/an-03-outputs",
+      "completion_gate": "Human-reviewed and merged PR with validated content-addressed outputs"
+    },
+    {
+      "id": "AN-04",
+      "title": "Release packaging and compatibility certification",
+      "depends_on": [
+        "AN-03"
+      ],
+      "branch": "factory-runner/an-04-release",
+      "completion_gate": "Human-reviewed merge and immutable receipt-backed release"
+    }
+  ]
+}
+
