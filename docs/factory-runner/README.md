@@ -11,7 +11,7 @@ documents, release artifacts, or any private factory service. Those changes
 belong to later phases and may begin only after their prerequisite PR is
 human-merged.
 
-The complete deterministic repository test command is:
+The complete deterministic root-package test command used by CI is:
 
 ```bash
 make test
@@ -24,8 +24,10 @@ When invoked from the host, the Makefile runs the suite in the Docker Compose
 docker compose run --rm --user root workspace uv run pytest
 ```
 
-The new factory tests include an installed console-script smoke check, so the
-same command verifies both package import and `ainative factory --help`.
+The new factory tests build the wheel, install it into a clean environment
+outside the source checkout, and run `ainative factory --help`. The optional
+run-registry service and UI remain separately versioned components and are not
+changed by AN-00.
 
 Boundary records:
 
@@ -33,4 +35,3 @@ Boundary records:
 - [Existing-module inventory](module-inventory.md)
 - [Runner security boundary and initial threat analysis](security-boundary.md)
 - [AN-00 test evidence](evidence/AN-00.md)
-

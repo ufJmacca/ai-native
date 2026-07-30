@@ -72,4 +72,3 @@ network isolation.
   truth.
 - Moving the queue, publisher, or sandbox services into this public repository
   would breach the authority boundary.
-

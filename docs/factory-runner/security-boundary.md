@@ -63,9 +63,9 @@ widen this ceiling. AN-00 exposes no executable factory runner.
 
 ## Verification responsibilities
 
-AI Native provides deterministic validation, permission checks, local output
-safety, redaction, and protocol evidence. The private factory independently
-provides:
+The completed AI Native runner is responsible for deterministic validation,
+permission checks, local output safety, redaction, and protocol evidence. The
+private factory independently provides:
 
 - ephemeral sandbox creation and destruction;
 - authoring/verification isolation;
@@ -76,4 +76,3 @@ provides:
 
 Both layers must fail closed. Runner checks are defence in depth, not a
 substitute for the sandbox.
-
