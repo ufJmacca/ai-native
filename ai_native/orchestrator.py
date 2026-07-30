@@ -37,13 +37,13 @@ from ai_native.slice_runtime import (
 )
 from ai_native.state import StateStore
 from ai_native.stages import ORDERED_STAGES, commit_run, create_prs, run_architecture, run_intake, run_loop, run_plan, run_prd, run_recon, run_slice, run_verify
+from ai_native.stages.common import ExecutionContext, StageError
+from ai_native.utils import read_text, sha256_file, utc_now, write_json, write_text
 from ai_native.workflow_stages import (
     PRE_SLICE_STAGES,
     SLICE_PIPELINE_STAGES,
     SLICE_SPECIFIC_STAGES,
 )
-from ai_native.stages.common import ExecutionContext, StageError
-from ai_native.utils import read_text, sha256_file, utc_now, write_json, write_text
 
 TERMINAL_SLICE_STATUSES = {"committed", "pr_opened"}
 SLICE_STAGE_TERMINAL_STATUSES = {

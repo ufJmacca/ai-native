@@ -7,6 +7,7 @@ from ai_native.utils import read_json
 from ai_native.workflow_stages import PRE_SLICE_STAGES, SLICE_PIPELINE_STAGES
 
 PROJECTION_SCHEMA_VERSION = 1
+SLICE_PIPELINE = SLICE_PIPELINE_STAGES
 
 
 def _pre_slice_stages() -> tuple[str, ...]:

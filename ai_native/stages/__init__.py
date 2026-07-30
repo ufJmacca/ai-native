@@ -10,3 +10,17 @@ from ai_native.stages.verify import run as run_verify
 from ai_native.workflow_stages import LEGACY_ORDERED_STAGES
 
 ORDERED_STAGES = list(LEGACY_ORDERED_STAGES)
+
+__all__ = [
+    "ORDERED_STAGES",
+    "commit_run",
+    "create_prs",
+    "run_architecture",
+    "run_intake",
+    "run_loop",
+    "run_plan",
+    "run_prd",
+    "run_recon",
+    "run_slice",
+    "run_verify",
+]

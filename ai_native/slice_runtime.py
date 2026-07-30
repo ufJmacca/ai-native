@@ -4,7 +4,9 @@ from pathlib import Path, PurePosixPath
 
 from ai_native.models import ReviewReport, RunState, SliceDefinition, SliceExecutionState, SlicePlan, VerificationReport
 from ai_native.utils import read_json, read_text
-from ai_native.workflow_stages import SLICE_SPECIFIC_STAGES
+from ai_native.workflow_stages import SLICE_SPECIFIC_STAGES as _SLICE_SPECIFIC_STAGES
+
+SLICE_SPECIFIC_STAGES = set(_SLICE_SPECIFIC_STAGES)
 
 
 def load_slice_plan(run_dir: Path) -> SlicePlan:

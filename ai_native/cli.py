@@ -37,6 +37,7 @@ _DEPENDENCY_POLICIES = (
     "wait_for_pr_opened",
     "assume_committed",
 )
+_FACTORY_RESERVATION_HELP_FLAGS = frozenset({"-h", "--help"})
 
 
 def _config_path() -> Path:
@@ -911,8 +912,27 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _enforce_factory_reservation(
+    parser: argparse.ArgumentParser,
+    arguments: list[str],
+) -> None:
+    if not arguments or arguments[0] != "factory":
+        return
+    unsupported = [
+        argument
+        for argument in arguments[1:]
+        if argument not in _FACTORY_RESERVATION_HELP_FLAGS
+    ]
+    if unsupported:
+        parser.error(
+            "ainative factory is reserved in AN-00; unrecognized arguments: "
+            + " ".join(unsupported)
+        )
+
+
 def main() -> int:
     parser = build_parser()
+    _enforce_factory_reservation(parser, sys.argv[1:])
     args = parser.parse_args()
     return args.func(args)
 

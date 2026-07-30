@@ -29,4 +29,3 @@ PUBLICATION_STAGES = frozenset({"commit", "pr"})
 FACTORY_ELIGIBLE_STAGES = frozenset(
     stage for stage in LEGACY_ORDERED_STAGES if stage not in PUBLICATION_STAGES
 )
-

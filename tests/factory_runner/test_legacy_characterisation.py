@@ -5,9 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from ai_native.cli import _discover_config_path, build_parser, main
+from ai_native.cli import _ask_questions, _discover_config_path, build_parser, main
 from ai_native.config import AppConfig
 from ai_native.orchestrator import WorkflowOrchestrator
+from ai_native.run_projection import SLICE_PIPELINE
+from ai_native.slice_runtime import SLICE_SPECIFIC_STAGES
 from ai_native.stages import ORDERED_STAGES
 from ai_native.stages.capabilities import (
     CLI_STAGE_CHOICES,
@@ -84,6 +86,40 @@ def test_configuration_discovery_and_default_run_paths_are_unchanged(
     assert config.git.pr_draft is True
 
 
+def test_legacy_interactive_question_flow_is_unchanged(
+    monkeypatch,
+    capsys,
+) -> None:
+    responses = iter(["first answer", "second answer"])
+    monkeypatch.setattr(
+        "ai_native.cli.sys.stdin",
+        type("InteractiveStdin", (), {"isatty": lambda self: True})(),
+    )
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(responses))
+
+    assert _ask_questions("plan", ["First?", "Second?"]) == [
+        "first answer",
+        "second answer",
+    ]
+    output = capsys.readouterr().out
+    assert "[ainative] plan: clarification needed" in output
+    assert "question 1/2" in output
+    assert "question 2/2" in output
+
+
+def test_legacy_question_flow_fails_clearly_without_a_tty(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "ai_native.cli.sys.stdin",
+        type("ClosedStdin", (), {"isatty": lambda self: False})(),
+    )
+
+    with pytest.raises(
+        SystemExit,
+        match="plan requires user input, but stdin is not interactive",
+    ):
+        _ask_questions("plan", ["First?"])
+
+
 def test_legacy_workflow_stage_order_and_publication_handlers_are_unchanged(app_config) -> None:
     assert ORDERED_STAGES == [
         "intake",
@@ -100,6 +136,9 @@ def test_legacy_workflow_stage_order_and_publication_handlers_are_unchanged(app_
     assert ORDERED_STAGES == list(LEGACY_ORDERED_STAGES)
     assert PRE_SLICE_STAGES + SLICE_PIPELINE_STAGES == LEGACY_ORDERED_STAGES
     assert CLI_STAGE_CHOICES == LEGACY_ORDERED_STAGES[2:]
+    assert SLICE_PIPELINE == SLICE_PIPELINE_STAGES
+    assert isinstance(SLICE_SPECIFIC_STAGES, set)
+    assert SLICE_SPECIFIC_STAGES == set(SLICE_PIPELINE_STAGES)
 
     orchestrator = WorkflowOrchestrator(app_config)
     assert list(orchestrator.stage_handlers) == ORDERED_STAGES

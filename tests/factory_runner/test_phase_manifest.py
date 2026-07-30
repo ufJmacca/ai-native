@@ -27,4 +27,3 @@ def test_phase_manifest_preserves_serial_an_dependency_order() -> None:
         ["AN-03"],
     ]
     assert manifest["protocol"] == "factory-runner-protocol/v1"
-
