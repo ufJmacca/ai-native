@@ -2,8 +2,8 @@
 
 ## Scope
 
-This is the initial AN-00 threat analysis for the public runner only. It does
-not claim that Python policy can contain hostile repository code. The private
+This is the public-runner threat analysis updated through AN-02. It does not
+claim that Python policy can contain hostile repository code. The private
 factory must enforce the outer sandbox, filesystem mounts, network policy,
 credentials, resource limits, and attempt lifecycle.
 
@@ -11,9 +11,10 @@ credentials, resource limits, and attempt lifecycle.
 
 Untrusted inputs include repository contents, work-item text, context objects,
 agent output, command output, and any resume artifact. Trusted inputs are
-limited to a future schema-valid `RunSpec`, verified content digests, the
-released runner build, and attempt-scoped capabilities supplied by the
-factory.
+limited to schema-valid protocol documents whose identities and content
+digests have been verified, the released runner build, and attempt-scoped
+capabilities supplied by the factory. AN-02 rejects resume input until AN-03
+implements durable checkpoint semantics.
 
 Assets to protect are:
 
@@ -29,7 +30,7 @@ The runner may modify only the prepared target workspace and write protocol
 outputs only below the explicit output root. It never owns durable upload or
 publication.
 
-## Executable AN-00 invariants
+## Executable runner invariants
 
 `FactoryModeCapabilities` permits author and verify while denying:
 
@@ -39,33 +40,71 @@ publication.
 - push;
 - merge.
 
-Factory-eligible stages exclude the legacy `commit` and `pr` stages. Later
-phases must narrow the stage set further from a validated input; they may not
-widen this ceiling. AN-00 exposes no executable factory runner.
+Factory-eligible stages exclude the legacy `commit` and `pr` stages. AN-02
+narrows that ceiling from the validated `RunSpec`, directly dispatches only
+the admitted authoring handlers, and gives clean verify mode no agent adapter.
+
+AN-02 also:
+
+- rejects broad ambient credentials and reserves the gateway token for the
+  gateway child only;
+- requires a repository with no configured remotes, external Git directory,
+  linked worktree, or writable-path symlink topology;
+- forces sterile home, temporary, XDG, Git helper, hook, prompt, protocol, and
+  executable-path settings;
+- permits only exact declared commands and a narrow read-only Git subcommand
+  set, with trusted executable resolution outside mutable roots;
+- supervises gateway children, deterministic commands, and post-admission
+  runner-owned Git through one bounded process runner with closed standard
+  input and a shared deadline;
+- binds Git configuration, hooks, refs, index, and worktree metadata at every
+  author and verification boundary;
+- terminates process groups and, on Linux, adopts and reaps detached
+  descendants before returning success;
+- requires a fresh output root and uses descriptor-relative, no-follow atomic
+  writes that never overwrite an existing artifact;
+- protects runner-owned output state while gateway and deterministic-command
+  children are active, repairing attempted output mutation where possible
+  before failing closed; and
+- validates referenced ChangeSet artifacts, prepared file content/modes,
+  allowed paths, and canonical patch bytes before clean verification.
+
+The exact gateway environment, file, credential, budget, deadline, and
+logging rules are recorded in the
+[AN-02 attempt-scoped model-gateway contract](gateway-contract.md).
+
+The executable and environment checks above apply to commands directly
+admitted and launched by the runner. An admitted Python, test, or gateway
+process can attempt to spawn a nested executable through an absolute path.
+Python-level policy cannot reliably interpose on every descendant or contain
+hostile repository code. No-publication assurance therefore combines the
+runner's lack of remotes and publication credentials with the private
+factory's outer filesystem, process, and network sandbox.
 
 ## Initial threats and required controls
 
 | Threat | Existing exposure | Required runner control |
 |---|---|---|
 | Host credential discovery | Interactive configuration checks home and provider paths | Factory startup must bypass discovery and reject broad credential variables |
-| Publication from an attempt | Legacy Git and PR stages can commit, push, and call GitHub | Factory dispatch must make those modules unreachable and disable remotes, hooks, helpers, and prompts |
+| Publication from an attempt | Legacy Git and PR stages can commit, push, and call GitHub; an admitted child can spawn nested tools | Factory dispatch makes publication modules unreachable and disables remotes, hooks, helpers, prompts, and credentials; the outer sandbox denies descendant egress |
 | Interactive blocking or guessed answers | CLI callbacks use `input()` and `getpass()` | All decisions come from validated input; missing information returns `blocked` |
 | Repository prompt injection | Repository text is passed to agents | Treat content as data; immutable policy and capabilities cannot be broadened by instructions |
 | Environment leakage | External commands inherit `os.environ` | Build child environments from an explicit allowlist |
 | Excess agent authority | Interactive adapters may use broad tool permissions | Factory adapter uses an attempt-scoped gateway and factory-specific permission profile |
 | Undeclared egress | Registry, telemetry, agents, or repository commands may contact remote services | Disable runner-managed remote endpoints; outer sandbox enforces an allowlisted network profile |
 | Path traversal or symlink escape | Target and artifact paths are repository-controlled | Resolve roots, reject traversal/special files/symlink escapes, and atomically write bounded output |
-| Secret persistence | Logs, patches, events, checkpoints, and agent output may contain secrets | Redact and scan before every durable write; fail finalisation on contamination |
-| Tampered context or resume data | Local files may be replaced or crossed between attempts | Verify every digest and identity before use; restore transactionally and fail closed |
+| Secret persistence | Logs, patches, events, checkpoints, and agent output may contain secrets | AN-02 does not persist gateway child output; AN-03 must redact and scan before every durable write and fail finalisation on contamination |
+| Tampered context or resume data | Local files may be replaced or crossed between attempts | Verify every admitted digest and identity; reject resume in AN-02 and add transactional restore in AN-03 |
 | Evidence spoofing | Unrelated failures can look like red TDD evidence | Classify expected behavioral failure and distinguish authoring from clean verification |
 | Resource exhaustion | Agents, commands, logs, and patches may be unbounded | Enforce wall-time, turn, token, command, and output budgets |
 | Docker-socket or host mount access | Interactive devcontainer may mount both | Factory image and sandbox must not receive them |
 
 ## Verification responsibilities
 
-The completed AI Native runner is responsible for deterministic validation,
-permission checks, local output safety, redaction, and protocol evidence. The
-private factory independently provides:
+Through AN-02, the AI Native runner is responsible for deterministic
+validation, permission checks, local output safety, and minimal terminal
+protocol evidence. AN-03 adds redaction, secret scanning, and complete
+evidence/output semantics. The private factory independently provides:
 
 - ephemeral sandbox creation and destruction;
 - authoring/verification isolation;
