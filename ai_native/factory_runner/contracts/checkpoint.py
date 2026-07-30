@@ -10,10 +10,15 @@ from ai_native.factory_runner.contracts.common import (
     ArtifactReference,
     DocumentEnvelope,
     FactoryStage,
+    MAX_SAFE_INTEGER,
     NonEmptyString,
     OpaqueId,
+    PositiveSequence,
+    SemanticVersion,
     Sha256Digest,
     StrictContractModel,
+    bounded_json_object_schema,
+    freeze_mapping,
     require_unique,
 )
 from ai_native.factory_runner.contracts.run_spec import (
@@ -24,8 +29,10 @@ from ai_native.factory_runner.contracts.run_spec import (
 
 class CheckpointCompatibility(StrictContractModel):
     protocol: Literal["factory-runner-protocol/v1"]
-    required_capabilities: tuple[CapabilityName, ...]
-    minimum_runner_version: NonEmptyString
+    required_capabilities: tuple[CapabilityName, ...] = Field(
+        json_schema_extra={"uniqueItems": True}
+    )
+    minimum_runner_version: SemanticVersion
 
     @field_validator("required_capabilities")
     @classmethod
@@ -37,9 +44,9 @@ class CheckpointCompatibility(StrictContractModel):
 
 
 class ResourceBudget(StrictContractModel):
-    wall_seconds: StrictInt = Field(ge=0)
-    agent_turns: StrictInt = Field(ge=0)
-    model_tokens: StrictInt = Field(ge=0)
+    wall_seconds: StrictInt = Field(ge=0, le=MAX_SAFE_INTEGER)
+    agent_turns: StrictInt = Field(ge=0, le=MAX_SAFE_INTEGER)
+    model_tokens: StrictInt = Field(ge=0, le=MAX_SAFE_INTEGER)
 
 
 class CheckpointBudgets(StrictContractModel):
@@ -50,11 +57,17 @@ class CheckpointBudgets(StrictContractModel):
 def _validate_json_value(value: Any, *, depth: int = 0) -> None:
     if depth > 16:
         raise ValueError("workflow_state exceeds the nesting limit")
-    if value is None or isinstance(value, (str, bool, int)):
+    if value is None or isinstance(value, (str, bool)):
+        return
+    if isinstance(value, int):
+        if not -MAX_SAFE_INTEGER <= value <= MAX_SAFE_INTEGER:
+            raise ValueError("workflow_state integer exceeds the RFC 8785 domain")
         return
     if isinstance(value, float):
         if not math.isfinite(value):
             raise ValueError("workflow_state numbers must be finite")
+        if not -MAX_SAFE_INTEGER <= value <= MAX_SAFE_INTEGER:
+            raise ValueError("workflow_state number exceeds the RFC 8785 domain")
         return
     if isinstance(value, list):
         for item in value:
@@ -72,13 +85,15 @@ def _validate_json_value(value: Any, *, depth: int = 0) -> None:
 class Checkpoint(DocumentEnvelope):
     schema_: Literal["checkpoint/v1"] = Field(alias="schema")
     checkpoint_id: OpaqueId
-    sequence: StrictInt = Field(gt=0)
+    sequence: PositiveSequence
     producer_attempt_id: OpaqueId
     compatibility: CheckpointCompatibility
     context_bundle_digest: Sha256Digest
     run_spec_digest: Sha256Digest
     workspace_patch_digest: Sha256Digest | None
-    completed_stages: tuple[FactoryStage, ...]
+    completed_stages: tuple[FactoryStage, ...] = Field(
+        json_schema_extra={"uniqueItems": True}
+    )
     next_permitted_stage: FactoryStage | None
     workflow_state: dict[str, Any]
     evidence_refs: tuple[ArtifactReference, ...]
@@ -88,8 +103,20 @@ class Checkpoint(DocumentEnvelope):
     decisions: tuple[NonEmptyString, ...]
     assumptions: tuple[NonEmptyString, ...]
     open_questions: tuple[NonEmptyString, ...]
-    object_digests: tuple[Sha256Digest, ...]
+    object_digests: tuple[Sha256Digest, ...] = Field(
+        json_schema_extra={"uniqueItems": True}
+    )
     checkpoint_digest: Sha256Digest
+
+    @classmethod
+    def model_json_schema(cls, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        schema = super().model_json_schema(*args, **kwargs)
+        return bounded_json_object_schema(
+            schema,
+            field_name="workflow_state",
+            definition_prefix="WorkflowJsonDepth",
+            max_depth=16,
+        )
 
     @field_validator("workflow_state")
     @classmethod
@@ -107,7 +134,7 @@ class Checkpoint(DocumentEnvelope):
         ).encode("utf-8")
         if len(encoded) > 262_144:
             raise ValueError("workflow_state exceeds the inline byte limit")
-        return value
+        return freeze_mapping(value)
 
     @model_validator(mode="after")
     def checkpoint_is_internally_consistent(self) -> Checkpoint:

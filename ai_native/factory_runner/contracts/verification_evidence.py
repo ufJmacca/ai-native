@@ -8,7 +8,6 @@ from pydantic import (
     ConfigDict,
     Field,
     StrictBool,
-    StrictInt,
     field_validator,
     model_validator,
 )
@@ -21,10 +20,12 @@ from ai_native.factory_runner.contracts.common import (
     NonNegativeSeconds,
     RepositoryPath,
     RunnerBuildIdentity,
+    SafeInteger,
     Sha256Digest,
     StrictContractModel,
     UtcTimestamp,
     ensure_started_before_finished,
+    freeze_mapping,
 )
 
 
@@ -85,28 +86,28 @@ class EvidenceItem(StrictContractModel):
     )
 
     phase: EvidencePhase
-    command: list[NonEmptyString] = Field(min_length=1)
+    command: tuple[NonEmptyString, ...] = Field(min_length=1)
     working_directory: RepositoryPath | Literal["."]
-    environment_keys: list[EnvironmentKey] = Field(
+    environment_keys: tuple[EnvironmentKey, ...] = Field(
         json_schema_extra={"uniqueItems": True}
     )
     started_at: UtcTimestamp
     finished_at: UtcTimestamp
     duration_seconds: NonNegativeSeconds
-    exit_code: StrictInt | None
+    exit_code: SafeInteger | None
     termination_reason: TerminationReason
     expected_status: EvidenceStatus
     actual_status: EvidenceStatus
     failure_classification: FailureClassification
     stdout: ArtifactReference
     stderr: ArtifactReference
-    test_reports: list[ArtifactReference]
+    test_reports: tuple[ArtifactReference, ...]
     tool_versions: dict[NonEmptyString, NonEmptyString]
     repository_files_changed: StrictBool
 
     @field_validator("command")
     @classmethod
-    def command_is_an_argument_array(cls, value: list[str]) -> list[str]:
+    def command_is_an_argument_array(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         if any(not argument or "\x00" in argument for argument in value):
             raise ValueError("command arguments must be non-empty and contain no NUL")
         return value
@@ -115,11 +116,19 @@ class EvidenceItem(StrictContractModel):
     @classmethod
     def environment_keys_are_unique(
         cls,
-        value: list[EnvironmentKey],
-    ) -> list[EnvironmentKey]:
+        value: tuple[EnvironmentKey, ...],
+    ) -> tuple[EnvironmentKey, ...]:
         if len(value) != len(set(value)):
             raise ValueError("environment keys must be unique")
         return value
+
+    @field_validator("tool_versions")
+    @classmethod
+    def tool_versions_are_immutable(
+        cls,
+        value: dict[str, str],
+    ) -> dict[str, str]:
+        return freeze_mapping(value)
 
     @field_validator("duration_seconds")
     @classmethod
@@ -151,6 +160,13 @@ class VerificationEvidence(DocumentEnvelope):
             "allOf": [
                 {
                     "if": {
+                        "properties": {"environment_kind": {"const": "authoring"}},
+                        "required": ["environment_kind"],
+                    },
+                    "then": {"properties": {"change_set_digest": {"type": "null"}}},
+                },
+                {
+                    "if": {
                         "properties": {
                             "environment_kind": {"const": "clean_verification"}
                         },
@@ -159,7 +175,7 @@ class VerificationEvidence(DocumentEnvelope):
                     "then": {
                         "properties": {"change_set_digest": {"not": {"type": "null"}}}
                     },
-                }
+                },
             ]
         }
     )
@@ -169,16 +185,17 @@ class VerificationEvidence(DocumentEnvelope):
     runner: RunnerBuildIdentity
     context_digest: Sha256Digest
     change_set_digest: Sha256Digest | None
-    items: list[EvidenceItem] = Field(min_length=1)
+    items: tuple[EvidenceItem, ...] = Field(min_length=1)
     overall_status: EvidenceStatus
-    advisory_observations: list[str]
+    advisory_observations: tuple[str, ...]
     evidence_set_digest: Sha256Digest
 
     @model_validator(mode="after")
-    def clean_verification_binds_change_set(self) -> VerificationEvidence:
-        if (
-            self.environment_kind == "clean_verification"
-            and self.change_set_digest is None
+    def evidence_digest_direction_is_one_way(self) -> VerificationEvidence:
+        if self.environment_kind == "authoring" and self.change_set_digest is not None:
+            raise ValueError("authoring evidence must not bind a future change set")
+        if self.environment_kind == "clean_verification" and (
+            self.change_set_digest is None
         ):
             raise ValueError("clean verification evidence requires change_set_digest")
         return self

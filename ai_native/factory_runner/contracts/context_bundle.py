@@ -42,7 +42,9 @@ class NormalisedWorkItemRevision(StrictContractModel):
 
 class ContextConstruction(StrictContractModel):
     builder: NonEmptyString
-    source_digests: tuple[Sha256Digest, ...]
+    source_digests: tuple[Sha256Digest, ...] = Field(
+        json_schema_extra={"uniqueItems": True}
+    )
 
     @field_validator("source_digests")
     @classmethod
@@ -56,7 +58,18 @@ class ContextConstruction(StrictContractModel):
 class ContextBundle(DocumentEnvelope):
     schema_: Literal["context-bundle/v1"] = Field(alias="schema")
     context_bundle_id: OpaqueId
-    manifest_entries: tuple[ContextManifestEntry, ...] = Field(min_length=1)
+    manifest_entries: tuple[ContextManifestEntry, ...] = Field(
+        min_length=1,
+        json_schema_extra={
+            "contains": {
+                "properties": {"classification": {"const": "work_item_revision"}},
+                "required": ["classification"],
+            },
+            "minContains": 1,
+            "maxContains": 1,
+            "uniqueItems": True,
+        },
+    )
     work_item_revision: NormalisedWorkItemRevision
     repository_instructions: tuple[NonEmptyString, ...]
     trusted_policy_summary: tuple[NonEmptyString, ...]

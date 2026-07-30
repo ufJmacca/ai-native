@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import posixpath
 import re
-from typing import Annotated, Any, Literal, TypeVar
+from typing import Annotated, Any, Literal, Never, TypeVar
 
 from pydantic import (
     AfterValidator,
@@ -20,6 +20,7 @@ from pydantic import (
 
 
 PROTOCOL_V1 = "factory-runner-protocol/v1"
+MAX_SAFE_INTEGER = 9_007_199_254_740_991
 SHA256_PATTERN = r"^sha256:[0-9a-f]{64}$"
 GIT_COMMIT_PATTERN = r"^[0-9a-f]{40}$"
 UTC_TIMESTAMP_PATTERN = (
@@ -32,6 +33,10 @@ MEDIA_TYPE_PATTERN = (
     r"[a-z0-9][a-z0-9!#$&^_.+-]*$"
 )
 PROFILE_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$"
+SEMANTIC_VERSION_PATTERN = (
+    r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\."
+    r"(?:0|[1-9][0-9]*)$"
+)
 _OPAQUE_CONTROL_PATTERN = re.compile(r"[\x00-\x1f\x7f]")
 _WILDCARD_PATTERN = re.compile(r"[*?[]")
 
@@ -46,6 +51,130 @@ class StrictContractModel(BaseModel):
         validate_by_name=True,
         validate_default=True,
     )
+
+
+class FrozenDict(dict[str, Any]):
+    """A JSON-serialisable mapping that cannot change after validation."""
+
+    @staticmethod
+    def _immutable(*args: Any, **kwargs: Any) -> Never:
+        del args, kwargs
+        raise TypeError("durable contract mappings are immutable")
+
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    clear = _immutable
+    pop = _immutable
+    popitem = _immutable
+    setdefault = _immutable
+    update = _immutable
+
+    def __copy__(self) -> FrozenDict:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> FrozenDict:
+        del memo
+        return self
+
+
+def freeze_json_value(value: Any) -> Any:
+    """Recursively detach and freeze a previously validated JSON value."""
+
+    if isinstance(value, dict):
+        return FrozenDict(
+            {str(key): freeze_json_value(item) for key, item in value.items()}
+        )
+    if isinstance(value, list | tuple):
+        return tuple(freeze_json_value(item) for item in value)
+    return value
+
+
+def freeze_mapping(value: dict[str, Any]) -> FrozenDict:
+    frozen = freeze_json_value(value)
+    if not isinstance(frozen, FrozenDict):
+        raise TypeError("expected a JSON object")
+    return frozen
+
+
+def bounded_json_object_schema(
+    schema: dict[str, Any],
+    *,
+    field_name: str,
+    definition_prefix: str,
+    max_depth: int,
+    max_string_length: int | None = None,
+    prohibited_keys: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    """Add a recursive, RFC-8785-compatible object schema to a model schema."""
+
+    definitions = schema.setdefault("$defs", {})
+    property_name_rule: dict[str, Any] = {}
+    if prohibited_keys:
+        property_name_rule = {
+            "propertyNames": {"not": {"enum": sorted(prohibited_keys)}}
+        }
+
+    def scalar_branches() -> list[dict[str, Any]]:
+        string_schema: dict[str, Any] = {"type": "string"}
+        if max_string_length is not None:
+            string_schema["maxLength"] = max_string_length
+        return [
+            {"type": "null"},
+            {"type": "boolean"},
+            {
+                "type": "integer",
+                "minimum": -MAX_SAFE_INTEGER,
+                "maximum": MAX_SAFE_INTEGER,
+            },
+            {
+                "type": "number",
+                "minimum": -MAX_SAFE_INTEGER,
+                "maximum": MAX_SAFE_INTEGER,
+            },
+            string_schema,
+        ]
+
+    for depth in range(1, max_depth + 1):
+        branches = scalar_branches()
+        if depth == max_depth:
+            branches.extend(
+                (
+                    {"type": "array", "maxItems": 0},
+                    {
+                        "type": "object",
+                        "maxProperties": 0,
+                        **property_name_rule,
+                    },
+                )
+            )
+        else:
+            child_ref = f"#/$defs/{definition_prefix}{depth + 1}"
+            branches.extend(
+                (
+                    {"type": "array", "items": {"$ref": child_ref}},
+                    {
+                        "type": "object",
+                        "additionalProperties": {"$ref": child_ref},
+                        **property_name_rule,
+                    },
+                )
+            )
+        definitions[f"{definition_prefix}{depth}"] = {"anyOf": branches}
+
+    if max_depth == 0:
+        field_schema: dict[str, Any] = {
+            "type": "object",
+            "maxProperties": 0,
+            **property_name_rule,
+        }
+    else:
+        field_schema = {
+            "type": "object",
+            "additionalProperties": {"$ref": f"#/$defs/{definition_prefix}1"},
+            **property_name_rule,
+        }
+    schema["properties"][field_name] = field_schema
+    return schema
 
 
 def _validate_opaque_id(value: str) -> str:
@@ -73,6 +202,17 @@ def _validate_utc_timestamp(value: str) -> str:
 def parse_utc_timestamp(value: str) -> datetime:
     _validate_utc_timestamp(value)
     return datetime.fromisoformat(value.removesuffix("Z") + "+00:00")
+
+
+def utc_timestamp_sort_key(value: str) -> tuple[datetime, int]:
+    """Return an exact ordering key without truncating nanoseconds."""
+
+    _validate_utc_timestamp(value)
+    without_suffix = value.removesuffix("Z")
+    whole_seconds, separator, fraction = without_suffix.partition(".")
+    parsed = datetime.fromisoformat(whole_seconds + "+00:00")
+    nanoseconds = int(fraction.ljust(9, "0")) if separator else 0
+    return parsed, nanoseconds
 
 
 def _path_parts_are_safe(path: str, *, allow_git: bool) -> None:
@@ -217,10 +357,24 @@ EnvironmentKey = Annotated[
 ]
 MediaType = Annotated[StrictStr, Field(pattern=MEDIA_TYPE_PATTERN, max_length=256)]
 ProfileName = Annotated[StrictStr, Field(pattern=PROFILE_PATTERN)]
-ByteSize = Annotated[StrictInt, Field(ge=0)]
-PositiveSeconds = Annotated[StrictInt, Field(gt=0)]
-NonNegativeSeconds = Annotated[StrictFloat | StrictInt, Field(ge=0)]
-PositiveSequence = Annotated[StrictInt, Field(gt=0)]
+SemanticVersion = Annotated[
+    StrictStr,
+    Field(pattern=SEMANTIC_VERSION_PATTERN, max_length=128),
+]
+ByteSize = Annotated[StrictInt, Field(ge=0, le=MAX_SAFE_INTEGER)]
+PositiveSeconds = Annotated[StrictInt, Field(gt=0, le=MAX_SAFE_INTEGER)]
+NonNegativeSeconds = Annotated[
+    StrictFloat | StrictInt,
+    Field(ge=0, le=MAX_SAFE_INTEGER),
+]
+SafeInteger = Annotated[
+    StrictInt,
+    Field(ge=-MAX_SAFE_INTEGER, le=MAX_SAFE_INTEGER),
+]
+PositiveSequence = Annotated[
+    StrictInt,
+    Field(gt=0, le=MAX_SAFE_INTEGER),
+]
 SchemaVersion = Annotated[Literal[1], BeforeValidator(_validate_schema_version)]
 FactoryStage = Literal[
     "intake",
@@ -288,7 +442,7 @@ def require_unique(values: tuple[T, ...], field_name: str) -> tuple[T, ...]:
 
 
 def ensure_started_before_finished(started_at: str, finished_at: str) -> None:
-    if parse_utc_timestamp(finished_at) < parse_utc_timestamp(started_at):
+    if utc_timestamp_sort_key(finished_at) < utc_timestamp_sort_key(started_at):
         raise ValueError("finished_at must not precede started_at")
 
 
@@ -319,9 +473,11 @@ __all__ = [
     "DocumentEnvelope",
     "EnvironmentKey",
     "FactoryStage",
+    "FrozenDict",
     "GitCommitSha",
     "JsonObject",
     "MediaType",
+    "MAX_SAFE_INTEGER",
     "NonEmptyString",
     "NonNegativeSeconds",
     "OpaqueId",
@@ -337,14 +493,20 @@ __all__ = [
     "RunnerBuildIdentity",
     "SHA256_PATTERN",
     "SchemaVersion",
+    "SafeInteger",
+    "SemanticVersion",
     "Sha256Digest",
     "StrictBool",
     "StrictContractModel",
     "StrictInt",
     "StrictStr",
     "UtcTimestamp",
+    "bounded_json_object_schema",
     "contains_secret_reference",
     "ensure_started_before_finished",
+    "freeze_json_value",
+    "freeze_mapping",
     "parse_utc_timestamp",
     "require_unique",
+    "utc_timestamp_sort_key",
 ]

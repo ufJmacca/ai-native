@@ -6,11 +6,14 @@ from pydantic import ConfigDict, Field, model_validator
 
 from ai_native.factory_runner.contracts.common import (
     ArtifactReference,
-    DocumentEnvelope,
     FactoryStage,
     NonEmptyString,
+    RepositoryIdentity,
+    RunIdentity,
     RunnerBuildIdentity,
+    SchemaVersion,
     Sha256Digest,
+    StrictContractModel,
     UtcTimestamp,
     ensure_started_before_finished,
     require_unique,
@@ -31,10 +34,23 @@ RunOutcome = Literal[
 ]
 
 
-class RunResult(DocumentEnvelope):
+class RunResult(StrictContractModel):
     model_config = ConfigDict(
         json_schema_extra={
             "allOf": [
+                {
+                    "if": {
+                        "properties": {"outcome": {"not": {"const": "invalid_input"}}},
+                        "required": ["outcome"],
+                    },
+                    "then": {
+                        "properties": {
+                            "identity": {"not": {"type": "null"}},
+                            "repository": {"not": {"type": "null"}},
+                        },
+                        "required": ["identity", "repository"],
+                    },
+                },
                 {
                     "if": {
                         "properties": {"operation": {"const": "author"}},
@@ -90,7 +106,12 @@ class RunResult(DocumentEnvelope):
         }
     )
 
+    protocol: Literal["factory-runner-protocol/v1"]
     schema_: Literal["run-result/v1"] = Field(alias="schema")
+    schema_version: SchemaVersion
+    created_at: UtcTimestamp
+    identity: RunIdentity | None = None
+    repository: RepositoryIdentity | None = None
     operation: RunnerOperation
     outcome: RunOutcome
     reason_code: str = Field(
@@ -101,7 +122,7 @@ class RunResult(DocumentEnvelope):
     message: NonEmptyString = Field(max_length=4096)
     started_at: UtcTimestamp
     finished_at: UtcTimestamp
-    completed_stages: list[FactoryStage] = Field(
+    completed_stages: tuple[FactoryStage, ...] = Field(
         json_schema_extra={"uniqueItems": True}
     )
     latest_checkpoint: ArtifactReference | None
@@ -115,7 +136,13 @@ class RunResult(DocumentEnvelope):
     @model_validator(mode="after")
     def validate_timing_and_result_references(self) -> RunResult:
         ensure_started_before_finished(self.started_at, self.finished_at)
-        require_unique(tuple(self.completed_stages), "completed_stages")
+        require_unique(self.completed_stages, "completed_stages")
+        if self.outcome != "invalid_input" and (
+            self.identity is None or self.repository is None
+        ):
+            raise ValueError(
+                "source identity is required after input validation succeeds"
+            )
         if self.operation == "author" and self.verification_evidence is not None:
             raise ValueError("author results cannot claim clean-verification evidence")
         if self.operation == "verify" and self.change_set is not None:

@@ -2,13 +2,21 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import Field, StrictBool, StrictInt, field_validator, model_validator
+from pydantic import (
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 
 from ai_native.factory_runner.contracts.common import (
     AbsolutePosixPath,
     DocumentEnvelope,
     EnvironmentKey,
     FactoryStage,
+    MAX_SAFE_INTEGER,
     NonEmptyString,
     OpaqueId,
     PolicyPath,
@@ -22,7 +30,7 @@ from ai_native.factory_runner.contracts.common import (
 
 
 RunnerOperation = Literal["author", "verify"]
-PositiveInt = Annotated[StrictInt, Field(gt=0)]
+PositiveInt = Annotated[StrictInt, Field(gt=0, le=MAX_SAFE_INTEGER)]
 CapabilityName = Annotated[
     OpaqueId,
     Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"),
@@ -43,11 +51,23 @@ class TaskSpec(StrictContractModel):
 
 
 class RunPolicy(StrictContractModel):
-    allowed_paths: Annotated[tuple[PolicyPath, ...], Field(min_length=1)]
-    prohibited_paths: tuple[ProhibitedPath, ...]
-    allowed_stages: Annotated[tuple[FactoryStage, ...], Field(min_length=1)]
-    allowed_commands: tuple[Command, ...]
-    allowed_environment_keys: tuple[EnvironmentKey, ...]
+    allowed_paths: Annotated[
+        tuple[PolicyPath, ...],
+        Field(min_length=1, json_schema_extra={"uniqueItems": True}),
+    ]
+    prohibited_paths: tuple[ProhibitedPath, ...] = Field(
+        json_schema_extra={"uniqueItems": True}
+    )
+    allowed_stages: Annotated[
+        tuple[FactoryStage, ...],
+        Field(min_length=1, json_schema_extra={"uniqueItems": True}),
+    ]
+    allowed_commands: tuple[Command, ...] = Field(
+        json_schema_extra={"uniqueItems": True}
+    )
+    allowed_environment_keys: tuple[EnvironmentKey, ...] = Field(
+        json_schema_extra={"uniqueItems": True}
+    )
     network_profile: ProfileName
     credential_profile: Literal["no-external-credentials"]
     model_profile: ProfileName
@@ -87,8 +107,12 @@ class RunPolicy(StrictContractModel):
 
 
 class CapabilityRequirements(StrictContractModel):
-    required: tuple[CapabilityName, ...]
-    optional: tuple[CapabilityName, ...]
+    required: tuple[CapabilityName, ...] = Field(
+        json_schema_extra={"uniqueItems": True}
+    )
+    optional: tuple[CapabilityName, ...] = Field(
+        json_schema_extra={"uniqueItems": True}
+    )
 
     @model_validator(mode="after")
     def capabilities_are_unambiguous(self) -> CapabilityRequirements:
@@ -104,7 +128,31 @@ class ContextInput(StrictContractModel):
     expected_digest: Sha256Digest
 
 
+class VerificationInput(StrictContractModel):
+    change_set_path: AbsolutePosixPath
+    expected_digest: Sha256Digest
+
+
 class ResumeInput(StrictContractModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "oneOf": [
+                {
+                    "properties": {
+                        "checkpoint_path": {"type": "null"},
+                        "expected_digest": {"type": "null"},
+                    }
+                },
+                {
+                    "properties": {
+                        "checkpoint_path": {"type": "string"},
+                        "expected_digest": {"type": "string"},
+                    }
+                },
+            ]
+        }
+    )
+
     checkpoint_path: AbsolutePosixPath | None
     expected_digest: Sha256Digest | None
 
@@ -123,6 +171,46 @@ class OutputSpec(StrictContractModel):
 
 
 class RunSpec(DocumentEnvelope):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "allOf": [
+                {
+                    "if": {
+                        "properties": {"operation": {"const": "author"}},
+                        "required": ["operation"],
+                    },
+                    "then": {
+                        "properties": {
+                            "workspace": {
+                                "properties": {"initial_state": {"const": "clean_base"}}
+                            },
+                            "verification_input": {"type": "null"},
+                        }
+                    },
+                },
+                {
+                    "if": {
+                        "properties": {"operation": {"const": "verify"}},
+                        "required": ["operation"],
+                    },
+                    "then": {
+                        "properties": {
+                            "workspace": {
+                                "properties": {
+                                    "initial_state": {"const": "prepared_verification"}
+                                }
+                            },
+                            "policy": {
+                                "properties": {"allowed_stages": {"const": ["verify"]}}
+                            },
+                            "verification_input": {"not": {"type": "null"}},
+                        }
+                    },
+                },
+            ]
+        }
+    )
+
     schema_: Literal["run-spec/v1"] = Field(alias="schema")
     operation: RunnerOperation
     workspace: WorkspaceSpec
@@ -130,6 +218,7 @@ class RunSpec(DocumentEnvelope):
     policy: RunPolicy
     capabilities: CapabilityRequirements
     context: ContextInput
+    verification_input: VerificationInput | None
     resume: ResumeInput
     outputs: OutputSpec
 
@@ -144,6 +233,10 @@ class RunSpec(DocumentEnvelope):
             )
         if self.operation == "verify" and set(self.policy.allowed_stages) != {"verify"}:
             raise ValueError("verify permits only the verification stage")
+        if self.operation == "author" and self.verification_input is not None:
+            raise ValueError("author does not accept verification_input")
+        if self.operation == "verify" and self.verification_input is None:
+            raise ValueError("verify requires a digest-bound verification_input")
         return self
 
 
@@ -157,5 +250,6 @@ __all__ = [
     "RunSpec",
     "RunnerOperation",
     "TaskSpec",
+    "VerificationInput",
     "WorkspaceSpec",
 ]

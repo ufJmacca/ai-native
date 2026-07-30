@@ -160,23 +160,26 @@ class ChangeSet(DocumentEnvelope):
     context_digest: Sha256Digest
     patch: PatchArtifact
     diff_digest: Sha256Digest
-    changed_files: list[ChangedFile] = Field(min_length=1)
+    changed_files: tuple[ChangedFile, ...] = Field(
+        min_length=1,
+        json_schema_extra={"uniqueItems": True},
+    )
     evidence_set_digest: Sha256Digest
-    evidence_refs: list[ArtifactReference] = Field(min_length=1)
-    acceptance_criteria_results: list[AcceptanceCriterionResult]
+    evidence_refs: tuple[ArtifactReference, ...] = Field(min_length=1)
+    acceptance_criteria_results: tuple[AcceptanceCriterionResult, ...]
     outcome_summary: NonEmptyString
-    assumptions: list[NonEmptyString]
-    residual_risks: list[NonEmptyString]
-    policy_observations: list[NonEmptyString]
-    generated_artifacts: list[ArtifactReference]
+    assumptions: tuple[NonEmptyString, ...]
+    residual_risks: tuple[NonEmptyString, ...]
+    policy_observations: tuple[NonEmptyString, ...]
+    generated_artifacts: tuple[ArtifactReference, ...]
     change_set_digest: Sha256Digest
 
     @field_validator("changed_files")
     @classmethod
     def changed_paths_are_unique(
         cls,
-        value: list[ChangedFile],
-    ) -> list[ChangedFile]:
+        value: tuple[ChangedFile, ...],
+    ) -> tuple[ChangedFile, ...]:
         paths = [entry.path for entry in value]
         if len(paths) != len(set(paths)):
             raise ValueError("changed file paths must be unique")
