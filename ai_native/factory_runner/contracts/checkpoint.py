@@ -115,7 +115,19 @@ class Checkpoint(DocumentEnvelope):
                     },
                     "then": {
                         "properties": {
-                            "verification_change_set_digest": {"not": {"type": "null"}}
+                            "verification_change_set_digest": {"not": {"type": "null"}},
+                            "authority": {
+                                "properties": {
+                                    "allowed_stages": {"const": ["verify"]},
+                                    "allowed_commands": {"minItems": 1},
+                                }
+                            },
+                            "completed_stages": {
+                                "items": {"const": "verify"},
+                            },
+                            "next_permitted_stage": {
+                                "enum": ["verify", None],
+                            },
                         }
                     },
                 },
@@ -205,6 +217,21 @@ class Checkpoint(DocumentEnvelope):
             raise ValueError(
                 "verify checkpoints require a verification change-set digest"
             )
+        if self.operation == "verify":
+            if self.authority.allowed_stages != ("verify",):
+                raise ValueError(
+                    "verify checkpoints require verify-only stage authority"
+                )
+            if not self.authority.allowed_commands:
+                raise ValueError(
+                    "verify checkpoints require at least one deterministic command"
+                )
+            if any(stage != "verify" for stage in self.completed_stages):
+                raise ValueError(
+                    "verify checkpoints may complete only the verify stage"
+                )
+            if self.next_permitted_stage not in {None, "verify"}:
+                raise ValueError("verify checkpoints may permit only the verify stage")
         require_unique(self.completed_stages, "completed_stages")
         require_unique(self.object_digests, "object_digests")
         if not set(self.completed_stages).issubset(self.authority.allowed_stages):

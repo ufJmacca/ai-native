@@ -967,6 +967,29 @@
       },
       "then": {
         "properties": {
+          "authority": {
+            "properties": {
+              "allowed_commands": {
+                "minItems": 1
+              },
+              "allowed_stages": {
+                "const": [
+                  "verify"
+                ]
+              }
+            }
+          },
+          "completed_stages": {
+            "items": {
+              "const": "verify"
+            }
+          },
+          "next_permitted_stage": {
+            "enum": [
+              "verify",
+              null
+            ]
+          },
           "verification_change_set_digest": {
             "not": {
               "type": "null"
