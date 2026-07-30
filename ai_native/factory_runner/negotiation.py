@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 import re
@@ -21,6 +21,7 @@ _SEMANTIC_VERSION_PATTERN = re.compile(
     r"(?P<minor>0|[1-9][0-9]*)\."
     r"(?P<patch>0|[1-9][0-9]*)$"
 )
+_CAPABILITY_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,15 +66,22 @@ def _invalid_input(message: str) -> ContractValidationError:
     return ContractValidationError(ContractErrorCode.INVALID_INPUT, message)
 
 
-def _capability_sequence(value: Iterable[str], field_name: str) -> tuple[str, ...]:
-    if isinstance(value, (str, bytes, bytearray)) or isinstance(value, Mapping):
-        raise _invalid_input(f"{field_name} must be a collection of names")
+def _capability_sequence(value: Sequence[str], field_name: str) -> tuple[str, ...]:
+    if isinstance(value, (str, bytes, bytearray, Mapping)) or not isinstance(
+        value, Sequence
+    ):
+        raise _invalid_input(f"{field_name} must be an ordered sequence of names")
     try:
         capabilities = tuple(value)
     except TypeError as exc:
-        raise _invalid_input(f"{field_name} must be a collection of names") from exc
+        raise _invalid_input(
+            f"{field_name} must be an ordered sequence of names"
+        ) from exc
 
-    if any(not isinstance(item, str) or not item for item in capabilities):
+    if any(
+        not isinstance(item, str) or _CAPABILITY_NAME_PATTERN.fullmatch(item) is None
+        for item in capabilities
+    ):
         raise _invalid_input(f"{field_name} contains an invalid capability name")
     if len(set(capabilities)) != len(capabilities):
         raise _invalid_input(f"{field_name} contains duplicate capability names")
@@ -83,9 +91,9 @@ def _capability_sequence(value: Iterable[str], field_name: str) -> tuple[str, ..
 def negotiate_protocol(
     *,
     protocol: str,
-    required_capabilities: Iterable[str],
-    optional_capabilities: Iterable[str],
-    supported_capabilities: Iterable[str],
+    required_capabilities: Sequence[str],
+    optional_capabilities: Sequence[str],
+    supported_capabilities: Sequence[str],
 ) -> ProtocolNegotiationResult:
     """Negotiate the exact v1 protocol and its declared capabilities."""
 
@@ -198,10 +206,18 @@ def _command_set(commands: Iterable[Iterable[str]]) -> set[tuple[str, ...]]:
 
 
 def _semantic_version(value: str, field_name: str) -> tuple[int, int, int]:
+    if not isinstance(value, str) or len(value) > 128:
+        _checkpoint_incompatible(f"{field_name} is not a semantic version")
     match = _SEMANTIC_VERSION_PATTERN.fullmatch(value)
     if match is None:
         _checkpoint_incompatible(f"{field_name} is not a semantic version")
-    return tuple(int(match.group(part)) for part in ("major", "minor", "patch"))
+    try:
+        return tuple(int(match.group(part)) for part in ("major", "minor", "patch"))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ContractValidationError(
+            ContractErrorCode.CHECKPOINT_INCOMPATIBLE,
+            f"{field_name} is not a semantic version",
+        ) from exc
 
 
 def _path_rule_covers(authority_rule: str, candidate_rule: str) -> bool:
@@ -258,7 +274,7 @@ def validate_checkpoint_compatibility(
     checkpoint: Any,
     run_spec: Any,
     *,
-    supported_capabilities: Iterable[str],
+    supported_capabilities: Sequence[str],
     runner_version: str | None = None,
 ) -> CheckpointCompatibilityResult:
     """Validate that a later attempt resumes without widening authority."""
@@ -284,6 +300,18 @@ def validate_checkpoint_compatibility(
     ):
         _checkpoint_incompatible(
             f"checkpoint resume requires exact protocol {PROTOCOL_V1!r}"
+        )
+
+    _require_equal(stored.operation, resumed.operation, "operation")
+    if stored.operation == "verify":
+        if resumed.verification_input is None:
+            _checkpoint_incompatible(
+                "verify resume requires a digest-bound verification input"
+            )
+        _require_equal(
+            stored.verification_change_set_digest,
+            resumed.verification_input.expected_digest,
+            "verification_change_set_digest",
         )
 
     _require_equal(
@@ -328,7 +356,7 @@ def validate_checkpoint_compatibility(
         resumed.resume.expected_digest,
         "checkpoint_digest",
     )
-    effective_runner_version = runner_version or __version__
+    effective_runner_version = __version__ if runner_version is None else runner_version
     if _semantic_version(
         effective_runner_version,
         "runner_version",

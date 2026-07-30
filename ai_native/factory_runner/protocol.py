@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from importlib import resources
 import json
+import math
 from typing import Any, TypeAlias
 
 from pydantic import BaseModel, ValidationError
@@ -20,6 +21,11 @@ from ai_native.factory_runner.contracts import (
     RunResult,
     RunSpec,
     VerificationEvidence,
+    changed_file_manifest_digest,
+)
+from ai_native.factory_runner.contracts.common import (
+    MAX_SAFE_INTEGER,
+    normalise_json_integer,
 )
 from ai_native.factory_runner.errors import (
     ContractErrorCode,
@@ -76,16 +82,47 @@ def _reject_non_finite_number(value: str) -> None:
     )
 
 
+def _parse_finite_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        _reject_non_finite_number(value)
+    return parsed
+
+
+def _parse_safe_integer(value: str) -> int:
+    digits = value.removeprefix("-")
+    maximum = str(MAX_SAFE_INTEGER)
+    if len(digits) > len(maximum) or (len(digits) == len(maximum) and digits > maximum):
+        raise ContractValidationError(
+            ContractErrorCode.INVALID_JSON,
+            "JSON integer exceeds the RFC 8785 interoperable domain",
+        )
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ContractValidationError(
+            ContractErrorCode.INVALID_JSON,
+            "JSON integer is not in the RFC 8785 interoperable domain",
+        ) from exc
+
+
 def decode_json_document(value: str | bytes | bytearray) -> dict[str, Any]:
     try:
+        text = (
+            bytes(value).decode("utf-8")
+            if isinstance(value, (bytes, bytearray))
+            else value
+        )
         decoded = json.loads(
-            value,
+            text,
             object_pairs_hook=_reject_duplicate_pairs,
             parse_constant=_reject_non_finite_number,
+            parse_float=_parse_finite_float,
+            parse_int=_parse_safe_integer,
         )
     except ContractValidationError:
         raise
-    except (TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise ContractValidationError(
             ContractErrorCode.INVALID_JSON,
             "input is not a valid UTF-8 JSON document",
@@ -145,8 +182,14 @@ def _select_contract(
             "unsupported factory runner contract schema",
         )
 
-    schema_version = payload.get("schema_version")
-    if type(schema_version) is not int or schema_version != 1:
+    try:
+        schema_version = normalise_json_integer(payload.get("schema_version"))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ContractValidationError(
+            ContractErrorCode.UNSUPPORTED_SCHEMA_VERSION,
+            "unsupported factory runner contract schema version",
+        ) from exc
+    if schema_version != 1:
         raise ContractValidationError(
             ContractErrorCode.UNSUPPORTED_SCHEMA_VERSION,
             "unsupported factory runner contract schema version",
@@ -304,6 +347,7 @@ __all__ = [
     "RunnerEvent",
     "VerificationEvidence",
     "canonical_json_bytes",
+    "changed_file_manifest_digest",
     "contract_document_digest",
     "decode_json_document",
     "iter_contract_schemas",

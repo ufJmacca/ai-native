@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-import json
 import math
+from collections.abc import Mapping
+import re
 from typing import Any, Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, StrictStr, field_serializer, field_validator
 
+from ai_native.factory_runner.canonical import canonical_json_bytes
 from ai_native.factory_runner.contracts.common import (
     ArtifactReference,
     MAX_SAFE_INTEGER,
@@ -14,8 +16,10 @@ from ai_native.factory_runner.contracts.common import (
     SchemaVersion,
     StrictContractModel,
     UtcTimestamp,
+    ascii_case_insensitive_pattern,
     bounded_json_object_schema,
     freeze_mapping,
+    thaw_json_value,
 )
 
 
@@ -60,6 +64,9 @@ _PROHIBITED_PAYLOAD_KEYS = frozenset(
         "token",
     }
 )
+_PROHIBITED_PAYLOAD_KEY_PATTERN = re.compile(
+    ascii_case_insensitive_pattern(_PROHIBITED_PAYLOAD_KEYS)
+)
 
 
 def _validate_sanitised_json(value: Any, *, depth: int = 0) -> None:
@@ -81,15 +88,15 @@ def _validate_sanitised_json(value: Any, *, depth: int = 0) -> None:
         if len(value) > MAX_INLINE_STRING_LENGTH:
             raise ValueError("sanitised payload string exceeds the inline limit")
         return
-    if isinstance(value, list):
+    if isinstance(value, list | tuple):
         for item in value:
             _validate_sanitised_json(item, depth=depth + 1)
         return
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         for key, item in value.items():
             if not isinstance(key, str):
                 raise ValueError("sanitised payload object keys must be strings")
-            if key.casefold() in _PROHIBITED_PAYLOAD_KEYS:
+            if _PROHIBITED_PAYLOAD_KEY_PATTERN.fullmatch(key):
                 raise ValueError("sanitised payload contains a prohibited key")
             _validate_sanitised_json(item, depth=depth + 1)
         return
@@ -107,9 +114,13 @@ class RunnerEvent(StrictContractModel):
     event_type: RunnerEventType
     correlation_id: OpaqueId
     causation_id: OpaqueId | None
-    sanitised_payload: dict[str, Any] = Field(
+    sanitised_payload: Mapping[StrictStr, Any] = Field(
         json_schema_extra={
-            "propertyNames": {"not": {"enum": sorted(_PROHIBITED_PAYLOAD_KEYS)}}
+            "propertyNames": {
+                "not": {
+                    "pattern": ascii_case_insensitive_pattern(_PROHIBITED_PAYLOAD_KEYS)
+                }
+            }
         }
     )
     artifact_refs: tuple[ArtifactReference, ...]
@@ -130,16 +141,17 @@ class RunnerEvent(StrictContractModel):
     @classmethod
     def payload_is_bounded_sanitised_json(
         cls,
-        value: dict[str, Any],
-    ) -> dict[str, Any]:
+        value: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
         _validate_sanitised_json(value)
-        encoded = json.dumps(
-            value,
-            ensure_ascii=False,
-            allow_nan=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
+        encoded = canonical_json_bytes(value)
         if len(encoded) > MAX_SANITISED_PAYLOAD_BYTES:
             raise ValueError("sanitised payload exceeds the byte limit")
         return freeze_mapping(value)
+
+    @field_serializer("sanitised_payload")
+    def serialize_sanitised_payload(
+        self,
+        value: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        return thaw_json_value(value)

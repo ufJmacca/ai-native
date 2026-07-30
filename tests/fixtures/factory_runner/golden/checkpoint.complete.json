@@ -28,6 +28,8 @@
   },
   "context_bundle_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "run_spec_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "operation": "author",
+  "verification_change_set_digest": null,
   "workspace_patch_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
   "completed_stages": [
     "plan"
@@ -94,6 +96,5 @@
   "object_digests": [
     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   ],
-  "checkpoint_digest": "sha256:93cd0e749fcbe2c91cc9ed3ff0d9301ee39c1a591379ae30817f4a7ec5bb5b9e"
+  "checkpoint_digest": "sha256:da53e5ce0e1877435b9c4fce320aa0f65a069e68a306b4885dd187f987f30491"
 }
-

@@ -25,7 +25,7 @@
     "byte_size": 3,
     "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
   },
-  "diff_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "diff_digest": "sha256:e124a9cff23b6dcf3f797e9598bb311287a1218403d96ae90c3ba2a3e9b1a6a1",
   "changed_files": [
     {
       "path": "src/app.py",
@@ -59,6 +59,5 @@
   "residual_risks": [],
   "policy_observations": [],
   "generated_artifacts": [],
-  "change_set_digest": "sha256:e4bf80385d222616b52b91f253f679a9c063708504eb82af8bf0a976713c8f36"
+  "change_set_digest": "sha256:441bbad3e02ac5394ca3b0947330bcce4f1d3e3dfb9fe01f817f16e22b0ce726"
 }
-

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
 from datetime import datetime, timezone
+import math
 import posixpath
 import re
+from types import MappingProxyType
 from typing import Annotated, Any, Literal, Never, TypeVar
 
 from pydantic import (
@@ -39,12 +42,14 @@ SEMANTIC_VERSION_PATTERN = (
 )
 _OPAQUE_CONTROL_PATTERN = re.compile(r"[\x00-\x1f\x7f]")
 _WILDCARD_PATTERN = re.compile(r"[*?[]")
+_NO_CONTROL_JSON_SCHEMA = {"not": {"pattern": r"[\u0000-\u001f\u007f]"}}
 
 
 class StrictContractModel(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
         frozen=True,
+        revalidate_instances="always",
         serialize_by_alias=True,
         str_strip_whitespace=False,
         validate_by_alias=True,
@@ -53,26 +58,34 @@ class StrictContractModel(BaseModel):
     )
 
 
-class FrozenDict(dict[str, Any]):
+class FrozenMapping(Mapping[str, Any]):
     """A JSON-serialisable mapping that cannot change after validation."""
 
-    @staticmethod
-    def _immutable(*args: Any, **kwargs: Any) -> Never:
-        del args, kwargs
+    __slots__ = ("_data",)
+
+    def __init__(self, value: Mapping[str, Any]) -> None:
+        object.__setattr__(self, "_data", MappingProxyType(dict(value)))
+
+    def __getitem__(self, key: str) -> Any:
+        return self._data[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._data)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def __repr__(self) -> str:
+        return repr(dict(self._data))
+
+    def __setattr__(self, name: str, value: Any) -> Never:
+        del name, value
         raise TypeError("durable contract mappings are immutable")
 
-    __setitem__ = _immutable
-    __delitem__ = _immutable
-    clear = _immutable
-    pop = _immutable
-    popitem = _immutable
-    setdefault = _immutable
-    update = _immutable
-
-    def __copy__(self) -> FrozenDict:
+    def __copy__(self) -> FrozenMapping:
         return self
 
-    def __deepcopy__(self, memo: dict[int, Any]) -> FrozenDict:
+    def __deepcopy__(self, memo: dict[int, Any]) -> FrozenMapping:
         del memo
         return self
 
@@ -80,20 +93,46 @@ class FrozenDict(dict[str, Any]):
 def freeze_json_value(value: Any) -> Any:
     """Recursively detach and freeze a previously validated JSON value."""
 
-    if isinstance(value, dict):
-        return FrozenDict(
-            {str(key): freeze_json_value(item) for key, item in value.items()}
+    if isinstance(value, Mapping):
+        return FrozenMapping(
+            {key: freeze_json_value(item) for key, item in value.items()}
         )
     if isinstance(value, list | tuple):
         return tuple(freeze_json_value(item) for item in value)
     return value
 
 
-def freeze_mapping(value: dict[str, Any]) -> FrozenDict:
+def freeze_mapping(value: Mapping[str, Any]) -> FrozenMapping:
     frozen = freeze_json_value(value)
-    if not isinstance(frozen, FrozenDict):
+    if not isinstance(frozen, FrozenMapping):
         raise TypeError("expected a JSON object")
     return frozen
+
+
+def thaw_json_value(value: Any) -> Any:
+    """Return detached built-in JSON containers for deterministic serialization."""
+
+    if isinstance(value, Mapping):
+        return {key: thaw_json_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [thaw_json_value(item) for item in value]
+    return value
+
+
+def ascii_case_insensitive_pattern(values: frozenset[str]) -> str:
+    """Build a portable anchored regex for ASCII case-insensitive literals."""
+
+    alternatives: list[str] = []
+    for value in sorted(values):
+        alternatives.append(
+            "".join(
+                f"[{character.lower()}{character.upper()}]"
+                if character.isascii() and character.isalpha()
+                else re.escape(character)
+                for character in value
+            )
+        )
+    return "^(?:" + "|".join(alternatives) + ")$"
 
 
 def bounded_json_object_schema(
@@ -111,7 +150,9 @@ def bounded_json_object_schema(
     property_name_rule: dict[str, Any] = {}
     if prohibited_keys:
         property_name_rule = {
-            "propertyNames": {"not": {"enum": sorted(prohibited_keys)}}
+            "propertyNames": {
+                "not": {"pattern": ascii_case_insensitive_pattern(prohibited_keys)}
+            }
         }
 
     def scalar_branches() -> list[dict[str, Any]]:
@@ -183,10 +224,23 @@ def _validate_opaque_id(value: str) -> str:
     return value
 
 
-def _validate_schema_version(value: object) -> object:
-    if type(value) is not int or value != 1:
+def normalise_json_integer(value: object) -> int:
+    """Normalise a JSON-Schema integer while rejecting booleans and coercions."""
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("value must be a JSON integer")
+    if isinstance(value, float) and (
+        not math.isfinite(value) or not value.is_integer()
+    ):
+        raise ValueError("value must be a JSON integer")
+    return int(value)
+
+
+def _validate_schema_version(value: object) -> int:
+    parsed = normalise_json_integer(value)
+    if parsed != 1:
         raise ValueError("schema_version must be the integer 1")
-    return value
+    return parsed
 
 
 def _validate_utc_timestamp(value: str) -> str:
@@ -216,8 +270,10 @@ def utc_timestamp_sort_key(value: str) -> tuple[datetime, int]:
 
 
 def _path_parts_are_safe(path: str, *, allow_git: bool) -> None:
-    if "\x00" in path or "\\" in path:
-        raise ValueError("path must use POSIX separators and contain no NUL")
+    if _OPAQUE_CONTROL_PATTERN.search(path) or "\\" in path:
+        raise ValueError(
+            "path must use POSIX separators and contain no control characters"
+        )
     if path.startswith("/") or path.endswith("/") or "//" in path:
         raise ValueError("repository path must be relative and normalised")
     parts = path.split("/")
@@ -263,8 +319,10 @@ def _validate_prohibited_path(value: str) -> str:
 
 
 def _validate_absolute_path(value: str) -> str:
-    if "\x00" in value or "\\" in value:
-        raise ValueError("absolute path must use POSIX separators and contain no NUL")
+    if _OPAQUE_CONTROL_PATTERN.search(value) or "\\" in value:
+        raise ValueError(
+            "absolute path must use POSIX separators and contain no control characters"
+        )
     if not value.startswith("/") or value == "/":
         raise ValueError("path must be an absolute non-root POSIX path")
     if value.endswith("/") or "//" in value:
@@ -280,17 +338,51 @@ OpaqueId = Annotated[
     StrictStr,
     Field(min_length=1, max_length=512),
     AfterValidator(_validate_opaque_id),
+    WithJsonSchema(
+        {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            **_NO_CONTROL_JSON_SCHEMA,
+        }
+    ),
 ]
 NonEmptyString = Annotated[StrictStr, Field(min_length=1, max_length=16_384)]
-Sha256Digest = Annotated[StrictStr, Field(pattern=SHA256_PATTERN)]
-GitCommitSha = Annotated[StrictStr, Field(pattern=GIT_COMMIT_PATTERN)]
+Sha256Digest = Annotated[
+    StrictStr,
+    Field(
+        pattern=SHA256_PATTERN,
+        min_length=71,
+        max_length=71,
+    ),
+]
+GitCommitSha = Annotated[
+    StrictStr,
+    Field(
+        pattern=GIT_COMMIT_PATTERN,
+        min_length=40,
+        max_length=40,
+    ),
+]
 UtcTimestamp = Annotated[
     StrictStr,
     Field(
         pattern=UTC_TIMESTAMP_PATTERN,
+        min_length=20,
+        max_length=30,
         json_schema_extra={"format": "date-time"},
     ),
     AfterValidator(_validate_utc_timestamp),
+    WithJsonSchema(
+        {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 30,
+            "pattern": UTC_TIMESTAMP_PATTERN,
+            "format": "date-time",
+            **_NO_CONTROL_JSON_SCHEMA,
+        }
+    ),
 ]
 _REPOSITORY_PATH_JSON_SCHEMA = {
     "type": "string",
@@ -301,6 +393,7 @@ _REPOSITORY_PATH_JSON_SCHEMA = {
         r"(?!.*(?:^|/)\.\.?($|/))(?!.*(?:^|/)\.git($|/))"
         r"(?!.*[?*\[])(?!.*\/$).+$"
     ),
+    **_NO_CONTROL_JSON_SCHEMA,
 }
 _POLICY_PATH_JSON_SCHEMA = {
     "type": "string",
@@ -311,6 +404,7 @@ _POLICY_PATH_JSON_SCHEMA = {
         r"(?!.*(?:^|/)\.\.?($|/))(?!.*(?:^|/)\.git($|/))"
         r"(?!.*[?\[])(?!.*\/$)(?:\*\*|[^*]+(?:/\*\*)?)$"
     ),
+    **_NO_CONTROL_JSON_SCHEMA,
 }
 _PROHIBITED_PATH_JSON_SCHEMA = {
     "type": "string",
@@ -321,6 +415,7 @@ _PROHIBITED_PATH_JSON_SCHEMA = {
         r"(?!.*(?:^|/)\.\.?($|/))(?!.*[?\[])"
         r"(?!.*\/$)(?:\*\*|[^*]+(?:/\*\*)?)$"
     ),
+    **_NO_CONTROL_JSON_SCHEMA,
 }
 _ABSOLUTE_PATH_JSON_SCHEMA = {
     "type": "string",
@@ -330,52 +425,166 @@ _ABSOLUTE_PATH_JSON_SCHEMA = {
         r"^/(?!$)(?!.*//)(?!.*\\)(?!.*\u0000)"
         r"(?!.*(?:^|/)\.\.?($|/))(?!.*\/$).+$"
     ),
+    **_NO_CONTROL_JSON_SCHEMA,
 }
 RepositoryPath = Annotated[
     StrictStr,
+    Field(min_length=1, max_length=4096),
     AfterValidator(_validate_repository_path),
     WithJsonSchema(_REPOSITORY_PATH_JSON_SCHEMA),
 ]
 PolicyPath = Annotated[
     StrictStr,
+    Field(min_length=1, max_length=4096),
     AfterValidator(_validate_policy_path),
     WithJsonSchema(_POLICY_PATH_JSON_SCHEMA),
 ]
 ProhibitedPath = Annotated[
     StrictStr,
+    Field(min_length=1, max_length=4096),
     AfterValidator(_validate_prohibited_path),
     WithJsonSchema(_PROHIBITED_PATH_JSON_SCHEMA),
 ]
 AbsolutePosixPath = Annotated[
     StrictStr,
+    Field(min_length=2, max_length=4096),
     AfterValidator(_validate_absolute_path),
     WithJsonSchema(_ABSOLUTE_PATH_JSON_SCHEMA),
 ]
 EnvironmentKey = Annotated[
     StrictStr,
     Field(pattern=ENVIRONMENT_KEY_PATTERN, max_length=256),
+    WithJsonSchema(
+        {
+            "type": "string",
+            "maxLength": 256,
+            "pattern": ENVIRONMENT_KEY_PATTERN,
+            **_NO_CONTROL_JSON_SCHEMA,
+        }
+    ),
 ]
-MediaType = Annotated[StrictStr, Field(pattern=MEDIA_TYPE_PATTERN, max_length=256)]
-ProfileName = Annotated[StrictStr, Field(pattern=PROFILE_PATTERN)]
+MediaType = Annotated[
+    StrictStr,
+    Field(pattern=MEDIA_TYPE_PATTERN, max_length=256),
+    WithJsonSchema(
+        {
+            "type": "string",
+            "maxLength": 256,
+            "pattern": MEDIA_TYPE_PATTERN,
+            **_NO_CONTROL_JSON_SCHEMA,
+        }
+    ),
+]
+ProfileName = Annotated[
+    StrictStr,
+    Field(pattern=PROFILE_PATTERN),
+    WithJsonSchema(
+        {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": PROFILE_PATTERN,
+            **_NO_CONTROL_JSON_SCHEMA,
+        }
+    ),
+]
 SemanticVersion = Annotated[
     StrictStr,
     Field(pattern=SEMANTIC_VERSION_PATTERN, max_length=128),
+    WithJsonSchema(
+        {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": SEMANTIC_VERSION_PATTERN,
+            **_NO_CONTROL_JSON_SCHEMA,
+        }
+    ),
 ]
-ByteSize = Annotated[StrictInt, Field(ge=0, le=MAX_SAFE_INTEGER)]
-PositiveSeconds = Annotated[StrictInt, Field(gt=0, le=MAX_SAFE_INTEGER)]
-NonNegativeSeconds = Annotated[
-    StrictFloat | StrictInt,
+JsonInteger = Annotated[int, BeforeValidator(normalise_json_integer)]
+ByteSize = Annotated[
+    JsonInteger,
     Field(ge=0, le=MAX_SAFE_INTEGER),
+    WithJsonSchema(
+        {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": MAX_SAFE_INTEGER,
+        }
+    ),
+]
+PositiveSeconds = Annotated[
+    JsonInteger,
+    Field(gt=0, le=MAX_SAFE_INTEGER),
+    WithJsonSchema(
+        {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": MAX_SAFE_INTEGER,
+        }
+    ),
+]
+
+
+def _validate_non_negative_seconds(value: float | int) -> float | int:
+    if not math.isfinite(value) or not 0 <= value <= MAX_SAFE_INTEGER:
+        raise ValueError("seconds must be finite and inside the RFC 8785 domain")
+    return value
+
+
+NonNegativeSeconds = Annotated[
+    StrictFloat | JsonInteger,
+    AfterValidator(_validate_non_negative_seconds),
+    WithJsonSchema(
+        {
+            "type": "number",
+            "minimum": 0,
+            "maximum": MAX_SAFE_INTEGER,
+        }
+    ),
 ]
 SafeInteger = Annotated[
-    StrictInt,
+    JsonInteger,
     Field(ge=-MAX_SAFE_INTEGER, le=MAX_SAFE_INTEGER),
+    WithJsonSchema(
+        {
+            "type": "integer",
+            "minimum": -MAX_SAFE_INTEGER,
+            "maximum": MAX_SAFE_INTEGER,
+        }
+    ),
 ]
 PositiveSequence = Annotated[
-    StrictInt,
+    JsonInteger,
     Field(gt=0, le=MAX_SAFE_INTEGER),
+    WithJsonSchema(
+        {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": MAX_SAFE_INTEGER,
+        }
+    ),
 ]
 SchemaVersion = Annotated[Literal[1], BeforeValidator(_validate_schema_version)]
+
+
+def _validate_command_argument(value: str) -> str:
+    if "\x00" in value:
+        raise ValueError("command arguments must not contain NUL")
+    return value
+
+
+CommandArgument = Annotated[
+    StrictStr,
+    Field(min_length=1, max_length=16_384),
+    AfterValidator(_validate_command_argument),
+    WithJsonSchema(
+        {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16_384,
+            "not": {"pattern": r"\u0000"},
+        }
+    ),
+]
 FactoryStage = Literal[
     "intake",
     "recon",
@@ -424,8 +633,8 @@ ArtifactRef = ArtifactReference
 
 class RunnerBuildIdentity(StrictContractModel):
     version: NonEmptyString
-    image: NonEmptyString | None = None
-    source_commit: GitCommitSha | None = None
+    image: NonEmptyString | None
+    source_commit: GitCommitSha | None
 
 
 T = TypeVar("T")
@@ -470,11 +679,13 @@ __all__ = [
     "ArtifactRef",
     "ArtifactReference",
     "ByteSize",
+    "CommandArgument",
     "DocumentEnvelope",
     "EnvironmentKey",
     "FactoryStage",
-    "FrozenDict",
+    "FrozenMapping",
     "GitCommitSha",
+    "JsonInteger",
     "JsonObject",
     "MediaType",
     "MAX_SAFE_INTEGER",
@@ -501,12 +712,15 @@ __all__ = [
     "StrictInt",
     "StrictStr",
     "UtcTimestamp",
+    "ascii_case_insensitive_pattern",
     "bounded_json_object_schema",
     "contains_secret_reference",
     "ensure_started_before_finished",
     "freeze_json_value",
     "freeze_mapping",
+    "normalise_json_integer",
     "parse_utc_timestamp",
     "require_unique",
+    "thaw_json_value",
     "utc_timestamp_sort_key",
 ]

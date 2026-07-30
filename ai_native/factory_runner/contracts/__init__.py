@@ -4,6 +4,7 @@ from ai_native.factory_runner.contracts.change_set import (
     ChangeSet,
     ChangedFile,
     PatchArtifact,
+    changed_file_manifest_digest,
 )
 from ai_native.factory_runner.contracts.context_bundle import ContextBundle
 from ai_native.factory_runner.contracts.run_result import RunResult
@@ -19,6 +20,7 @@ __all__ = [
     "Checkpoint",
     "ChangeSet",
     "ChangedFile",
+    "changed_file_manifest_digest",
     "ContextBundle",
     "EvidenceItem",
     "PatchArtifact",

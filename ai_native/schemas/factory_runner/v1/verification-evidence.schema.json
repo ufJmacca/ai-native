@@ -10,12 +10,17 @@
           "type": "integer"
         },
         "digest": {
+          "maxLength": 71,
+          "minLength": 71,
           "pattern": "^sha256:[0-9a-f]{64}$",
           "title": "Digest",
           "type": "string"
         },
         "media_type": {
           "maxLength": 256,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
           "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$",
           "title": "Media Type",
           "type": "string"
@@ -23,6 +28,9 @@
         "path": {
           "maxLength": 4096,
           "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
           "pattern": "^(?!/)(?!.*//)(?!.*\\\\)(?!.*\\u0000)(?!.*(?:^|/)\\.\\.?($|/))(?!.*(?:^|/)\\.git($|/))(?!.*[?*\\[])(?!.*\\/$).+$",
           "title": "Path",
           "type": "string"
@@ -79,6 +87,143 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "phase": {
+                "not": {
+                  "const": "red"
+                }
+              }
+            },
+            "required": [
+              "phase"
+            ]
+          },
+          "then": {
+            "properties": {
+              "expected_status": {
+                "const": "passed"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "actual_status": {
+                "const": "passed"
+              }
+            },
+            "required": [
+              "actual_status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "exit_code": {
+                "const": 0
+              },
+              "failure_classification": {
+                "const": "none"
+              },
+              "termination_reason": {
+                "const": "exited"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "termination_reason": {
+                "const": "timed_out"
+              }
+            },
+            "required": [
+              "termination_reason"
+            ]
+          },
+          "then": {
+            "properties": {
+              "actual_status": {
+                "const": "failed"
+              },
+              "failure_classification": {
+                "const": "timeout"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "failure_classification": {
+                "const": "timeout"
+              }
+            },
+            "required": [
+              "failure_classification"
+            ]
+          },
+          "then": {
+            "properties": {
+              "termination_reason": {
+                "const": "timed_out"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "actual_status": {
+                "const": "not_run"
+              }
+            },
+            "required": [
+              "actual_status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "exit_code": {
+                "type": "null"
+              },
+              "failure_classification": {
+                "const": "none"
+              },
+              "termination_reason": {
+                "const": "not_started"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "termination_reason": {
+                "const": "not_started"
+              }
+            },
+            "required": [
+              "termination_reason"
+            ]
+          },
+          "then": {
+            "properties": {
+              "actual_status": {
+                "enum": [
+                  "blocked",
+                  "not_run"
+                ]
+              },
+              "exit_code": {
+                "type": "null"
+              }
+            }
+          }
         }
       ],
       "properties": {
@@ -96,6 +241,9 @@
           "items": {
             "maxLength": 16384,
             "minLength": 1,
+            "not": {
+              "pattern": "\\u0000"
+            },
             "type": "string"
           },
           "minItems": 1,
@@ -103,21 +251,17 @@
           "type": "array"
         },
         "duration_seconds": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "integer"
-            }
-          ],
-          "ge": 0,
-          "le": 9007199254740991,
-          "title": "Duration Seconds"
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Duration Seconds",
+          "type": "number"
         },
         "environment_keys": {
           "items": {
             "maxLength": 256,
+            "not": {
+              "pattern": "[\\u0000-\\u001f\\u007f]"
+            },
             "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
             "type": "string"
           },
@@ -167,6 +311,11 @@
         },
         "finished_at": {
           "format": "date-time",
+          "maxLength": 30,
+          "minLength": 20,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
           "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$",
           "title": "Finished At",
           "type": "string"
@@ -187,6 +336,11 @@
         },
         "started_at": {
           "format": "date-time",
+          "maxLength": 30,
+          "minLength": 20,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
           "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$",
           "title": "Started At",
           "type": "string"
@@ -233,6 +387,9 @@
             {
               "maxLength": 4096,
               "minLength": 1,
+              "not": {
+                "pattern": "[\\u0000-\\u001f\\u007f]"
+              },
               "pattern": "^(?!/)(?!.*//)(?!.*\\\\)(?!.*\\u0000)(?!.*(?:^|/)\\.\\.?($|/))(?!.*(?:^|/)\\.git($|/))(?!.*[?*\\[])(?!.*\\/$).+$",
               "type": "string"
             },
@@ -270,6 +427,8 @@
       "additionalProperties": false,
       "properties": {
         "base_commit_sha": {
+          "maxLength": 40,
+          "minLength": 40,
           "pattern": "^[0-9a-f]{40}$",
           "title": "Base Commit Sha",
           "type": "string"
@@ -283,6 +442,9 @@
         "repository_id": {
           "maxLength": 512,
           "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
           "title": "Repository Id",
           "type": "string"
         }
@@ -301,36 +463,54 @@
         "attempt_id": {
           "maxLength": 512,
           "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
           "title": "Attempt Id",
           "type": "string"
         },
         "correlation_id": {
           "maxLength": 512,
           "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
           "title": "Correlation Id",
           "type": "string"
         },
         "delivery_phase_id": {
           "maxLength": 512,
           "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
           "title": "Delivery Phase Id",
           "type": "string"
         },
         "run_id": {
           "maxLength": 512,
           "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
           "title": "Run Id",
           "type": "string"
         },
         "work_item_id": {
           "maxLength": 512,
           "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
           "title": "Work Item Id",
           "type": "string"
         },
         "work_item_revision_id": {
           "maxLength": 512,
           "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
           "title": "Work Item Revision Id",
           "type": "string"
         }
@@ -360,12 +540,13 @@
               "type": "null"
             }
           ],
-          "default": null,
           "title": "Image"
         },
         "source_commit": {
           "anyOf": [
             {
+              "maxLength": 40,
+              "minLength": 40,
               "pattern": "^[0-9a-f]{40}$",
               "type": "string"
             },
@@ -373,7 +554,6 @@
               "type": "null"
             }
           ],
-          "default": null,
           "title": "Source Commit"
         },
         "version": {
@@ -384,7 +564,9 @@
         }
       },
       "required": [
-        "version"
+        "version",
+        "image",
+        "source_commit"
       ],
       "title": "RunnerBuildIdentity",
       "type": "object"
@@ -430,6 +612,262 @@
             "not": {
               "type": "null"
             }
+          },
+          "items": {
+            "items": {
+              "properties": {
+                "phase": {
+                  "const": "verification"
+                }
+              },
+              "required": [
+                "phase"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "environment_kind": {
+            "const": "clean_verification"
+          },
+          "overall_status": {
+            "const": "passed"
+          }
+        },
+        "required": [
+          "environment_kind",
+          "overall_status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "items": {
+            "items": {
+              "properties": {
+                "repository_files_changed": {
+                  "const": false
+                }
+              },
+              "required": [
+                "repository_files_changed"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "overall_status": {
+            "const": "passed"
+          }
+        },
+        "required": [
+          "overall_status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "items": {
+            "not": {
+              "contains": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "actual_status": {
+                        "const": "failed"
+                      },
+                      "phase": {
+                        "not": {
+                          "const": "red"
+                        }
+                      }
+                    },
+                    "required": [
+                      "phase",
+                      "actual_status"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "actual_status": {
+                        "const": "blocked"
+                      }
+                    },
+                    "required": [
+                      "actual_status"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "actual_status": {
+                        "const": "not_run"
+                      }
+                    },
+                    "required": [
+                      "actual_status"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "overall_status": {
+            "const": "failed"
+          }
+        },
+        "required": [
+          "overall_status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "items": {
+            "contains": {
+              "properties": {
+                "actual_status": {
+                  "const": "failed"
+                },
+                "phase": {
+                  "not": {
+                    "const": "red"
+                  }
+                }
+              },
+              "required": [
+                "phase",
+                "actual_status"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "overall_status": {
+            "const": "blocked"
+          }
+        },
+        "required": [
+          "overall_status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "items": {
+            "allOf": [
+              {
+                "not": {
+                  "contains": {
+                    "properties": {
+                      "actual_status": {
+                        "const": "failed"
+                      },
+                      "phase": {
+                        "not": {
+                          "const": "red"
+                        }
+                      }
+                    },
+                    "required": [
+                      "phase",
+                      "actual_status"
+                    ]
+                  }
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "actual_status": {
+                      "const": "blocked"
+                    }
+                  },
+                  "required": [
+                    "actual_status"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "overall_status": {
+            "const": "not_run"
+          }
+        },
+        "required": [
+          "overall_status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "items": {
+            "allOf": [
+              {
+                "not": {
+                  "contains": {
+                    "properties": {
+                      "actual_status": {
+                        "const": "failed"
+                      },
+                      "phase": {
+                        "not": {
+                          "const": "red"
+                        }
+                      }
+                    },
+                    "required": [
+                      "phase",
+                      "actual_status"
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "contains": {
+                    "properties": {
+                      "actual_status": {
+                        "const": "blocked"
+                      }
+                    },
+                    "required": [
+                      "actual_status"
+                    ]
+                  }
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "actual_status": {
+                      "const": "not_run"
+                    }
+                  },
+                  "required": [
+                    "actual_status"
+                  ]
+                }
+              }
+            ]
           }
         }
       }
@@ -438,6 +876,8 @@
   "properties": {
     "advisory_observations": {
       "items": {
+        "maxLength": 16384,
+        "minLength": 1,
         "type": "string"
       },
       "title": "Advisory Observations",
@@ -446,6 +886,8 @@
     "change_set_digest": {
       "anyOf": [
         {
+          "maxLength": 71,
+          "minLength": 71,
           "pattern": "^sha256:[0-9a-f]{64}$",
           "type": "string"
         },
@@ -456,12 +898,19 @@
       "title": "Change Set Digest"
     },
     "context_digest": {
+      "maxLength": 71,
+      "minLength": 71,
       "pattern": "^sha256:[0-9a-f]{64}$",
       "title": "Context Digest",
       "type": "string"
     },
     "created_at": {
       "format": "date-time",
+      "maxLength": 30,
+      "minLength": 20,
+      "not": {
+        "pattern": "[\\u0000-\\u001f\\u007f]"
+      },
       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$",
       "title": "Created At",
       "type": "string"
@@ -475,6 +924,8 @@
       "type": "string"
     },
     "evidence_set_digest": {
+      "maxLength": 71,
+      "minLength": 71,
       "pattern": "^sha256:[0-9a-f]{64}$",
       "title": "Evidence Set Digest",
       "type": "string"

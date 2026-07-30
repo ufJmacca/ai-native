@@ -7,6 +7,7 @@ from pydantic import Field, field_validator, model_validator
 from ai_native.factory_runner.contracts.common import (
     ByteSize,
     DocumentEnvelope,
+    MediaType,
     NonEmptyString,
     OpaqueId,
     RepositoryPath,
@@ -29,7 +30,7 @@ ContextClassification = Literal[
 
 class ContextManifestEntry(StrictContractModel):
     logical_path: RepositoryPath
-    media_type: NonEmptyString
+    media_type: MediaType
     byte_size: ByteSize
     digest: Sha256Digest
     classification: ContextClassification

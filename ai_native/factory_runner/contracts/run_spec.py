@@ -6,19 +6,21 @@ from pydantic import (
     ConfigDict,
     Field,
     StrictBool,
-    StrictInt,
+    StrictStr,
+    WithJsonSchema,
     field_validator,
     model_validator,
 )
 
 from ai_native.factory_runner.contracts.common import (
     AbsolutePosixPath,
+    CommandArgument,
     DocumentEnvelope,
     EnvironmentKey,
     FactoryStage,
+    JsonInteger,
     MAX_SAFE_INTEGER,
     NonEmptyString,
-    OpaqueId,
     PolicyPath,
     ProfileName,
     ProhibitedPath,
@@ -30,12 +32,54 @@ from ai_native.factory_runner.contracts.common import (
 
 
 RunnerOperation = Literal["author", "verify"]
-PositiveInt = Annotated[StrictInt, Field(gt=0, le=MAX_SAFE_INTEGER)]
-CapabilityName = Annotated[
-    OpaqueId,
-    Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"),
+PositiveInt = Annotated[
+    JsonInteger,
+    Field(gt=0, le=MAX_SAFE_INTEGER),
+    WithJsonSchema(
+        {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": MAX_SAFE_INTEGER,
+        }
+    ),
 ]
-Command = Annotated[tuple[NonEmptyString, ...], Field(min_length=1)]
+CapabilityName = Annotated[
+    StrictStr,
+    Field(
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+        min_length=1,
+        max_length=128,
+    ),
+    WithJsonSchema(
+        {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+            "not": {"pattern": r"[\u0000-\u001f\u007f]"},
+        }
+    ),
+]
+Command = Annotated[tuple[CommandArgument, ...], Field(min_length=1)]
+ModelProfileName = Annotated[
+    ProfileName,
+    WithJsonSchema(
+        {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": (
+                r"^(?!.*(?:"
+                r"[aA][pP][iI]_[kK][eE][yY]|"
+                r"[aA][pP][iI][kK][eE][yY]|"
+                r"[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|"
+                r"[pP][aA][sS][sS][wW][oO][rR][dD]|"
+                r"[sS][eE][cC][rR][eE][tT]"
+                r"))[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$"
+            ),
+            "not": {"pattern": r"[\u0000-\u001f\u007f]"},
+        }
+    ),
+]
 
 
 class WorkspaceSpec(StrictContractModel):
@@ -70,7 +114,7 @@ class RunPolicy(StrictContractModel):
     )
     network_profile: ProfileName
     credential_profile: Literal["no-external-credentials"]
-    model_profile: ProfileName
+    model_profile: ModelProfileName
     max_wall_seconds: PositiveInt
     max_agent_turns: PositiveInt
     max_model_tokens: PositiveInt
@@ -201,7 +245,10 @@ class RunSpec(DocumentEnvelope):
                                 }
                             },
                             "policy": {
-                                "properties": {"allowed_stages": {"const": ["verify"]}}
+                                "properties": {
+                                    "allowed_stages": {"const": ["verify"]},
+                                    "allowed_commands": {"minItems": 1},
+                                }
                             },
                             "verification_input": {"not": {"type": "null"}},
                         }
@@ -233,6 +280,8 @@ class RunSpec(DocumentEnvelope):
             )
         if self.operation == "verify" and set(self.policy.allowed_stages) != {"verify"}:
             raise ValueError("verify permits only the verification stage")
+        if self.operation == "verify" and not self.policy.allowed_commands:
+            raise ValueError("verify requires at least one deterministic command")
         if self.operation == "author" and self.verification_input is not None:
             raise ValueError("author does not accept verification_input")
         if self.operation == "verify" and self.verification_input is None:
@@ -244,6 +293,7 @@ __all__ = [
     "CapabilityRequirements",
     "Command",
     "ContextInput",
+    "ModelProfileName",
     "OutputSpec",
     "ResumeInput",
     "RunPolicy",

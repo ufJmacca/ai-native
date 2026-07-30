@@ -10,12 +10,17 @@
           "type": "integer"
         },
         "digest": {
+          "maxLength": 71,
+          "minLength": 71,
           "pattern": "^sha256:[0-9a-f]{64}$",
           "title": "Digest",
           "type": "string"
         },
         "media_type": {
           "maxLength": 256,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
           "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$",
           "title": "Media Type",
           "type": "string"
@@ -23,6 +28,9 @@
         "path": {
           "maxLength": 4096,
           "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
           "pattern": "^(?!/)(?!.*//)(?!.*\\\\)(?!.*\\u0000)(?!.*(?:^|/)\\.\\.?($|/))(?!.*(?:^|/)\\.git($|/))(?!.*[?*\\[])(?!.*\\/$).+$",
           "title": "Path",
           "type": "string"
@@ -41,6 +49,8 @@
       "additionalProperties": false,
       "properties": {
         "base_commit_sha": {
+          "maxLength": 40,
+          "minLength": 40,
           "pattern": "^[0-9a-f]{40}$",
           "title": "Base Commit Sha",
           "type": "string"
@@ -54,6 +64,9 @@
         "repository_id": {
           "maxLength": 512,
           "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
           "title": "Repository Id",
           "type": "string"
         }
@@ -72,36 +85,54 @@
         "attempt_id": {
           "maxLength": 512,
           "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
           "title": "Attempt Id",
           "type": "string"
         },
         "correlation_id": {
           "maxLength": 512,
           "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
           "title": "Correlation Id",
           "type": "string"
         },
         "delivery_phase_id": {
           "maxLength": 512,
           "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
           "title": "Delivery Phase Id",
           "type": "string"
         },
         "run_id": {
           "maxLength": 512,
           "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
           "title": "Run Id",
           "type": "string"
         },
         "work_item_id": {
           "maxLength": 512,
           "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
           "title": "Work Item Id",
           "type": "string"
         },
         "work_item_revision_id": {
           "maxLength": 512,
           "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
           "title": "Work Item Revision Id",
           "type": "string"
         }
@@ -131,12 +162,13 @@
               "type": "null"
             }
           ],
-          "default": null,
           "title": "Image"
         },
         "source_commit": {
           "anyOf": [
             {
+              "maxLength": 40,
+              "minLength": 40,
               "pattern": "^[0-9a-f]{40}$",
               "type": "string"
             },
@@ -144,7 +176,6 @@
               "type": "null"
             }
           ],
-          "default": null,
           "title": "Source Commit"
         },
         "version": {
@@ -155,7 +186,9 @@
         }
       },
       "required": [
-        "version"
+        "version",
+        "image",
+        "source_commit"
       ],
       "title": "RunnerBuildIdentity",
       "type": "object"
@@ -231,6 +264,11 @@
         "properties": {
           "change_set": {
             "type": "null"
+          },
+          "completed_stages": {
+            "items": {
+              "const": "verify"
+            }
           }
         }
       }
@@ -277,6 +315,11 @@
       },
       "then": {
         "properties": {
+          "completed_stages": {
+            "const": [
+              "verify"
+            ]
+          },
           "verification_evidence": {
             "not": {
               "type": "null"
@@ -342,17 +385,29 @@
     },
     "created_at": {
       "format": "date-time",
+      "maxLength": 30,
+      "minLength": 20,
+      "not": {
+        "pattern": "[\\u0000-\\u001f\\u007f]"
+      },
       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$",
       "title": "Created At",
       "type": "string"
     },
     "event_stream_digest": {
+      "maxLength": 71,
+      "minLength": 71,
       "pattern": "^sha256:[0-9a-f]{64}$",
       "title": "Event Stream Digest",
       "type": "string"
     },
     "finished_at": {
       "format": "date-time",
+      "maxLength": 30,
+      "minLength": 20,
+      "not": {
+        "pattern": "[\\u0000-\\u001f\\u007f]"
+      },
       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$",
       "title": "Finished At",
       "type": "string"
@@ -365,8 +420,7 @@
         {
           "type": "null"
         }
-      ],
-      "default": null
+      ]
     },
     "latest_checkpoint": {
       "anyOf": [
@@ -379,7 +433,7 @@
       ]
     },
     "message": {
-      "maxLength": 16384,
+      "maxLength": 4096,
       "minLength": 1,
       "title": "Message",
       "type": "string"
@@ -408,6 +462,8 @@
       "type": "string"
     },
     "output_manifest_digest": {
+      "maxLength": 71,
+      "minLength": 71,
       "pattern": "^sha256:[0-9a-f]{64}$",
       "title": "Output Manifest Digest",
       "type": "string"
@@ -420,6 +476,9 @@
     "reason_code": {
       "maxLength": 128,
       "minLength": 1,
+      "not": {
+        "pattern": "[\\u0000-\\u001f\\u007f]"
+      },
       "pattern": "^[a-z][a-z0-9_]*$",
       "title": "Reason Code",
       "type": "string"
@@ -432,10 +491,11 @@
         {
           "type": "null"
         }
-      ],
-      "default": null
+      ]
     },
     "result_digest": {
+      "maxLength": 71,
+      "minLength": 71,
       "pattern": "^sha256:[0-9a-f]{64}$",
       "title": "Result Digest",
       "type": "string"
@@ -455,6 +515,11 @@
     },
     "started_at": {
       "format": "date-time",
+      "maxLength": 30,
+      "minLength": 20,
+      "not": {
+        "pattern": "[\\u0000-\\u001f\\u007f]"
+      },
       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$",
       "title": "Started At",
       "type": "string"
@@ -475,6 +540,8 @@
     "schema",
     "schema_version",
     "created_at",
+    "identity",
+    "repository",
     "operation",
     "outcome",
     "reason_code",

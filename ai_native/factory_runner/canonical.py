@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import hashlib
 from typing import Any
 
@@ -7,14 +8,21 @@ from pydantic import BaseModel
 import rfc8785
 
 
+def _json_containers(value: Any) -> Any:
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+    if isinstance(value, Mapping):
+        return {key: _json_containers(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_json_containers(item) for item in value]
+    return value
+
+
 def canonical_json_bytes(value: Any) -> bytes:
     """Return the RFC 8785 canonical JSON representation of ``value``."""
 
     try:
-        serializable = (
-            value.model_dump(mode="json") if isinstance(value, BaseModel) else value
-        )
-        return rfc8785.dumps(serializable)
+        return rfc8785.dumps(_json_containers(value))
     except Exception as exc:
         raise ValueError("value cannot be represented as canonical JSON") from exc
 

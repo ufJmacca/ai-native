@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, StrictStr, WithJsonSchema, model_validator
 
 from ai_native.factory_runner.contracts.common import (
     ArtifactReference,
     FactoryStage,
-    NonEmptyString,
     RepositoryIdentity,
     RunIdentity,
     RunnerBuildIdentity,
@@ -31,6 +30,34 @@ RunOutcome = Literal[
     "invalid_input",
     "checkpoint_incompatible",
     "policy_denied",
+]
+ReasonCode = Annotated[
+    StrictStr,
+    Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[a-z][a-z0-9_]*$",
+    ),
+    WithJsonSchema(
+        {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": r"^[a-z][a-z0-9_]*$",
+            "not": {"pattern": r"[\u0000-\u001f\u007f]"},
+        }
+    ),
+]
+ResultMessage = Annotated[
+    StrictStr,
+    Field(min_length=1, max_length=4096),
+    WithJsonSchema(
+        {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+        }
+    ),
 ]
 
 
@@ -63,7 +90,14 @@ class RunResult(StrictContractModel):
                         "properties": {"operation": {"const": "verify"}},
                         "required": ["operation"],
                     },
-                    "then": {"properties": {"change_set": {"type": "null"}}},
+                    "then": {
+                        "properties": {
+                            "change_set": {"type": "null"},
+                            "completed_stages": {
+                                "items": {"const": "verify"},
+                            },
+                        }
+                    },
                 },
                 {
                     "if": {
@@ -85,7 +119,8 @@ class RunResult(StrictContractModel):
                     },
                     "then": {
                         "properties": {
-                            "verification_evidence": {"not": {"type": "null"}}
+                            "verification_evidence": {"not": {"type": "null"}},
+                            "completed_stages": {"const": ["verify"]},
                         }
                     },
                 },
@@ -110,16 +145,12 @@ class RunResult(StrictContractModel):
     schema_: Literal["run-result/v1"] = Field(alias="schema")
     schema_version: SchemaVersion
     created_at: UtcTimestamp
-    identity: RunIdentity | None = None
-    repository: RepositoryIdentity | None = None
+    identity: RunIdentity | None
+    repository: RepositoryIdentity | None
     operation: RunnerOperation
     outcome: RunOutcome
-    reason_code: str = Field(
-        min_length=1,
-        max_length=128,
-        pattern=r"^[a-z][a-z0-9_]*$",
-    )
-    message: NonEmptyString = Field(max_length=4096)
+    reason_code: ReasonCode
+    message: ResultMessage
     started_at: UtcTimestamp
     finished_at: UtcTimestamp
     completed_stages: tuple[FactoryStage, ...] = Field(
@@ -137,6 +168,13 @@ class RunResult(StrictContractModel):
     def validate_timing_and_result_references(self) -> RunResult:
         ensure_started_before_finished(self.started_at, self.finished_at)
         require_unique(self.completed_stages, "completed_stages")
+        if self.operation == "verify":
+            if any(stage != "verify" for stage in self.completed_stages):
+                raise ValueError("verify results may complete only the verify stage")
+            if self.outcome == "succeeded" and self.completed_stages != ("verify",):
+                raise ValueError(
+                    "successful verify results require exactly the verify stage"
+                )
         if self.outcome != "invalid_input" and (
             self.identity is None or self.repository is None
         ):

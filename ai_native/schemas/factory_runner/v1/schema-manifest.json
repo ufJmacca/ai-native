@@ -5,43 +5,43 @@
   "protocol": "factory-runner-protocol/v1",
   "schemas": [
     {
-      "digest": "sha256:906288e82399a0bf147af1462eeae31ee81e1f5a52966ce6b7be78bcd6e1aaf7",
+      "digest": "sha256:253558b71af3baa73eeec7d5d93b6ae470a59a9124775165f4413ad706ac0934",
       "path": "change-set.schema.json",
       "schema": "change-set/v1",
       "schema_id": "urn:ai-native:factory-runner:v1:change-set"
     },
     {
-      "digest": "sha256:ac9df4ec3a9ce25634f062a68e7e2b079c589bb0ccffbfa18ad950d04a036900",
+      "digest": "sha256:c526da97a1477fcd952bc655c54c5a697d225159447afac3aa02b0306b109ac9",
       "path": "checkpoint.schema.json",
       "schema": "checkpoint/v1",
       "schema_id": "urn:ai-native:factory-runner:v1:checkpoint"
     },
     {
-      "digest": "sha256:1f7eeec2f3992435636e81195c313e7cf1c5a3b3bde8743a81b4a078e580161d",
+      "digest": "sha256:af0ef0a06de95b6581b19393fede65b990862cdc20b360c41ee23e6dde9dbe46",
       "path": "context-bundle.schema.json",
       "schema": "context-bundle/v1",
       "schema_id": "urn:ai-native:factory-runner:v1:context-bundle"
     },
     {
-      "digest": "sha256:a635f64fa658fc76035a36a24e2b5adb7a3fb4602ae39023e4e2904b69dcf07a",
+      "digest": "sha256:b7c20373d41266a1924780ec6d0babd25d86f5c45898db2a0329f56b7c9b862b",
       "path": "run-result.schema.json",
       "schema": "run-result/v1",
       "schema_id": "urn:ai-native:factory-runner:v1:run-result"
     },
     {
-      "digest": "sha256:de171381915f2bcebb636704386f0a44684b3119bc20e9e603f959fd627a19b1",
+      "digest": "sha256:19df7ea197c0dbc0703bce338d98ecb072dcc64507765869178e0c91adcb9056",
       "path": "run-spec.schema.json",
       "schema": "run-spec/v1",
       "schema_id": "urn:ai-native:factory-runner:v1:run-spec"
     },
     {
-      "digest": "sha256:871f3615aefcb1057eed10dd118c3009c5dc87c806190f0caff5174a236abad8",
+      "digest": "sha256:0f27f67a1653532091f14da8688dc2b0c25007e0a62cf1852138c6d19309d73a",
       "path": "runner-event.schema.json",
       "schema": "runner-event/v1",
       "schema_id": "urn:ai-native:factory-runner:v1:runner-event"
     },
     {
-      "digest": "sha256:ec73ad2602db3c43fc238179f582f14e3181b594b6c5450840fd3524163059df",
+      "digest": "sha256:a027dbbe78e9dbdc67b05883325ac70951bec3bdf70e397bdad711ece13c31bf",
       "path": "verification-evidence.schema.json",
       "schema": "verification-evidence/v1",
       "schema_id": "urn:ai-native:factory-runner:v1:verification-evidence"

@@ -30,6 +30,7 @@ _PROTOCOL_EXPORTS = frozenset(
         "RunnerEvent",
         "VerificationEvidence",
         "canonical_json_bytes",
+        "changed_file_manifest_digest",
         "contract_document_digest",
         "load_contract_schema",
         "negotiate_protocol",

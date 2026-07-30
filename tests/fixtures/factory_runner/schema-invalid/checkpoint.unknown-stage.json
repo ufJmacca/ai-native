@@ -28,6 +28,8 @@
   },
   "context_bundle_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "run_spec_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "operation": "author",
+  "verification_change_set_digest": null,
   "workspace_patch_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
   "completed_stages": [
     "commit"
@@ -96,4 +98,3 @@
   ],
   "checkpoint_digest": "sha256:2ac3bc2c794204b690803149e7d1b5b021ebd0a2443824494f4af33d2378baa8"
 }
-

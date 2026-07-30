@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import Literal
 
 from pydantic import ConfigDict, Field, StrictBool, field_validator, model_validator
 
+from ai_native.factory_runner.canonical import canonical_json_bytes, sha256_digest
 from ai_native.factory_runner.contracts.common import (
     ArtifactReference,
     DocumentEnvelope,
+    JsonInteger,
+    MAX_SAFE_INTEGER,
     NonEmptyString,
     OpaqueId,
     RepositoryPath,
@@ -20,6 +24,7 @@ RegularFileMode = Literal["100644", "100755"]
 
 
 class PatchArtifact(ArtifactReference):
+    byte_size: JsonInteger = Field(gt=0, le=MAX_SAFE_INTEGER)
     media_type: Literal["application/vnd.git.binary-patch"]
 
 
@@ -148,6 +153,49 @@ class ChangedFile(StrictContractModel):
         return self
 
 
+def _validated_changed_file_manifest(
+    entries: Sequence[ChangedFile | Mapping[str, object]],
+) -> tuple[ChangedFile, ...]:
+    if isinstance(entries, (str, bytes, bytearray)) or not isinstance(
+        entries,
+        Sequence,
+    ):
+        raise ValueError("changed-file manifest must be an ordered sequence")
+    if not entries:
+        raise ValueError("changed-file manifest must be a non-empty sequence")
+    validated = tuple(
+        ChangedFile.model_validate(
+            entry.model_dump(mode="python") if isinstance(entry, ChangedFile) else entry
+        )
+        for entry in entries
+    )
+    target_paths = tuple(entry.path for entry in validated)
+    if len(target_paths) != len(set(target_paths)):
+        raise ValueError("changed file target paths must be unique")
+    source_paths = tuple(
+        entry.previous_path
+        if entry.operation == "rename"
+        else entry.path
+        if entry.operation in {"modify", "delete"}
+        else None
+        for entry in validated
+    )
+    present_source_paths = tuple(path for path in source_paths if path is not None)
+    if len(present_source_paths) != len(set(present_source_paths)):
+        raise ValueError("changed file source paths must be unique")
+    return validated
+
+
+def changed_file_manifest_digest(
+    entries: Sequence[ChangedFile | Mapping[str, object]],
+) -> str:
+    """Digest a validated, ordered changed-file manifest."""
+
+    validated = _validated_changed_file_manifest(entries)
+    manifest = [entry.model_dump(mode="json") for entry in validated]
+    return sha256_digest(canonical_json_bytes(manifest))
+
+
 class AcceptanceCriterionResult(StrictContractModel):
     criterion: NonEmptyString
     status: Literal["passed", "failed", "blocked", "not_run"]
@@ -180,7 +228,10 @@ class ChangeSet(DocumentEnvelope):
         cls,
         value: tuple[ChangedFile, ...],
     ) -> tuple[ChangedFile, ...]:
-        paths = [entry.path for entry in value]
-        if len(paths) != len(set(paths)):
-            raise ValueError("changed file paths must be unique")
-        return value
+        return _validated_changed_file_manifest(value)
+
+    @model_validator(mode="after")
+    def diff_digest_binds_changed_files(self) -> ChangeSet:
+        if self.diff_digest != changed_file_manifest_digest(self.changed_files):
+            raise ValueError("diff_digest must bind the ordered changed-file manifest")
+        return self

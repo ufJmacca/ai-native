@@ -10,12 +10,17 @@
           "type": "integer"
         },
         "digest": {
+          "maxLength": 71,
+          "minLength": 71,
           "pattern": "^sha256:[0-9a-f]{64}$",
           "title": "Digest",
           "type": "string"
         },
         "media_type": {
           "maxLength": 256,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
           "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$",
           "title": "Media Type",
           "type": "string"
@@ -23,6 +28,9 @@
         "path": {
           "maxLength": 4096,
           "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
           "pattern": "^(?!/)(?!.*//)(?!.*\\\\)(?!.*\\u0000)(?!.*(?:^|/)\\.\\.?($|/))(?!.*(?:^|/)\\.git($|/))(?!.*[?*\\[])(?!.*\\/$).+$",
           "title": "Path",
           "type": "string"
@@ -71,22 +79,7 @@
           },
           "propertyNames": {
             "not": {
-              "enum": [
-                "authorization",
-                "branch_name",
-                "credential",
-                "github_token",
-                "hidden_reasoning",
-                "merge",
-                "password",
-                "pr_body",
-                "pr_title",
-                "publication_token",
-                "pull_request",
-                "raw_reasoning",
-                "secret",
-                "token"
-              ]
+              "pattern": "^(?:[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][rR][aA][nN][cC][hH]_[nN][aA][mM][eE]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[gG][iI][tT][hH][uU][bB]_[tT][oO][kK][eE][nN]|[hH][iI][dD][dD][eE][nN]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[mM][eE][rR][gG][eE]|[pP][aA][sS][sS][wW][oO][rR][dD]|[pP][rR]_[bB][oO][dD][yY]|[pP][rR]_[tT][iI][tT][lL][eE]|[pP][uU][bB][lL][iI][cC][aA][tT][iI][oO][nN]_[tT][oO][kK][eE][nN]|[pP][uU][lL][lL]_[rR][eE][qQ][uU][eE][sS][tT]|[rR][aA][wW]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[sS][eE][cC][rR][eE][tT]|[tT][oO][kK][eE][nN])$"
             }
           },
           "type": "object"
@@ -127,22 +120,7 @@
           },
           "propertyNames": {
             "not": {
-              "enum": [
-                "authorization",
-                "branch_name",
-                "credential",
-                "github_token",
-                "hidden_reasoning",
-                "merge",
-                "password",
-                "pr_body",
-                "pr_title",
-                "publication_token",
-                "pull_request",
-                "raw_reasoning",
-                "secret",
-                "token"
-              ]
+              "pattern": "^(?:[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][rR][aA][nN][cC][hH]_[nN][aA][mM][eE]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[gG][iI][tT][hH][uU][bB]_[tT][oO][kK][eE][nN]|[hH][iI][dD][dD][eE][nN]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[mM][eE][rR][gG][eE]|[pP][aA][sS][sS][wW][oO][rR][dD]|[pP][rR]_[bB][oO][dD][yY]|[pP][rR]_[tT][iI][tT][lL][eE]|[pP][uU][bB][lL][iI][cC][aA][tT][iI][oO][nN]_[tT][oO][kK][eE][nN]|[pP][uU][lL][lL]_[rR][eE][qQ][uU][eE][sS][tT]|[rR][aA][wW]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[sS][eE][cC][rR][eE][tT]|[tT][oO][kK][eE][nN])$"
             }
           },
           "type": "object"
@@ -183,22 +161,7 @@
           },
           "propertyNames": {
             "not": {
-              "enum": [
-                "authorization",
-                "branch_name",
-                "credential",
-                "github_token",
-                "hidden_reasoning",
-                "merge",
-                "password",
-                "pr_body",
-                "pr_title",
-                "publication_token",
-                "pull_request",
-                "raw_reasoning",
-                "secret",
-                "token"
-              ]
+              "pattern": "^(?:[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][rR][aA][nN][cC][hH]_[nN][aA][mM][eE]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[gG][iI][tT][hH][uU][bB]_[tT][oO][kK][eE][nN]|[hH][iI][dD][dD][eE][nN]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[mM][eE][rR][gG][eE]|[pP][aA][sS][sS][wW][oO][rR][dD]|[pP][rR]_[bB][oO][dD][yY]|[pP][rR]_[tT][iI][tT][lL][eE]|[pP][uU][bB][lL][iI][cC][aA][tT][iI][oO][nN]_[tT][oO][kK][eE][nN]|[pP][uU][lL][lL]_[rR][eE][qQ][uU][eE][sS][tT]|[rR][aA][wW]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[sS][eE][cC][rR][eE][tT]|[tT][oO][kK][eE][nN])$"
             }
           },
           "type": "object"
@@ -239,22 +202,7 @@
           },
           "propertyNames": {
             "not": {
-              "enum": [
-                "authorization",
-                "branch_name",
-                "credential",
-                "github_token",
-                "hidden_reasoning",
-                "merge",
-                "password",
-                "pr_body",
-                "pr_title",
-                "publication_token",
-                "pull_request",
-                "raw_reasoning",
-                "secret",
-                "token"
-              ]
+              "pattern": "^(?:[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][rR][aA][nN][cC][hH]_[nN][aA][mM][eE]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[gG][iI][tT][hH][uU][bB]_[tT][oO][kK][eE][nN]|[hH][iI][dD][dD][eE][nN]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[mM][eE][rR][gG][eE]|[pP][aA][sS][sS][wW][oO][rR][dD]|[pP][rR]_[bB][oO][dD][yY]|[pP][rR]_[tT][iI][tT][lL][eE]|[pP][uU][bB][lL][iI][cC][aA][tT][iI][oO][nN]_[tT][oO][kK][eE][nN]|[pP][uU][lL][lL]_[rR][eE][qQ][uU][eE][sS][tT]|[rR][aA][wW]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[sS][eE][cC][rR][eE][tT]|[tT][oO][kK][eE][nN])$"
             }
           },
           "type": "object"
@@ -295,22 +243,7 @@
           },
           "propertyNames": {
             "not": {
-              "enum": [
-                "authorization",
-                "branch_name",
-                "credential",
-                "github_token",
-                "hidden_reasoning",
-                "merge",
-                "password",
-                "pr_body",
-                "pr_title",
-                "publication_token",
-                "pull_request",
-                "raw_reasoning",
-                "secret",
-                "token"
-              ]
+              "pattern": "^(?:[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][rR][aA][nN][cC][hH]_[nN][aA][mM][eE]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[gG][iI][tT][hH][uU][bB]_[tT][oO][kK][eE][nN]|[hH][iI][dD][dD][eE][nN]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[mM][eE][rR][gG][eE]|[pP][aA][sS][sS][wW][oO][rR][dD]|[pP][rR]_[bB][oO][dD][yY]|[pP][rR]_[tT][iI][tT][lL][eE]|[pP][uU][bB][lL][iI][cC][aA][tT][iI][oO][nN]_[tT][oO][kK][eE][nN]|[pP][uU][lL][lL]_[rR][eE][qQ][uU][eE][sS][tT]|[rR][aA][wW]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[sS][eE][cC][rR][eE][tT]|[tT][oO][kK][eE][nN])$"
             }
           },
           "type": "object"
@@ -351,22 +284,7 @@
           },
           "propertyNames": {
             "not": {
-              "enum": [
-                "authorization",
-                "branch_name",
-                "credential",
-                "github_token",
-                "hidden_reasoning",
-                "merge",
-                "password",
-                "pr_body",
-                "pr_title",
-                "publication_token",
-                "pull_request",
-                "raw_reasoning",
-                "secret",
-                "token"
-              ]
+              "pattern": "^(?:[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][rR][aA][nN][cC][hH]_[nN][aA][mM][eE]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[gG][iI][tT][hH][uU][bB]_[tT][oO][kK][eE][nN]|[hH][iI][dD][dD][eE][nN]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[mM][eE][rR][gG][eE]|[pP][aA][sS][sS][wW][oO][rR][dD]|[pP][rR]_[bB][oO][dD][yY]|[pP][rR]_[tT][iI][tT][lL][eE]|[pP][uU][bB][lL][iI][cC][aA][tT][iI][oO][nN]_[tT][oO][kK][eE][nN]|[pP][uU][lL][lL]_[rR][eE][qQ][uU][eE][sS][tT]|[rR][aA][wW]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[sS][eE][cC][rR][eE][tT]|[tT][oO][kK][eE][nN])$"
             }
           },
           "type": "object"
@@ -407,22 +325,7 @@
           },
           "propertyNames": {
             "not": {
-              "enum": [
-                "authorization",
-                "branch_name",
-                "credential",
-                "github_token",
-                "hidden_reasoning",
-                "merge",
-                "password",
-                "pr_body",
-                "pr_title",
-                "publication_token",
-                "pull_request",
-                "raw_reasoning",
-                "secret",
-                "token"
-              ]
+              "pattern": "^(?:[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][rR][aA][nN][cC][hH]_[nN][aA][mM][eE]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[gG][iI][tT][hH][uU][bB]_[tT][oO][kK][eE][nN]|[hH][iI][dD][dD][eE][nN]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[mM][eE][rR][gG][eE]|[pP][aA][sS][sS][wW][oO][rR][dD]|[pP][rR]_[bB][oO][dD][yY]|[pP][rR]_[tT][iI][tT][lL][eE]|[pP][uU][bB][lL][iI][cC][aA][tT][iI][oO][nN]_[tT][oO][kK][eE][nN]|[pP][uU][lL][lL]_[rR][eE][qQ][uU][eE][sS][tT]|[rR][aA][wW]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[sS][eE][cC][rR][eE][tT]|[tT][oO][kK][eE][nN])$"
             }
           },
           "type": "object"
@@ -459,22 +362,7 @@
           "maxProperties": 0,
           "propertyNames": {
             "not": {
-              "enum": [
-                "authorization",
-                "branch_name",
-                "credential",
-                "github_token",
-                "hidden_reasoning",
-                "merge",
-                "password",
-                "pr_body",
-                "pr_title",
-                "publication_token",
-                "pull_request",
-                "raw_reasoning",
-                "secret",
-                "token"
-              ]
+              "pattern": "^(?:[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][rR][aA][nN][cC][hH]_[nN][aA][mM][eE]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[gG][iI][tT][hH][uU][bB]_[tT][oO][kK][eE][nN]|[hH][iI][dD][dD][eE][nN]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[mM][eE][rR][gG][eE]|[pP][aA][sS][sS][wW][oO][rR][dD]|[pP][rR]_[bB][oO][dD][yY]|[pP][rR]_[tT][iI][tT][lL][eE]|[pP][uU][bB][lL][iI][cC][aA][tT][iI][oO][nN]_[tT][oO][kK][eE][nN]|[pP][uU][lL][lL]_[rR][eE][qQ][uU][eE][sS][tT]|[rR][aA][wW]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[sS][eE][cC][rR][eE][tT]|[tT][oO][kK][eE][nN])$"
             }
           },
           "type": "object"
@@ -496,6 +384,9 @@
     "attempt_id": {
       "maxLength": 512,
       "minLength": 1,
+      "not": {
+        "pattern": "[\\u0000-\\u001f\\u007f]"
+      },
       "title": "Attempt Id",
       "type": "string"
     },
@@ -504,6 +395,9 @@
         {
           "maxLength": 512,
           "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
           "type": "string"
         },
         {
@@ -515,6 +409,9 @@
     "correlation_id": {
       "maxLength": 512,
       "minLength": 1,
+      "not": {
+        "pattern": "[\\u0000-\\u001f\\u007f]"
+      },
       "title": "Correlation Id",
       "type": "string"
     },
@@ -549,6 +446,9 @@
     "run_id": {
       "maxLength": 512,
       "minLength": 1,
+      "not": {
+        "pattern": "[\\u0000-\\u001f\\u007f]"
+      },
       "title": "Run Id",
       "type": "string"
     },
@@ -558,22 +458,7 @@
       },
       "propertyNames": {
         "not": {
-          "enum": [
-            "authorization",
-            "branch_name",
-            "credential",
-            "github_token",
-            "hidden_reasoning",
-            "merge",
-            "password",
-            "pr_body",
-            "pr_title",
-            "publication_token",
-            "pull_request",
-            "raw_reasoning",
-            "secret",
-            "token"
-          ]
+          "pattern": "^(?:[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][rR][aA][nN][cC][hH]_[nN][aA][mM][eE]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[gG][iI][tT][hH][uU][bB]_[tT][oO][kK][eE][nN]|[hH][iI][dD][dD][eE][nN]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[mM][eE][rR][gG][eE]|[pP][aA][sS][sS][wW][oO][rR][dD]|[pP][rR]_[bB][oO][dD][yY]|[pP][rR]_[tT][iI][tT][lL][eE]|[pP][uU][bB][lL][iI][cC][aA][tT][iI][oO][nN]_[tT][oO][kK][eE][nN]|[pP][uU][lL][lL]_[rR][eE][qQ][uU][eE][sS][tT]|[rR][aA][wW]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[sS][eE][cC][rR][eE][tT]|[tT][oO][kK][eE][nN])$"
         }
       },
       "type": "object"
@@ -596,6 +481,11 @@
     },
     "timestamp": {
       "format": "date-time",
+      "maxLength": 30,
+      "minLength": 20,
+      "not": {
+        "pattern": "[\\u0000-\\u001f\\u007f]"
+      },
       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$",
       "title": "Timestamp",
       "type": "string"

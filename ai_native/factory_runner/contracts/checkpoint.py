@@ -1,15 +1,24 @@
 from __future__ import annotations
 
-import json
 import math
+from collections.abc import Mapping
 from typing import Any, Literal
 
-from pydantic import Field, StrictInt, field_validator, model_validator
+from pydantic import (
+    ConfigDict,
+    Field,
+    StrictStr,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
+from ai_native.factory_runner.canonical import canonical_json_bytes
 from ai_native.factory_runner.contracts.common import (
     ArtifactReference,
     DocumentEnvelope,
     FactoryStage,
+    JsonInteger,
     MAX_SAFE_INTEGER,
     NonEmptyString,
     OpaqueId,
@@ -20,10 +29,12 @@ from ai_native.factory_runner.contracts.common import (
     bounded_json_object_schema,
     freeze_mapping,
     require_unique,
+    thaw_json_value,
 )
 from ai_native.factory_runner.contracts.run_spec import (
     CapabilityName,
     RunPolicy,
+    RunnerOperation,
 )
 
 
@@ -44,9 +55,9 @@ class CheckpointCompatibility(StrictContractModel):
 
 
 class ResourceBudget(StrictContractModel):
-    wall_seconds: StrictInt = Field(ge=0, le=MAX_SAFE_INTEGER)
-    agent_turns: StrictInt = Field(ge=0, le=MAX_SAFE_INTEGER)
-    model_tokens: StrictInt = Field(ge=0, le=MAX_SAFE_INTEGER)
+    wall_seconds: JsonInteger = Field(ge=0, le=MAX_SAFE_INTEGER)
+    agent_turns: JsonInteger = Field(ge=0, le=MAX_SAFE_INTEGER)
+    model_tokens: JsonInteger = Field(ge=0, le=MAX_SAFE_INTEGER)
 
 
 class CheckpointBudgets(StrictContractModel):
@@ -69,11 +80,11 @@ def _validate_json_value(value: Any, *, depth: int = 0) -> None:
         if not -MAX_SAFE_INTEGER <= value <= MAX_SAFE_INTEGER:
             raise ValueError("workflow_state number exceeds the RFC 8785 domain")
         return
-    if isinstance(value, list):
+    if isinstance(value, list | tuple):
         for item in value:
             _validate_json_value(item, depth=depth + 1)
         return
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         for key, item in value.items():
             if not isinstance(key, str):
                 raise ValueError("workflow_state keys must be strings")
@@ -83,6 +94,35 @@ def _validate_json_value(value: Any, *, depth: int = 0) -> None:
 
 
 class Checkpoint(DocumentEnvelope):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "allOf": [
+                {
+                    "if": {
+                        "properties": {"operation": {"const": "author"}},
+                        "required": ["operation"],
+                    },
+                    "then": {
+                        "properties": {
+                            "verification_change_set_digest": {"type": "null"}
+                        }
+                    },
+                },
+                {
+                    "if": {
+                        "properties": {"operation": {"const": "verify"}},
+                        "required": ["operation"],
+                    },
+                    "then": {
+                        "properties": {
+                            "verification_change_set_digest": {"not": {"type": "null"}}
+                        }
+                    },
+                },
+            ]
+        }
+    )
+
     schema_: Literal["checkpoint/v1"] = Field(alias="schema")
     checkpoint_id: OpaqueId
     sequence: PositiveSequence
@@ -90,12 +130,14 @@ class Checkpoint(DocumentEnvelope):
     compatibility: CheckpointCompatibility
     context_bundle_digest: Sha256Digest
     run_spec_digest: Sha256Digest
+    operation: RunnerOperation
+    verification_change_set_digest: Sha256Digest | None
     workspace_patch_digest: Sha256Digest | None
     completed_stages: tuple[FactoryStage, ...] = Field(
         json_schema_extra={"uniqueItems": True}
     )
     next_permitted_stage: FactoryStage | None
-    workflow_state: dict[str, Any]
+    workflow_state: Mapping[StrictStr, Any]
     evidence_refs: tuple[ArtifactReference, ...]
     artifact_manifest: tuple[ArtifactReference, ...]
     authority: RunPolicy
@@ -122,25 +164,46 @@ class Checkpoint(DocumentEnvelope):
     @classmethod
     def workflow_state_is_bounded_json(
         cls,
-        value: dict[str, Any],
-    ) -> dict[str, Any]:
+        value: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
         _validate_json_value(value)
-        encoded = json.dumps(
-            value,
-            allow_nan=False,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
+        encoded = canonical_json_bytes(value)
         if len(encoded) > 262_144:
             raise ValueError("workflow_state exceeds the inline byte limit")
         return freeze_mapping(value)
+
+    @field_serializer("workflow_state")
+    def serialize_workflow_state(self, value: Mapping[str, Any]) -> dict[str, Any]:
+        return thaw_json_value(value)
+
+    @field_validator("artifact_manifest")
+    @classmethod
+    def artifact_manifest_paths_are_unique(
+        cls,
+        value: tuple[ArtifactReference, ...],
+    ) -> tuple[ArtifactReference, ...]:
+        require_unique(
+            tuple(artifact.path for artifact in value),
+            "artifact_manifest paths",
+        )
+        return value
 
     @model_validator(mode="after")
     def checkpoint_is_internally_consistent(self) -> Checkpoint:
         if self.producer_attempt_id != self.identity.attempt_id:
             raise ValueError(
                 "producer_attempt_id must equal the checkpoint attempt identity"
+            )
+        if (
+            self.operation == "author"
+            and self.verification_change_set_digest is not None
+        ):
+            raise ValueError(
+                "author checkpoints must not bind a verification change set"
+            )
+        if self.operation == "verify" and self.verification_change_set_digest is None:
+            raise ValueError(
+                "verify checkpoints require a verification change-set digest"
             )
         require_unique(self.completed_stages, "completed_stages")
         require_unique(self.object_digests, "object_digests")
