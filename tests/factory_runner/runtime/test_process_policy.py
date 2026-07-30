@@ -10,6 +10,7 @@ from ai_native.factory_runner.process_policy import (
     FactoryPolicyViolation,
     audit_host_environment,
     build_child_environment,
+    resolve_trusted_command,
     validate_declared_command,
 )
 
@@ -25,6 +26,7 @@ from ai_native.factory_runner.process_policy import (
         "AZURE_CLIENT_SECRET",
         "GOOGLE_APPLICATION_CREDENTIALS",
         "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
         "AINATIVE_RUN_REGISTRY_AUTH_TOKEN",
         "AINATIVE_TELEMETRY_TOKEN",
         "DOCKER_AUTH_CONFIG",
@@ -80,7 +82,18 @@ def test_declared_command_must_match_an_entire_argument_vector() -> None:
         ("git", "push", "origin", "HEAD"),
         ("/usr/bin/git", "commit", "-m", "publish"),
         ("git", "-c", "credential.helper=", "push", "origin", "HEAD"),
+        (
+            "git",
+            "-c",
+            "alias.publish=!git push origin HEAD",
+            "publish",
+        ),
         ("git", "merge", "topic"),
+        ("git", "update-ref", "refs/tags/escaped", "HEAD"),
+        ("git", "diff", "--ext-diff"),
+        ("git", "grep", "--open-files-in-pager=cat", "needle"),
+        ("sh", "-c", "pytest -q"),
+        ("/bin/bash", "-lc", "git diff --check"),
     ],
 )
 def test_publication_commands_are_denied_even_when_declared(
@@ -131,7 +144,7 @@ def test_child_environment_is_filtered_and_forces_noninteractive_git(
         temp_dir=temp_dir,
     )
 
-    assert environment["PATH"] == source_environment["PATH"]
+    assert environment["PATH"] == "/usr/local/bin:/usr/bin:/bin"
     assert environment["LANG"] == source_environment["LANG"]
     assert "UNDECLARED_VALUE" not in environment
     assert environment["HOME"] == str(sterile_home)
@@ -139,10 +152,16 @@ def test_child_environment_is_filtered_and_forces_noninteractive_git(
     assert environment["GIT_CONFIG_NOSYSTEM"] == "1"
     assert environment["GIT_CONFIG_GLOBAL"] == os.devnull
     assert environment["GIT_TERMINAL_PROMPT"] == "0"
+    assert environment["GIT_ALLOW_PROTOCOL"] == ""
+    assert environment["GIT_PROTOCOL_FROM_USER"] == "0"
+    assert environment["GIT_EXTERNAL_DIFF"] == ""
+    assert environment["GIT_OPTIONAL_LOCKS"] == "0"
+    assert environment["GIT_PAGER"] == "cat"
     assert environment["GCM_INTERACTIVE"].casefold() in {"never", "false", "0"}
 
     overrides = _git_config_overrides(environment)
     assert overrides["credential.helper"] == ""
+    assert overrides["core.fsmonitor"] == "false"
     hooks_path = Path(overrides["core.hooksPath"])
     assert hooks_path.is_absolute()
     assert hooks_path.is_dir()
@@ -179,3 +198,47 @@ def test_environment_denylist_overrides_the_declared_allowlist(
             sterile_home=sterile_home,
             temp_dir=temp_dir,
         )
+
+
+def test_executable_resolution_rejects_mutable_workspace_binaries(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    output = tmp_path / "output"
+    workspace.mkdir()
+    output.mkdir()
+    executable = workspace / "pytest"
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o755)
+
+    with pytest.raises(FactoryPolicyViolation):
+        resolve_trusted_command(
+            (str(executable), "-q"),
+            environment={"PATH": str(workspace)},
+            prohibited_roots=(workspace, output),
+        )
+
+
+def test_executable_resolution_ignores_caller_controlled_path(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    fake_git = workspace / "git"
+    fake_git.write_text("#!/bin/sh\nexit 99\n", encoding="utf-8")
+    fake_git.chmod(0o755)
+    environment = build_child_environment(
+        allowed_keys=("PATH",),
+        source_env={"PATH": str(workspace)},
+        sterile_home=tmp_path / "home",
+        temp_dir=tmp_path / "tmp",
+    )
+
+    resolved = resolve_trusted_command(
+        ("git", "diff", "--check"),
+        environment=environment,
+        prohibited_roots=(workspace,),
+    )
+
+    assert resolved[0] != str(fake_git)
+    assert Path(resolved[0]).is_absolute()

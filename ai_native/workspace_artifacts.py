@@ -10,6 +10,9 @@ WORKSPACE_ARTIFACT_FILES = ("red.log", "green.log", "refactor-notes.md")
 
 
 def workspace_run_dir(state: RunState, repo_root: Path | None = None) -> Path:
+    factory_artifacts_root = state.metadata.get("workspace_artifacts_root")
+    if isinstance(factory_artifacts_root, str) and factory_artifacts_root:
+        return ensure_dir(Path(factory_artifacts_root))
     if repo_root is None:
         return ensure_dir(Path(state.run_dir))
     return ensure_dir(repo_root / ".ai-native" / "runs" / state.run_id)

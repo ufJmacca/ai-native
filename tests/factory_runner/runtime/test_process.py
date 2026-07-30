@@ -128,3 +128,64 @@ def test_process_runner_honours_a_shared_absolute_deadline(
     assert time.monotonic() - started < 2.0
     assert result.returncode is None
     assert result.termination_reason == "timed_out"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX process groups")
+def test_process_runner_terminates_descendants_after_leader_exits(
+    tmp_path: Path,
+) -> None:
+    canary = tmp_path / "escaped-descendant"
+
+    result = FactoryProcessRunner(termination_grace_seconds=0.05).run(
+        (
+            sys.executable,
+            "-c",
+            (
+                "import os, time; "
+                "pid = os.fork(); "
+                f"(time.sleep(0.25), open({str(canary)!r}, 'wb').close()) "
+                "if pid == 0 else None; "
+                "os._exit(0)"
+            ),
+        ),
+        cwd=tmp_path,
+        environment={},
+        timeout_seconds=2.0,
+    )
+
+    time.sleep(0.4)
+    assert result.returncode == 0
+    assert result.termination_reason == "exited"
+    assert not canary.exists()
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="requires Linux child-subreaper isolation",
+)
+def test_process_runner_terminates_detached_descendants_after_leader_exits(
+    tmp_path: Path,
+) -> None:
+    canary = tmp_path / "escaped-detached-descendant"
+
+    result = FactoryProcessRunner(termination_grace_seconds=0.1).run(
+        (
+            sys.executable,
+            "-c",
+            (
+                "import os, time; "
+                "pid = os.fork(); "
+                f"(os.setsid(), time.sleep(0.3), open({str(canary)!r}, 'wb').close()) "
+                "if pid == 0 else None; "
+                "os._exit(0)"
+            ),
+        ),
+        cwd=tmp_path,
+        environment={},
+        timeout_seconds=2.0,
+    )
+
+    time.sleep(0.5)
+    assert result.returncode == 0
+    assert result.termination_reason == "exited"
+    assert not canary.exists()

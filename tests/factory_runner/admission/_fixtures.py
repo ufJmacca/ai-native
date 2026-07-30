@@ -40,6 +40,22 @@ def _run_git(repository: Path, *arguments: str) -> str:
     return completed.stdout.strip()
 
 
+def _run_git_bytes(repository: Path, *arguments: str) -> bytes:
+    environment = {
+        **os.environ,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+    completed = subprocess.run(
+        ["git", "-C", str(repository), *arguments],
+        check=True,
+        capture_output=True,
+        env=environment,
+    )
+    return completed.stdout
+
+
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -122,29 +138,87 @@ class AdmissionCase:
         source_path = self.workspace / "src" / "app.py"
         previous_content = source_path.read_bytes()
         resulting_content = b"prepared verification change\n"
-        if apply_change:
-            source_path.write_bytes(resulting_content)
+        source_path.write_bytes(resulting_content)
 
         verification_dir = self.root / "input" / "verification"
         objects_dir = verification_dir / "objects"
         objects_dir.mkdir(parents=True, exist_ok=True)
 
-        patch_content = (
-            b"diff --git a/src/app.py b/src/app.py\n"
-            b"--- a/src/app.py\n"
-            b"+++ b/src/app.py\n"
-            b"@@ -1 +1 @@\n"
-            b"-initial content\n"
-            b"+prepared verification change\n"
+        patch_content = _run_git_bytes(
+            self.workspace,
+            "diff",
+            "--binary",
+            "--full-index",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            "HEAD",
+            "--",
         )
+        if not apply_change:
+            source_path.write_bytes(previous_content)
         patch_digest = sha256_digest(patch_content)
         patch_path = objects_dir / patch_digest.removeprefix("sha256:")
         patch_path.write_bytes(patch_content)
 
-        evidence_content = b'{"overall_status":"passed"}\n'
-        evidence_digest = sha256_digest(evidence_content)
-        evidence_path = objects_dir / evidence_digest.removeprefix("sha256:")
-        evidence_path.write_bytes(evidence_content)
+        stdout_content = b"fixture verification passed\n"
+        stderr_content = b""
+        stdout_path = verification_dir / "authoring.stdout"
+        stderr_path = verification_dir / "authoring.stderr"
+        stdout_path.write_bytes(stdout_content)
+        stderr_path.write_bytes(stderr_content)
+        evidence = {
+            "protocol": PROTOCOL,
+            "schema": "verification-evidence/v1",
+            "schema_version": 1,
+            "created_at": CREATED_AT,
+            "identity": deepcopy(self.run_spec["identity"]),
+            "repository": deepcopy(self.run_spec["repository"]),
+            "environment_kind": "authoring",
+            "runner": {
+                "version": "fixture",
+                "image": None,
+                "source_commit": None,
+            },
+            "context_digest": self.context_bundle["bundle_digest"],
+            "change_set_digest": None,
+            "items": [
+                {
+                    "phase": "verification",
+                    "command": ["fixture-verify"],
+                    "working_directory": ".",
+                    "environment_keys": [],
+                    "started_at": CREATED_AT,
+                    "finished_at": CREATED_AT,
+                    "duration_seconds": 0,
+                    "exit_code": 0,
+                    "termination_reason": "exited",
+                    "expected_status": "passed",
+                    "actual_status": "passed",
+                    "failure_classification": "none",
+                    "stdout": _artifact_reference(
+                        "verification/authoring.stdout",
+                        stdout_content,
+                    ),
+                    "stderr": _artifact_reference(
+                        "verification/authoring.stderr",
+                        stderr_content,
+                    ),
+                    "test_reports": [],
+                    "tool_versions": {"fixture": "1"},
+                    "repository_files_changed": False,
+                }
+            ],
+            "overall_status": "passed",
+            "advisory_observations": [],
+            "evidence_set_digest": PLACEHOLDER_DIGEST,
+        }
+        evidence["evidence_set_digest"] = contract_document_digest(evidence)
+        evidence_path = verification_dir / "verification-evidence.json"
+        _write_json(evidence_path, evidence)
+        evidence_content = evidence_path.read_bytes()
 
         changed_files = [
             {
@@ -171,24 +245,27 @@ class AdmissionCase:
             "context_digest": self.context_bundle["bundle_digest"],
             "patch": {
                 **_artifact_reference(
-                    f"objects/{patch_digest.removeprefix('sha256:')}",
+                    f"verification/objects/{patch_digest.removeprefix('sha256:')}",
                     patch_content,
                 ),
                 "media_type": "application/vnd.git.binary-patch",
             },
             "diff_digest": changed_file_manifest_digest(changed_files),
             "changed_files": changed_files,
-            "evidence_set_digest": evidence_digest,
+            "evidence_set_digest": evidence["evidence_set_digest"],
             "evidence_refs": [
-                _artifact_reference(
-                    f"objects/{evidence_digest.removeprefix('sha256:')}",
-                    evidence_content,
-                )
+                {
+                    **_artifact_reference(
+                        "verification/verification-evidence.json",
+                        evidence_content,
+                    ),
+                    "media_type": "application/json",
+                }
             ],
             "acceptance_criteria_results": [
                 {
                     "criterion": "The admission fixture remains deterministic.",
-                    "status": "passed",
+                    "status": "not_run",
                 }
             ],
             "outcome_summary": "Prepared the deterministic verification change.",

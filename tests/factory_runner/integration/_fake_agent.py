@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import time
 
 
 AUTHORED_APP = """def greeting(name: str) -> str:
@@ -103,23 +104,48 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--mode",
-        choices=("author", "blocked", "fail-if-called"),
+        choices=(
+            "assert-first-prompt-context",
+            "author",
+            "blocked",
+            "fail-if-called",
+            "mutate-git-config",
+            "sleep",
+        ),
         required=True,
     )
     parser.add_argument("--marker", type=Path, required=True)
+    parser.add_argument(
+        "--required-first-prompt-text",
+        action="append",
+        default=[],
+    )
     args = parser.parse_args()
 
+    first_call = not args.marker.exists()
     args.marker.parent.mkdir(parents=True, exist_ok=True)
     with args.marker.open("a", encoding="utf-8") as marker:
         marker.write(f"{args.mode}\n")
 
     if args.mode == "fail-if-called":
         return 97
+    if args.mode == "sleep":
+        time.sleep(30)
+        return 98
+    if args.mode == "mutate-git-config":
+        with (Path.cwd() / ".git" / "config").open("a", encoding="utf-8") as config:
+            config.write("\n[factory-escape]\n\tattempted = true\n")
 
     prompt_path = Path(os.environ["AINATIVE_PROMPT_FILE"])
     output_path = Path(os.environ["AINATIVE_OUTPUT_FILE"])
     prompt = prompt_path.read_text(encoding="utf-8")
     schema_value = os.environ.get("AINATIVE_SCHEMA_FILE")
+    if args.mode == "assert-first-prompt-context" and first_call:
+        missing = [
+            value for value in args.required_first_prompt_text if value not in prompt
+        ]
+        if missing:
+            return 96
 
     if schema_value:
         payload = _schema_payload(

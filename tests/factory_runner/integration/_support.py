@@ -5,11 +5,17 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 from typing import Literal
 
+from ai_native.factory_runner.contracts.change_set import ChangeSet
+from ai_native.factory_runner.contracts.common import ArtifactReference
 from ai_native.factory_runner.contracts.run_result import RunResult
+from ai_native.factory_runner.contracts.verification_evidence import (
+    VerificationEvidence,
+)
 from ai_native.factory_runner.protocol import (
     changed_file_manifest_digest,
     contract_document_digest,
@@ -24,6 +30,34 @@ CREATED_AT = "2026-07-31T00:00:00Z"
 AUTHORED_APP = """def greeting(name: str) -> str:
     return f"Hello, {name}!"
 """
+TASK_OUTCOME = "Implement the deterministic greeting change."
+DEFAULT_ACCEPTANCE_CRITERION = "greeting('Codex') returns 'Hello, Codex!'"
+TASK_NON_GOAL = "Commit or publish the change"
+TASK_CONSTRAINT = "Use only declared stages and commands"
+REPOSITORY_INSTRUCTION = "Keep the public greeting function in app.py."
+TRUSTED_POLICY_SUMMARY = "The attempt may author and verify but may not publish."
+APPROVED_REPOSITORY_MEMORY = "The greeting function accepts one name string."
+DEPENDENCY_OUTPUT = "No upstream dependency changes are required."
+OPERATOR_INPUT = "Preserve the greeting(name: str) signature."
+FIRST_PROMPT_REQUIRED_TEXT = (
+    f"# {TASK_OUTCOME}",
+    "## Acceptance criteria",
+    DEFAULT_ACCEPTANCE_CRITERION,
+    "## Non-goals",
+    TASK_NON_GOAL,
+    "## Constraints",
+    TASK_CONSTRAINT,
+    "## Repository instructions",
+    REPOSITORY_INSTRUCTION,
+    "## Trusted policy summary",
+    TRUSTED_POLICY_SUMMARY,
+    "## Approved repository memory",
+    APPROVED_REPOSITORY_MEMORY,
+    "## Dependency outputs",
+    DEPENDENCY_OUTPUT,
+    "## Operator input",
+    OPERATOR_INPUT,
+)
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 SEED_REPOSITORY = (
     Path(__file__).resolve().parents[2]
@@ -32,6 +66,14 @@ SEED_REPOSITORY = (
     / "target-repository"
 )
 FAKE_AGENT = Path(__file__).with_name("_fake_agent.py")
+AgentMode = Literal[
+    "assert-first-prompt-context",
+    "author",
+    "blocked",
+    "fail-if-called",
+    "mutate-git-config",
+    "sleep",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,9 +90,9 @@ class FactoryInvocation:
 
     def agent_command(
         self,
-        mode: Literal["author", "blocked", "fail-if-called"],
+        mode: AgentMode,
     ) -> list[str]:
-        return [
+        command = [
             sys.executable,
             str(FAKE_AGENT),
             "--mode",
@@ -58,6 +100,10 @@ class FactoryInvocation:
             "--marker",
             str(self.marker_path),
         ]
+        if mode == "assert-first-prompt-context":
+            for value in FIRST_PROMPT_REQUIRED_TEXT:
+                command.extend(("--required-first-prompt-text", value))
+        return command
 
 
 def _run_git(
@@ -153,7 +199,7 @@ def _build_context_bundle(
 ) -> tuple[Path, str]:
     context_dir = input_dir / "context"
     work_item = (
-        "Implement the deterministic greeting change.\n\n"
+        f"{TASK_OUTCOME}\n\n"
         + "\n".join(f"- {criterion}" for criterion in acceptance_criteria)
         + "\n"
     ).encode()
@@ -176,16 +222,14 @@ def _build_context_bundle(
                 }
             ],
             "work_item_revision": {
-                "outcome": "Implement the deterministic greeting change.",
+                "outcome": TASK_OUTCOME,
                 "acceptance_criteria": acceptance_criteria,
             },
-            "repository_instructions": [],
-            "trusted_policy_summary": [
-                "The attempt may author and verify but may not publish."
-            ],
-            "approved_repository_memory": [],
-            "dependency_outputs": [],
-            "operator_input": [],
+            "repository_instructions": [REPOSITORY_INSTRUCTION],
+            "trusted_policy_summary": [TRUSTED_POLICY_SUMMARY],
+            "approved_repository_memory": [APPROVED_REPOSITORY_MEMORY],
+            "dependency_outputs": [DEPENDENCY_OUTPUT],
+            "operator_input": [OPERATOR_INPUT],
             "construction": {
                 "builder": "an-02-integration-fixture/v1",
                 "source_digests": [work_item_digest],
@@ -223,6 +267,7 @@ def _build_verification_change_set(
     *,
     base_sha: str,
     context_digest: str,
+    acceptance_criteria: list[str],
 ) -> tuple[Path, str]:
     del invocation_root
     previous = (workspace / "app.py").read_bytes()
@@ -236,6 +281,7 @@ def _build_verification_change_set(
         "--full-index",
         "--no-color",
         "--no-ext-diff",
+        "--no-textconv",
         "--src-prefix=a/",
         "--dst-prefix=b/",
         "HEAD",
@@ -250,9 +296,61 @@ def _build_verification_change_set(
     patch_path = verification_dir / "change.patch"
     patch_path.parent.mkdir(parents=True, exist_ok=True)
     patch_path.write_bytes(patch)
-    evidence = b"prepared verification fixture\n"
+    stdout = b"prepared verification fixture passed\n"
+    stderr = b""
+    stdout_path = verification_dir / "authoring.stdout"
+    stderr_path = verification_dir / "authoring.stderr"
+    stdout_path.write_bytes(stdout)
+    stderr_path.write_bytes(stderr)
+    evidence_payload = _document_envelope("verification-evidence/v1", base_sha)
+    evidence_payload.update(
+        {
+            "environment_kind": "authoring",
+            "runner": {
+                "version": "fixture",
+                "image": None,
+                "source_commit": None,
+            },
+            "context_digest": context_digest,
+            "change_set_digest": None,
+            "items": [
+                {
+                    "phase": "verification",
+                    "command": ["fixture-author-verification"],
+                    "working_directory": ".",
+                    "environment_keys": [],
+                    "started_at": CREATED_AT,
+                    "finished_at": CREATED_AT,
+                    "duration_seconds": 0,
+                    "exit_code": 0,
+                    "termination_reason": "exited",
+                    "expected_status": "passed",
+                    "actual_status": "passed",
+                    "failure_classification": "none",
+                    "stdout": _artifact_reference(
+                        "verification/authoring.stdout",
+                        stdout,
+                        media_type="text/plain",
+                    ),
+                    "stderr": _artifact_reference(
+                        "verification/authoring.stderr",
+                        stderr,
+                        media_type="text/plain",
+                    ),
+                    "test_reports": [],
+                    "tool_versions": {"fixture": "1"},
+                    "repository_files_changed": False,
+                }
+            ],
+            "overall_status": "passed",
+            "advisory_observations": [],
+            "evidence_set_digest": "sha256:" + ("0" * 64),
+        }
+    )
+    evidence_payload["evidence_set_digest"] = contract_document_digest(evidence_payload)
     evidence_path = verification_dir / "authoring-evidence.json"
-    evidence_path.write_bytes(evidence)
+    _write_json(evidence_path, evidence_payload)
+    evidence = evidence_path.read_bytes()
 
     changed_file = {
         "path": "app.py",
@@ -278,7 +376,7 @@ def _build_verification_change_set(
             ),
             "diff_digest": changed_file_manifest_digest([changed_file]),
             "changed_files": [changed_file],
-            "evidence_set_digest": sha256_digest(evidence),
+            "evidence_set_digest": evidence_payload["evidence_set_digest"],
             "evidence_refs": [
                 _artifact_reference(
                     "verification/authoring-evidence.json",
@@ -287,10 +385,8 @@ def _build_verification_change_set(
                 )
             ],
             "acceptance_criteria_results": [
-                {
-                    "criterion": "greeting('Codex') returns 'Hello, Codex!'",
-                    "status": "passed",
-                }
+                {"criterion": criterion, "status": "not_run"}
+                for criterion in acceptance_criteria
             ],
             "outcome_summary": "Prepared the deterministic greeting change.",
             "assumptions": [],
@@ -317,7 +413,7 @@ def build_invocation(
     verification_passes: bool = True,
 ) -> FactoryInvocation:
     criteria = (
-        ["greeting('Codex') returns 'Hello, Codex!'"]
+        [DEFAULT_ACCEPTANCE_CRITERION]
         if acceptance_criteria is None
         else acceptance_criteria
     )
@@ -352,6 +448,7 @@ def build_invocation(
             input_dir,
             base_sha=base_sha,
             context_digest=context_digest,
+            acceptance_criteria=criteria,
         )
         verification_input = {
             "change_set_path": str(change_set_path.resolve()),
@@ -369,10 +466,10 @@ def build_invocation(
                 ),
             },
             "task": {
-                "outcome": "Implement the deterministic greeting change.",
+                "outcome": TASK_OUTCOME,
                 "acceptance_criteria": criteria,
-                "non_goals": ["Commit or publish the change"],
-                "constraints": ["Use only declared stages and commands"],
+                "non_goals": [TASK_NON_GOAL],
+                "constraints": [TASK_CONSTRAINT],
             },
             "policy": {
                 "allowed_paths": ["app.py"],
@@ -430,8 +527,25 @@ def build_invocation(
 def invoke_factory(
     invocation: FactoryInvocation,
     *,
-    agent_mode: Literal["author", "blocked", "fail-if-called"],
+    agent_mode: AgentMode,
 ) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        factory_command(invocation),
+        cwd=REPOSITORY_ROOT,
+        env=factory_environment(invocation, agent_mode=agent_mode),
+        stdin=subprocess.DEVNULL,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+def factory_environment(
+    invocation: FactoryInvocation,
+    *,
+    agent_mode: AgentMode,
+) -> dict[str, str]:
     environment = os.environ.copy()
     for key in (
         "AWS_ACCESS_KEY_ID",
@@ -447,34 +561,161 @@ def invoke_factory(
         invocation.agent_command(agent_mode)
     )
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
-    command_name = "run" if invocation.operation == "author" else "verify"
+    return environment
 
-    return subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "ai_native.cli",
-            "factory",
-            command_name,
-            "--run-spec",
-            str(invocation.run_spec_path.resolve()),
-            "--output-dir",
-            str(invocation.output_dir.resolve()),
-        ],
-        cwd=REPOSITORY_ROOT,
-        env=environment,
-        stdin=subprocess.DEVNULL,
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+
+def factory_command(invocation: FactoryInvocation) -> list[str]:
+    command_name = "run" if invocation.operation == "author" else "verify"
+    return [
+        sys.executable,
+        "-m",
+        "ai_native.cli",
+        "factory",
+        command_name,
+        "--run-spec",
+        str(invocation.run_spec_path.resolve()),
+        "--output-dir",
+        str(invocation.output_dir.resolve()),
+    ]
 
 
 def load_valid_result(invocation: FactoryInvocation) -> RunResult:
-    result_path = invocation.output_dir / "result" / "run-result.json"
-    payload = json.loads(result_path.read_text(encoding="utf-8"))
-    validated = validate_contract(payload, expected_schema="run-result/v1")
+    result_path = _safe_output_file(
+        invocation.output_dir,
+        "result/run-result.json",
+    )
+    validated = validate_contract(
+        result_path.read_bytes(),
+        expected_schema="run-result/v1",
+    )
     assert isinstance(validated, RunResult)
     verify_contract_digest(validated)
     return validated
+
+
+def _safe_output_file(output_dir: Path, relative_path: str) -> Path:
+    relative = Path(relative_path)
+    assert relative_path == relative.as_posix()
+    assert relative.parts
+    assert not relative.is_absolute()
+    assert all(part not in {"", ".", ".."} for part in relative.parts)
+
+    root_metadata = output_dir.lstat()
+    assert stat.S_ISDIR(root_metadata.st_mode)
+    root = output_dir.resolve(strict=True)
+    current = root
+    for index, component in enumerate(relative.parts):
+        current /= component
+        metadata = current.lstat()
+        if index == len(relative.parts) - 1:
+            assert stat.S_ISREG(metadata.st_mode)
+        else:
+            assert stat.S_ISDIR(metadata.st_mode)
+    assert current.resolve(strict=True).is_relative_to(root)
+    return current
+
+
+def _read_valid_artifact_reference(
+    invocation: FactoryInvocation,
+    reference: ArtifactReference,
+) -> bytes:
+    artifact_path = _safe_output_file(invocation.output_dir, reference.path)
+    metadata = artifact_path.stat()
+    assert metadata.st_size == reference.byte_size
+    content = artifact_path.read_bytes()
+    assert len(content) == reference.byte_size
+    assert sha256_digest(content) == reference.digest
+    return content
+
+
+def _load_valid_verification_reference(
+    invocation: FactoryInvocation,
+    reference: ArtifactReference,
+    result: RunResult,
+) -> VerificationEvidence:
+    content = _read_valid_artifact_reference(invocation, reference)
+    validated = validate_contract(
+        content,
+        expected_schema="verification-evidence/v1",
+    )
+    assert isinstance(validated, VerificationEvidence)
+    verify_contract_digest(validated)
+    assert validated.identity == result.identity
+    assert validated.repository == result.repository
+    for item in validated.items:
+        _read_valid_artifact_reference(invocation, item.stdout)
+        _read_valid_artifact_reference(invocation, item.stderr)
+        for test_report in item.test_reports:
+            _read_valid_artifact_reference(invocation, test_report)
+    return validated
+
+
+def load_valid_change_set(
+    invocation: FactoryInvocation,
+    result: RunResult,
+) -> ChangeSet:
+    assert result.operation == "author"
+    assert result.change_set is not None
+    content = _read_valid_artifact_reference(invocation, result.change_set)
+    validated = validate_contract(content, expected_schema="change-set/v1")
+    assert isinstance(validated, ChangeSet)
+    verify_contract_digest(validated)
+    assert validated.identity == result.identity
+    assert validated.repository == result.repository
+
+    _read_valid_artifact_reference(invocation, validated.patch)
+    for generated_artifact in validated.generated_artifacts:
+        _read_valid_artifact_reference(invocation, generated_artifact)
+
+    assert len(validated.evidence_refs) == 1
+    evidence = _load_valid_verification_reference(
+        invocation,
+        validated.evidence_refs[0],
+        result,
+    )
+    assert evidence.environment_kind == "authoring"
+    assert evidence.change_set_digest is None
+    assert evidence.overall_status == "passed"
+    assert evidence.context_digest == validated.context_digest
+    assert evidence.evidence_set_digest == validated.evidence_set_digest
+    return validated
+
+
+def load_valid_verification_evidence(
+    invocation: FactoryInvocation,
+    result: RunResult,
+) -> VerificationEvidence:
+    assert result.operation == "verify"
+    assert result.verification_evidence is not None
+    evidence = _load_valid_verification_reference(
+        invocation,
+        result.verification_evidence,
+        result,
+    )
+    assert evidence.environment_kind == "clean_verification"
+    return evidence
+
+
+def assert_valid_completion(
+    invocation: FactoryInvocation,
+    result: RunResult,
+) -> None:
+    completion_path = _safe_output_file(invocation.output_dir, "completion.json")
+    completion = json.loads(completion_path.read_bytes())
+    assert isinstance(completion, dict)
+    assert completion["protocol"] == PROTOCOL
+    assert completion["schema_version"] == 1
+    assert completion["completed_at"] == result.finished_at
+    assert completion["outcome"] == result.outcome
+    assert completion["output_manifest_digest"] == result.output_manifest_digest
+
+    result_reference = ArtifactReference.model_validate(completion["run_result"])
+    assert result_reference.path == "result/run-result.json"
+    assert result_reference.media_type == "application/json"
+    referenced_result = validate_contract(
+        _read_valid_artifact_reference(invocation, result_reference),
+        expected_schema="run-result/v1",
+    )
+    assert isinstance(referenced_result, RunResult)
+    verify_contract_digest(referenced_result)
+    assert referenced_result == result
