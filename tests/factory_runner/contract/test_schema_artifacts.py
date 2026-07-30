@@ -34,6 +34,7 @@ from tests.factory_runner.contract._support import (
     run_spec,
     runner_event,
     verification_evidence,
+    verification_checkpoint,
     verification_run_spec,
 )
 
@@ -143,6 +144,24 @@ def test_json_schemas_encode_cross_field_and_payload_safety_rules() -> None:
         ).iter_errors(event_with_secret_field)
     )
     assert event_errors
+
+
+def test_checkpoint_schema_binds_verify_only_stage_authority_and_history() -> None:
+    schema = load_contract_schema("checkpoint/v1")
+    validator = Draft202012Validator(schema, format_checker=FormatChecker())
+
+    authoring_authority = verification_checkpoint()
+    authoring_authority["authority"]["allowed_stages"] = ["plan", "verify"]
+    assert list(validator.iter_errors(authoring_authority))
+
+    authoring_history = verification_checkpoint()
+    authoring_history["authority"]["allowed_stages"] = ["plan", "verify"]
+    authoring_history["completed_stages"] = ["plan"]
+    assert list(validator.iter_errors(authoring_history))
+
+    no_commands = verification_checkpoint()
+    no_commands["authority"]["allowed_commands"] = []
+    assert list(validator.iter_errors(no_commands))
 
 
 def test_json_schemas_encode_schema_freeze_safety_rules() -> None:

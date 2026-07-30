@@ -16,6 +16,7 @@ from tests.factory_runner.contract._support import (
     run_result,
     runner_event,
     validate,
+    verification_checkpoint,
     verification_evidence,
 )
 
@@ -93,6 +94,27 @@ def test_checkpoint_operation_binds_verification_input(
     payload = checkpoint()
     payload["operation"] = operation
     payload["verification_change_set_digest"] = verification_digest
+
+    assert_invalid("Checkpoint", payload)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "authoring_stage_authority",
+        "authoring_stage_history",
+        "empty_commands",
+    ],
+)
+def test_verify_checkpoint_preserves_verify_only_origin(mutation: str) -> None:
+    payload = verification_checkpoint()
+    if mutation == "authoring_stage_authority":
+        payload["authority"]["allowed_stages"] = ["plan", "verify"]
+    elif mutation == "authoring_stage_history":
+        payload["authority"]["allowed_stages"] = ["plan", "verify"]
+        payload["completed_stages"] = ["plan"]
+    else:
+        payload["authority"]["allowed_commands"] = []
 
     assert_invalid("Checkpoint", payload)
 
