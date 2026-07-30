@@ -22,8 +22,6 @@ from ai_native.config import (
     provider_readiness,
     provider_runtime_checks,
 )
-from ai_native.gitops import discover_repo_root
-from ai_native.orchestrator import WorkflowOrchestrator
 from ai_native.state import StateStore
 from ai_native.workflow_stages import CLI_STAGE_CHOICES, REVIEW_TARGET_STAGES
 
@@ -37,7 +35,18 @@ _DEPENDENCY_POLICIES = (
     "wait_for_pr_opened",
     "assume_committed",
 )
-_FACTORY_RESERVATION_HELP_FLAGS = frozenset({"-h", "--help"})
+# Legacy tests and integrations replace this symbol directly.  Keep the hook
+# without importing publication-reachable orchestration during factory startup.
+WorkflowOrchestrator: Any = None
+
+
+def _workflow_orchestrator_type() -> Any:
+    global WorkflowOrchestrator
+    if WorkflowOrchestrator is None:
+        from ai_native.orchestrator import WorkflowOrchestrator as implementation
+
+        WorkflowOrchestrator = implementation
+    return WorkflowOrchestrator
 
 
 def _config_path() -> Path:
@@ -77,6 +86,8 @@ def _resolve_init_config_path(explicit: str | None = None) -> Path:
     env_path = os.environ.get("AINATIVE_CONFIG")
     if env_path:
         return Path(env_path).expanduser().resolve()
+
+    from ai_native.gitops import discover_repo_root
 
     repo_root = discover_repo_root(Path.cwd())
     if repo_root is not None:
@@ -396,7 +407,6 @@ def _coerce_optional_bool(value: Any, *, field_name: str) -> bool | None:
             return False
         raise SystemExit(f"Telemetry {field_name} must be a boolean value (true/false).")
     raise SystemExit(f"Telemetry {field_name} must be a boolean value (true/false).")
-
 def _validate_telemetry_auth_credentials(auth_type: str, telemetry_data: dict[str, Any]) -> None:
     if auth_type == "api_key" and not telemetry_data.get("api_key"):
         raise SystemExit("Telemetry auth_type=api_key requires --api-key (or an existing stored api_key).")
@@ -625,7 +635,11 @@ def command_doctor(args: argparse.Namespace) -> int:
 
 def command_run(args: argparse.Namespace) -> int:
     config = _load_config(args.config)
-    orchestrator = WorkflowOrchestrator(config, progress=_print_progress, question_responder=_ask_questions)
+    orchestrator = _workflow_orchestrator_type()(
+        config,
+        progress=_print_progress,
+        question_responder=_ask_questions,
+    )
     workspace_root = _resolve_workspace_root(config, args.workspace_dir)
     state = orchestrator.run_all(
         _resolve_spec_path(config, args.spec, workspace_root),
@@ -639,7 +653,11 @@ def command_run(args: argparse.Namespace) -> int:
 
 def command_stage(args: argparse.Namespace) -> int:
     config = _load_config(args.config)
-    orchestrator = WorkflowOrchestrator(config, progress=_print_progress, question_responder=_ask_questions)
+    orchestrator = _workflow_orchestrator_type()(
+        config,
+        progress=_print_progress,
+        question_responder=_ask_questions,
+    )
     workspace_root = _resolve_workspace_root(config, args.workspace_dir)
     run_kwargs = {
         "spec_path": _resolve_spec_path(config, args.spec, workspace_root),
@@ -665,7 +683,11 @@ def _run_slice_stage(args: argparse.Namespace, stage_name: str, *, dry_run_pr: b
 
 def command_review(args: argparse.Namespace) -> int:
     config = _load_config(args.config)
-    orchestrator = WorkflowOrchestrator(config, progress=_print_progress, question_responder=_ask_questions)
+    orchestrator = _workflow_orchestrator_type()(
+        config,
+        progress=_print_progress,
+        question_responder=_ask_questions,
+    )
     workspace_root = _resolve_workspace_root(config, args.workspace_dir)
     spec_path = _resolve_spec_path(config, args.spec, workspace_root)
     explicit_run_dir = Path(args.run_dir).resolve() if args.run_dir else None
@@ -686,7 +708,11 @@ def command_review(args: argparse.Namespace) -> int:
 
 def command_pr(args: argparse.Namespace) -> int:
     config = _load_config(args.config)
-    orchestrator = WorkflowOrchestrator(config, progress=_print_progress, question_responder=_ask_questions)
+    orchestrator = _workflow_orchestrator_type()(
+        config,
+        progress=_print_progress,
+        question_responder=_ask_questions,
+    )
     workspace_root = _resolve_workspace_root(config, args.workspace_dir)
     run_kwargs = {
         "spec_path": _resolve_spec_path(config, args.spec, workspace_root),
@@ -720,11 +746,16 @@ def command_runs_detail(args: argparse.Namespace) -> int:
     return 0
 
 
-def command_factory(args: argparse.Namespace) -> int:
-    """Display the AN-00 reservation without exposing runner execution."""
+def command_factory_operation(args: argparse.Namespace) -> int:
+    """Dispatch one non-interactive factory protocol operation."""
 
-    args.factory_parser.print_help()
-    return 0
+    from ai_native.factory_runner.cli import execute_factory_command
+
+    return execute_factory_command(
+        expected_operation=args.factory_operation,
+        run_spec_path=Path(args.run_spec),
+        output_dir=Path(args.output_dir),
+    )
 
 
 def command_telemetry_profile_add(args: argparse.Namespace) -> int:
@@ -766,7 +797,6 @@ def command_telemetry_profile_list(args: argparse.Namespace) -> int:
         marker = "*" if name == active else " "
         print(f"{marker} {name}: {destination.get('url', '<missing-url>')}")
     return 0
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ainative")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -856,13 +886,29 @@ def build_parser() -> argparse.ArgumentParser:
 
     factory = subparsers.add_parser(
         "factory",
-        help="Reserved non-interactive factory runner boundary",
+        help="Non-interactive factory runner",
         description=(
-            "Reserved for factory-runner-protocol/v1. "
-            "Executable run and verify operations are not available in AN-00."
+            "factory-runner-protocol/v1\n"
+            "Execute author or clean-verification operations without "
+            "interactive input or publication."
         ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    factory.set_defaults(func=command_factory, factory_parser=factory)
+    factory_subparsers = factory.add_subparsers(
+        dest="factory_operation",
+        required=True,
+    )
+    for operation, help_text in (
+        ("run", "Execute an authoring RunSpec without commit or publication"),
+        ("verify", "Execute deterministic clean verification without authoring"),
+    ):
+        operation_parser = factory_subparsers.add_parser(
+            operation,
+            help=help_text,
+        )
+        operation_parser.add_argument("--run-spec", required=True)
+        operation_parser.add_argument("--output-dir", required=True)
+        operation_parser.set_defaults(func=command_factory_operation)
 
     telemetry = subparsers.add_parser("telemetry", parents=[common])
     telemetry_subparsers = telemetry.add_subparsers(dest="telemetry_command", required=True)
@@ -912,27 +958,8 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _enforce_factory_reservation(
-    parser: argparse.ArgumentParser,
-    arguments: list[str],
-) -> None:
-    if not arguments or arguments[0] != "factory":
-        return
-    unsupported = [
-        argument
-        for argument in arguments[1:]
-        if argument not in _FACTORY_RESERVATION_HELP_FLAGS
-    ]
-    if unsupported:
-        parser.error(
-            "ainative factory is reserved in AN-00; unrecognized arguments: "
-            + " ".join(unsupported)
-        )
-
-
 def main() -> int:
     parser = build_parser()
-    _enforce_factory_reservation(parser, sys.argv[1:])
     args = parser.parse_args()
     return args.func(args)
 

@@ -11,7 +11,7 @@ import pytest
 from ai_native.cli import main
 
 
-def test_factory_command_group_is_reserved_without_runner_subcommands(monkeypatch, capsys) -> None:
+def test_factory_command_group_exposes_runner_subcommands(monkeypatch, capsys) -> None:
     monkeypatch.setattr(sys, "argv", ["ainative", "factory", "--help"])
 
     with pytest.raises(SystemExit) as excinfo:
@@ -20,7 +20,7 @@ def test_factory_command_group_is_reserved_without_runner_subcommands(monkeypatc
     assert excinfo.value.code == 0
     output = capsys.readouterr().out
     assert "factory-runner-protocol/v1" in output
-    assert "{run,verify}" not in output
+    assert "{run,verify}" in output
 
 
 def test_factory_command_group_never_prompts(monkeypatch, capsys) -> None:
@@ -30,33 +30,41 @@ def test_factory_command_group_never_prompts(monkeypatch, capsys) -> None:
     )
     monkeypatch.setattr(sys, "argv", ["ainative", "factory"])
 
-    assert main() == 0
-    assert "reserved" in capsys.readouterr().out.lower()
-
-
-@pytest.mark.parametrize(
-    "arguments",
-    [
-        ["run"],
-        ["verify"],
-        ["run", "--help"],
-        ["verify", "--help"],
-        ["garbage", "--help"],
-    ],
-)
-def test_factory_subcommands_are_not_executable_in_an_00(
-    monkeypatch,
-    arguments: list[str],
-) -> None:
-    monkeypatch.setattr(sys, "argv", ["ainative", "factory", *arguments])
-
     with pytest.raises(SystemExit) as excinfo:
         main()
 
     assert excinfo.value.code == 2
+    assert "required" in capsys.readouterr().err.lower()
 
 
-def test_built_wheel_exposes_reserved_factory_group(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "run",
+        "verify",
+    ],
+)
+def test_factory_subcommand_help_is_non_interactive(
+    monkeypatch,
+    capsys,
+    operation: str,
+) -> None:
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda _prompt="": pytest.fail("factory commands must not prompt"),
+    )
+    monkeypatch.setattr(sys, "argv", ["ainative", "factory", operation, "--help"])
+
+    with pytest.raises(SystemExit) as excinfo:
+        main()
+
+    assert excinfo.value.code == 0
+    output = capsys.readouterr().out
+    assert "--run-spec" in output
+    assert "--output-dir" in output
+
+
+def test_built_wheel_exposes_factory_runner_commands(tmp_path: Path) -> None:
     repository_root = Path(__file__).resolve().parents[2]
     wheelhouse = tmp_path / "wheelhouse"
     built = subprocess.run(
@@ -148,3 +156,17 @@ def test_built_wheel_exposes_reserved_factory_group(tmp_path: Path) -> None:
     )
     assert completed.returncode == 0, completed.stderr
     assert "factory-runner-protocol/v1" in completed.stdout
+    assert "{run,verify}" in completed.stdout
+
+    for operation in ("run", "verify"):
+        operation_help = subprocess.run(
+            [str(scripts_dir / "ainative"), "factory", operation, "--help"],
+            cwd=outside_checkout,
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert operation_help.returncode == 0, operation_help.stderr
+        assert "--run-spec" in operation_help.stdout
+        assert "--output-dir" in operation_help.stdout

@@ -5,15 +5,24 @@ This directory records the public AI Native side of
 phases defined by
 [`phase-manifest.json`](phase-manifest.json).
 
-AN-00 reserves `ainative factory` and establishes an executable authority
-ceiling. It does not implement `factory run`, `factory verify`, protocol
-documents, release artifacts, or any private factory service.
+AN-00 reserved `ainative factory` and established an executable authority
+ceiling. AN-01 then defined the language-neutral protocol documents, checked
+Draft 2020-12 schemas, canonical digest rules, capability negotiation, and
+pure checkpoint compatibility.
 
-AN-01 defines the language-neutral protocol documents, checked Draft 2020-12
-schemas, canonical digest rules, capability negotiation, and pure checkpoint
-compatibility. It still does not execute `factory run` or `factory verify`.
-Execution, workspace enforcement, patches, and release artifacts belong to
-later phases and may begin only after their prerequisite PR is human-merged.
+AN-02 implements bounded, unattended `factory run` and `factory verify`
+operations. It validates immutable inputs and exact repository state, adapts
+only admitted legacy authoring stages, runs deterministic commands without a
+TTY, rejects configured Git remotes and publication commands, filters child
+environments, enforces cancellation and deadlines, and writes a minimal
+schema-valid terminal result with `completion.json` last.
+
+AN-03 will extend the minimal terminal surface with the complete append-only
+event, checkpoint, evidence, redaction, recovery, and ChangeSet output
+semantics. AN-04 owns release artifacts and compatibility certification. Each
+phase starts only after automation verifies its prerequisite merge as the
+exact default-branch HEAD; protected auto-merge remains gated by required
+checks and machine-verifiable phase evidence.
 
 The complete deterministic root-package test command used by CI is:
 
@@ -31,7 +40,8 @@ docker compose run --rm --user root workspace uv run pytest
 The factory contract suite independently validates the golden documents with
 the Python models and the packaged JSON Schemas. It also checks schema drift,
 canonical digests, protocol negotiation, checkpoint authority narrowing,
-installed-wheel schema resources, and the reserved factory CLI boundary.
+installed-wheel schema resources, and the active non-interactive factory CLI
+surface.
 
 Protocol resources:
 
@@ -45,6 +55,8 @@ Boundary records:
 - [ADR 0001: two-repository authority boundary](adr/0001-two-repository-authority-boundary.md)
 - [ADR 0002: protocol v1 wire decisions](adr/0002-protocol-v1-wire-decisions.md)
 - [Existing-module inventory](module-inventory.md)
+- [AN-02 attempt-scoped model-gateway contract](gateway-contract.md)
 - [Runner security boundary and initial threat analysis](security-boundary.md)
 - [AN-00 test evidence](evidence/AN-00.md)
 - [AN-01 contract evidence](evidence/AN-01.md)
+- [AN-02 runner evidence](evidence/AN-02.md)

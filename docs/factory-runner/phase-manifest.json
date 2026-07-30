@@ -9,7 +9,7 @@
       "title": "Baseline characterisation and boundary lock",
       "depends_on": [],
       "branch": "factory-runner/an-00-boundary",
-      "completion_gate": "Human-reviewed and merged PR with boundary ADR"
+      "completion_gate": "Required automated checks and machine-verifiable phase evidence pass; the trusted publisher enables protected GitHub auto-merge; the resulting merge commit is verified as the exact default-branch HEAD with the boundary ADR"
     },
     {
       "id": "AN-01",
@@ -18,7 +18,7 @@
         "AN-00"
       ],
       "branch": "factory-runner/an-01-contracts",
-      "completion_gate": "Human-reviewed and merged PR with stable v1 schemas"
+      "completion_gate": "Required automated checks and machine-verifiable phase evidence pass; the trusted publisher enables protected GitHub auto-merge; the resulting merge commit is verified as the exact default-branch HEAD with stable v1 schemas"
     },
     {
       "id": "AN-02",
@@ -27,7 +27,7 @@
         "AN-01"
       ],
       "branch": "factory-runner/an-02-runner",
-      "completion_gate": "Human-reviewed and merged PR with unattended author and verify operations"
+      "completion_gate": "Required automated checks and machine-verifiable phase evidence pass; the trusted publisher enables protected GitHub auto-merge; the resulting merge commit is verified as the exact default-branch HEAD with unattended author and verify operations"
     },
     {
       "id": "AN-03",
@@ -36,7 +36,7 @@
         "AN-02"
       ],
       "branch": "factory-runner/an-03-outputs",
-      "completion_gate": "Human-reviewed and merged PR with validated content-addressed outputs"
+      "completion_gate": "Required automated checks and machine-verifiable phase evidence pass; the trusted publisher enables protected GitHub auto-merge; the resulting merge commit is verified as the exact default-branch HEAD with validated content-addressed outputs"
     },
     {
       "id": "AN-04",
@@ -45,7 +45,7 @@
         "AN-03"
       ],
       "branch": "factory-runner/an-04-release",
-      "completion_gate": "Human-reviewed merge and immutable receipt-backed release"
+      "completion_gate": "Required automated checks and machine-verifiable phase evidence pass; the trusted publisher enables protected GitHub auto-merge; the resulting merge commit is verified as the exact default-branch HEAD before the post-merge workflow produces an independently verified immutable receipt-backed release"
     }
   ]
 }
