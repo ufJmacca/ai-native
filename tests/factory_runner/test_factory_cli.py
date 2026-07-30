@@ -17,8 +17,7 @@ def test_factory_command_group_is_reserved_without_runner_subcommands(monkeypatc
     assert excinfo.value.code == 0
     output = capsys.readouterr().out
     assert "factory-runner-protocol/v1" in output
-    assert "run" not in output
-    assert "verify" not in output
+    assert "{run,verify}" not in output
 
 
 def test_factory_command_group_never_prompts(monkeypatch, capsys) -> None:
@@ -42,4 +41,3 @@ def test_installed_cli_exposes_reserved_factory_group() -> None:
 
     assert completed.returncode == 0, completed.stderr
     assert "factory-runner-protocol/v1" in completed.stdout
-

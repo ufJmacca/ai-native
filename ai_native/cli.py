@@ -718,6 +718,13 @@ def command_runs_detail(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_factory(args: argparse.Namespace) -> int:
+    """Display the AN-00 reservation without exposing runner execution."""
+
+    args.factory_parser.print_help()
+    return 0
+
+
 def command_telemetry_profile_add(args: argparse.Namespace) -> int:
     config_path, raw = _load_raw_config(args.config)
     telemetry, destinations = _normalize_telemetry_mappings(raw, mutate=True)
@@ -844,6 +851,16 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--dry-run", action="store_true")
     pr.add_argument("--slice-id")
     pr.set_defaults(func=command_pr)
+
+    factory = subparsers.add_parser(
+        "factory",
+        help="Reserved non-interactive factory runner boundary",
+        description=(
+            "Reserved for factory-runner-protocol/v1. "
+            "Executable run and verify operations are not available in AN-00."
+        ),
+    )
+    factory.set_defaults(func=command_factory, factory_parser=factory)
 
     telemetry = subparsers.add_parser("telemetry", parents=[common])
     telemetry_subparsers = telemetry.add_subparsers(dest="telemetry_command", required=True)
