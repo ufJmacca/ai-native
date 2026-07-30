@@ -32,6 +32,7 @@ MODEL_NAMES = (
 REQUIRED_API = (
     *MODEL_NAMES,
     "canonical_json_bytes",
+    "changed_file_manifest_digest",
     "sha256_digest",
     "negotiate_protocol",
     "validate_checkpoint_compatibility",
@@ -135,6 +136,15 @@ def bind_self_digest(payload: dict[str, Any], field_name: str) -> dict[str, Any]
     projected.pop(field_name)
     payload[field_name] = (
         "sha256:" + hashlib.sha256(rfc8785.dumps(projected)).hexdigest()
+    )
+    return payload
+
+
+def bind_changed_file_manifest_digest(
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    payload["diff_digest"] = (
+        "sha256:" + hashlib.sha256(rfc8785.dumps(payload["changed_files"])).hexdigest()
     )
     return payload
 
@@ -263,6 +273,8 @@ def checkpoint() -> dict[str, Any]:
             },
             "context_bundle_digest": DIGEST_A,
             "run_spec_digest": DIGEST_B,
+            "operation": "author",
+            "verification_change_set_digest": None,
             "workspace_patch_digest": DIGEST_C,
             "completed_stages": ["plan"],
             "next_permitted_stage": "loop",
@@ -290,6 +302,27 @@ def checkpoint() -> dict[str, Any]:
         }
     )
     return bind_self_digest(payload, "checkpoint_digest")
+
+
+def verification_checkpoint() -> dict[str, Any]:
+    payload = checkpoint()
+    payload["operation"] = "verify"
+    payload["verification_change_set_digest"] = DIGEST_B
+    payload["completed_stages"] = []
+    payload["next_permitted_stage"] = "verify"
+    payload["authority"]["allowed_stages"] = ["verify"]
+    return bind_self_digest(payload, "checkpoint_digest")
+
+
+def resuming_verification_run_spec() -> dict[str, Any]:
+    payload = verification_run_spec()
+    payload["identity"]["attempt_id"] = "attempt-02"
+    stored = verification_checkpoint()
+    payload["resume"] = {
+        "checkpoint_path": "/factory/input/resume/checkpoint.json",
+        "expected_digest": stored["checkpoint_digest"],
+    }
+    return payload
 
 
 def evidence_item(phase: str = "red") -> dict[str, Any]:
@@ -321,7 +354,11 @@ def verification_evidence() -> dict[str, Any]:
     payload.update(
         {
             "environment_kind": "authoring",
-            "runner": {"version": "1.4.0", "image": None},
+            "runner": {
+                "version": "1.4.0",
+                "image": None,
+                "source_commit": None,
+            },
             "context_digest": DIGEST_A,
             "change_set_digest": None,
             "items": [evidence_item()],
@@ -330,6 +367,15 @@ def verification_evidence() -> dict[str, Any]:
             "evidence_set_digest": DIGEST_C,
         }
     )
+    return payload
+
+
+def clean_verification_evidence() -> dict[str, Any]:
+    payload = verification_evidence()
+    payload["environment_kind"] = "clean_verification"
+    payload["change_set_digest"] = DIGEST_A
+    payload["items"] = [evidence_item("verification")]
+    payload["overall_status"] = "passed"
     return payload
 
 
@@ -382,7 +428,7 @@ def change_set(operation: str = "modify") -> dict[str, Any]:
             "change_set_digest": DIGEST_B,
         }
     )
-    return payload
+    return bind_changed_file_manifest_digest(payload)
 
 
 def run_result(
@@ -415,7 +461,11 @@ def run_result(
             ),
             "event_stream_digest": DIGEST_A,
             "output_manifest_digest": DIGEST_B,
-            "runner_build": {"version": "1.4.0", "source_commit": BASE_COMMIT_SHA},
+            "runner_build": {
+                "version": "1.4.0",
+                "image": None,
+                "source_commit": BASE_COMMIT_SHA,
+            },
             "result_digest": DIGEST_D,
         }
     )

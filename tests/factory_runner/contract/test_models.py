@@ -13,6 +13,8 @@ from tests.factory_runner.contract._support import (
     assert_invalid,
     dumped,
     run_spec,
+    run_result,
+    context_bundle,
     validate,
 )
 
@@ -133,3 +135,13 @@ def test_input_payload_is_not_mutated_during_validation() -> None:
     assert payload == original
     assert payload["protocol"] == PROTOCOL
     assert payload["created_at"] == CREATED_AT
+
+
+def test_repository_path_and_result_message_length_limits_match_schema() -> None:
+    context = context_bundle()
+    context["manifest_entries"][0]["logical_path"] = "a" * 4097
+    assert_invalid("ContextBundle", context)
+
+    result = run_result()
+    result["message"] = "x" * 4097
+    assert_invalid("RunResult", result)

@@ -9,6 +9,7 @@ import sys
 
 import pytest
 
+from ai_native.factory_runner import protocol as protocol_module
 from ai_native.factory_runner.protocol import (
     ContractValidationError,
     contract_document_digest,
@@ -20,8 +21,13 @@ from ai_native.factory_runner.protocol import (
 from tests.factory_runner.contract._schema_support import REPOSITORY_ROOT
 from tests.factory_runner.contract._support import (
     BUILDERS,
+    bind_changed_file_manifest_digest,
+    change_set,
+    changed_file,
     context_bundle,
+    run_result,
     run_spec,
+    verification_evidence,
 )
 
 
@@ -71,11 +77,22 @@ def test_public_validation_maps_failures_to_stable_codes(
         b'{"nested":{"value":1,"value":2}}',
         b'{"value":NaN}',
         b'{"value":Infinity}',
+        b'{"value":1e999}',
+        '{"value":1}'.encode("utf-16"),
     ],
 )
 def test_public_json_decoder_rejects_duplicates_and_non_finite_numbers(
     raw: bytes,
 ) -> None:
+    with pytest.raises(ContractValidationError) as exc_info:
+        decode_json_document(raw)
+
+    assert exc_info.value.code == "invalid_json"
+
+
+def test_public_json_decoder_maps_huge_integer_tokens_to_invalid_json() -> None:
+    raw = b'{"value":' + (b"9" * 5000) + b"}"
+
     with pytest.raises(ContractValidationError) as exc_info:
         decode_json_document(raw)
 
@@ -167,3 +184,92 @@ def test_context_bundle_digest_does_not_mutate_mapping() -> None:
     contract_document_digest(payload)
 
     assert payload == original
+
+
+def test_changed_file_manifest_digest_is_deterministic_and_order_sensitive() -> None:
+    first = changed_file()
+    second = changed_file("add")
+    second["path"] = "src/new.py"
+    payload = change_set()
+    payload["changed_files"] = [first, second]
+    bind_changed_file_manifest_digest(payload)
+
+    api_digest = protocol_module.changed_file_manifest_digest
+
+    assert api_digest(payload["changed_files"]) == payload["diff_digest"]
+    assert (
+        api_digest(tuple(reversed(payload["changed_files"]))) != payload["diff_digest"]
+    )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        verification_evidence(),
+        run_result(),
+        {
+            **run_result(outcome="invalid_input"),
+            "identity": None,
+            "repository": None,
+        },
+    ],
+)
+def test_self_digest_survives_validation_and_wire_round_trip(
+    payload: dict[str, object],
+) -> None:
+    if payload["schema"] == "verification-evidence/v1":
+        digest_field = "evidence_set_digest"
+    else:
+        digest_field = "result_digest"
+
+    payload[digest_field] = contract_document_digest(payload)
+    validated = validate_contract(payload)
+    serialized = validated.model_dump(mode="json")
+    revalidated = validate_contract(validated)
+
+    verify_contract_digest(validated)
+    verify_contract_digest(serialized)
+    verify_contract_digest(revalidated)
+    assert serialized == payload
+
+
+@pytest.mark.parametrize(
+    ("payload", "missing_path"),
+    [
+        (
+            {
+                **run_result(outcome="invalid_input"),
+                "identity": None,
+                "repository": None,
+            },
+            ("identity",),
+        ),
+        (
+            {
+                **run_result(outcome="invalid_input"),
+                "identity": None,
+                "repository": None,
+            },
+            ("repository",),
+        ),
+        (verification_evidence(), ("runner", "image")),
+        (verification_evidence(), ("runner", "source_commit")),
+        (run_result(), ("runner_build", "image")),
+        (run_result(), ("runner_build", "source_commit")),
+    ],
+)
+def test_nullable_wire_members_must_be_explicit(
+    payload: dict[str, object],
+    missing_path: tuple[str, ...],
+) -> None:
+    container = payload
+    for member in missing_path[:-1]:
+        nested = container[member]
+        assert isinstance(nested, dict)
+        container = nested
+    del container[missing_path[-1]]
+
+    with pytest.raises(ContractValidationError) as exc_info:
+        validate_contract(payload)
+
+    assert exc_info.value.code == "invalid_input"

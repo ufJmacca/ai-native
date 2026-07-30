@@ -7,11 +7,15 @@ import re
 import pytest
 
 from tests.factory_runner.contract._support import (
+    DIGEST_A,
     PROTOCOL,
     bind_self_digest,
     checkpoint,
     protocol_api,
     resuming_run_spec,
+    resuming_verification_run_spec,
+    verification_checkpoint,
+    verification_run_spec,
 )
 
 
@@ -90,6 +94,47 @@ def test_checkpoint_can_resume_with_narrower_authority() -> None:
         resumed,
         supported_capabilities=["author", "structured-events"],
     )
+
+
+def test_checkpoint_resume_cannot_switch_operation() -> None:
+    stored = checkpoint()
+    stored["next_permitted_stage"] = "verify"
+    bind_self_digest(stored, "checkpoint_digest")
+    resumed = verification_run_spec()
+    resumed["identity"]["attempt_id"] = "attempt-02"
+    resumed["resume"] = {
+        "checkpoint_path": "/factory/input/resume/checkpoint.json",
+        "expected_digest": stored["checkpoint_digest"],
+    }
+
+    with pytest.raises(Exception) as exc_info:
+        protocol_api().validate_checkpoint_compatibility(
+            stored,
+            resumed,
+            supported_capabilities=["author", "structured-events"],
+        )
+
+    assert getattr(exc_info.value, "code", None) == "checkpoint_incompatible"
+
+
+def test_verify_checkpoint_resume_binds_the_change_set_digest() -> None:
+    stored = verification_checkpoint()
+    resumed = resuming_verification_run_spec()
+    protocol_api().validate_checkpoint_compatibility(
+        stored,
+        resumed,
+        supported_capabilities=["author", "structured-events"],
+    )
+
+    resumed["verification_input"]["expected_digest"] = DIGEST_A
+    with pytest.raises(Exception) as exc_info:
+        protocol_api().validate_checkpoint_compatibility(
+            stored,
+            resumed,
+            supported_capabilities=["author", "structured-events"],
+        )
+
+    assert getattr(exc_info.value, "code", None) == "checkpoint_incompatible"
 
 
 @pytest.mark.parametrize(

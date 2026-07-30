@@ -37,6 +37,20 @@ def test_repository_paths_must_be_normalised_posix_relative(
     assert_invalid("RunSpec", payload)
 
 
+def test_all_path_types_enforce_the_wire_length_limit() -> None:
+    policy = run_spec()
+    policy["policy"]["allowed_paths"] = ["a" * 4097]
+    assert_invalid("RunSpec", policy)
+
+    prohibited = run_spec()
+    prohibited["policy"]["prohibited_paths"] = ["a" * 4097]
+    assert_invalid("RunSpec", prohibited)
+
+    absolute = run_spec()
+    absolute["workspace"]["path"] = "/" + ("a" * 4096)
+    assert_invalid("RunSpec", absolute)
+
+
 @pytest.mark.parametrize(
     "invalid_digest",
     [
@@ -121,6 +135,20 @@ def test_run_spec_rejects_conflicting_or_authority_widening_input(
 
 def test_verify_operation_accepts_only_prepared_verification_authority() -> None:
     validate("RunSpec", verification_run_spec())
+
+
+def test_verify_operation_requires_at_least_one_command() -> None:
+    payload = verification_run_spec()
+    payload["policy"]["allowed_commands"] = []
+
+    assert_invalid("RunSpec", payload)
+
+
+def test_run_policy_command_arguments_reject_nul() -> None:
+    payload = run_spec()
+    payload["policy"]["allowed_commands"] = [["pytest", "\x00"]]
+
+    assert_invalid("RunSpec", payload)
 
 
 @pytest.mark.parametrize(
