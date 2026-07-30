@@ -1,0 +1,15 @@
+{
+  "protocol": "factory-runner-protocol/v1",
+  "schema": "runner-event/v1",
+  "schema_version": 1,
+  "run_id": "n",
+  "attempt_id": "a",
+  "sequence": 1,
+  "timestamp": "2026-07-30T00:00:00Z",
+  "event_type": "RunnerStarted",
+  "correlation_id": "c",
+  "causation_id": null,
+  "sanitised_payload": {},
+  "artifact_refs": []
+}
+

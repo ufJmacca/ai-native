@@ -1,0 +1,37 @@
+{
+  "protocol": "factory-runner-protocol/v1",
+  "schema": "run-result/v1",
+  "schema_version": 1,
+  "created_at": "2026-07-30T00:00:00Z",
+  "identity": {
+    "work_item_id": "w",
+    "work_item_revision_id": "r",
+    "delivery_phase_id": "p",
+    "run_id": "n",
+    "attempt_id": "a",
+    "correlation_id": "c"
+  },
+  "repository": {
+    "repository_id": "r",
+    "display_name": "r",
+    "base_commit_sha": "0000000000000000000000000000000000000000"
+  },
+  "operation": "author",
+  "outcome": "no_change",
+  "reason_code": "done",
+  "message": "x",
+  "started_at": "2026-07-30T00:00:00Z",
+  "finished_at": "2026-07-30T00:00:00Z",
+  "completed_stages": [],
+  "latest_checkpoint": null,
+  "change_set": null,
+  "verification_evidence": null,
+  "event_stream_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "output_manifest_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "runner_build": {
+    "version": "1",
+    "image": null,
+    "source_commit": null
+  },
+  "result_digest": "sha256:5d7092c6a523b042067b26113bfc2b7012f3e099f8c94344a20a684ddab55b96"
+}

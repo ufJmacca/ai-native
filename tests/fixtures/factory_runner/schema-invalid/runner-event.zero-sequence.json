@@ -1,0 +1,17 @@
+{
+  "protocol": "factory-runner-protocol/v1",
+  "schema": "runner-event/v1",
+  "schema_version": 1,
+  "run_id": "run-01",
+  "attempt_id": "attempt-01",
+  "sequence": 0,
+  "timestamp": "2026-07-30T10:00:00Z",
+  "event_type": "StageCompleted",
+  "correlation_id": "correlation-01",
+  "causation_id": null,
+  "sanitised_payload": {
+    "stage": "plan"
+  },
+  "artifact_refs": []
+}
+

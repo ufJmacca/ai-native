@@ -1,0 +1,543 @@
+{
+  "$defs": {
+    "ArtifactReference": {
+      "additionalProperties": false,
+      "properties": {
+        "byte_size": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Byte Size",
+          "type": "integer"
+        },
+        "digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "media_type": {
+          "maxLength": 256,
+          "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$",
+          "title": "Media Type",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*//)(?!.*\\\\)(?!.*\\u0000)(?!.*(?:^|/)\\.\\.?($|/))(?!.*(?:^|/)\\.git($|/))(?!.*[?*\\[])(?!.*\\/$).+$",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "media_type",
+        "byte_size",
+        "digest"
+      ],
+      "title": "ArtifactReference",
+      "type": "object"
+    },
+    "EvidenceItem": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "phase": {
+                "const": "red"
+              }
+            },
+            "required": [
+              "phase"
+            ]
+          },
+          "then": {
+            "properties": {
+              "actual_status": {
+                "const": "failed"
+              },
+              "exit_code": {
+                "not": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "const": 0
+                    }
+                  ]
+                }
+              },
+              "expected_status": {
+                "const": "failed"
+              },
+              "failure_classification": {
+                "const": "expected_behavioral_failure"
+              },
+              "termination_reason": {
+                "const": "exited"
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "actual_status": {
+          "enum": [
+            "passed",
+            "failed",
+            "blocked",
+            "not_run"
+          ],
+          "title": "Actual Status",
+          "type": "string"
+        },
+        "command": {
+          "items": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Command",
+          "type": "array"
+        },
+        "duration_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "ge": 0,
+          "le": 9007199254740991,
+          "title": "Duration Seconds"
+        },
+        "environment_keys": {
+          "items": {
+            "maxLength": 256,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "title": "Environment Keys",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Exit Code"
+        },
+        "expected_status": {
+          "enum": [
+            "passed",
+            "failed",
+            "blocked",
+            "not_run"
+          ],
+          "title": "Expected Status",
+          "type": "string"
+        },
+        "failure_classification": {
+          "enum": [
+            "none",
+            "expected_behavioral_failure",
+            "assertion_failure",
+            "test_failure",
+            "syntax_error",
+            "collection_error",
+            "dependency_error",
+            "credential_error",
+            "infrastructure_error",
+            "timeout",
+            "unrelated_failure"
+          ],
+          "title": "Failure Classification",
+          "type": "string"
+        },
+        "finished_at": {
+          "format": "date-time",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$",
+          "title": "Finished At",
+          "type": "string"
+        },
+        "phase": {
+          "enum": [
+            "red",
+            "green",
+            "refactor",
+            "verification"
+          ],
+          "title": "Phase",
+          "type": "string"
+        },
+        "repository_files_changed": {
+          "title": "Repository Files Changed",
+          "type": "boolean"
+        },
+        "started_at": {
+          "format": "date-time",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$",
+          "title": "Started At",
+          "type": "string"
+        },
+        "stderr": {
+          "$ref": "#/$defs/ArtifactReference"
+        },
+        "stdout": {
+          "$ref": "#/$defs/ArtifactReference"
+        },
+        "termination_reason": {
+          "enum": [
+            "exited",
+            "signalled",
+            "timed_out",
+            "cancelled",
+            "not_started"
+          ],
+          "title": "Termination Reason",
+          "type": "string"
+        },
+        "test_reports": {
+          "items": {
+            "$ref": "#/$defs/ArtifactReference"
+          },
+          "title": "Test Reports",
+          "type": "array"
+        },
+        "tool_versions": {
+          "additionalProperties": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "type": "string"
+          },
+          "propertyNames": {
+            "maxLength": 16384,
+            "minLength": 1
+          },
+          "title": "Tool Versions",
+          "type": "object"
+        },
+        "working_directory": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "pattern": "^(?!/)(?!.*//)(?!.*\\\\)(?!.*\\u0000)(?!.*(?:^|/)\\.\\.?($|/))(?!.*(?:^|/)\\.git($|/))(?!.*[?*\\[])(?!.*\\/$).+$",
+              "type": "string"
+            },
+            {
+              "const": ".",
+              "type": "string"
+            }
+          ],
+          "title": "Working Directory"
+        }
+      },
+      "required": [
+        "phase",
+        "command",
+        "working_directory",
+        "environment_keys",
+        "started_at",
+        "finished_at",
+        "duration_seconds",
+        "exit_code",
+        "termination_reason",
+        "expected_status",
+        "actual_status",
+        "failure_classification",
+        "stdout",
+        "stderr",
+        "test_reports",
+        "tool_versions",
+        "repository_files_changed"
+      ],
+      "title": "EvidenceItem",
+      "type": "object"
+    },
+    "RepositoryIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "base_commit_sha": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Base Commit Sha",
+          "type": "string"
+        },
+        "display_name": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Display Name",
+          "type": "string"
+        },
+        "repository_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Repository Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository_id",
+        "display_name",
+        "base_commit_sha"
+      ],
+      "title": "RepositoryIdentity",
+      "type": "object"
+    },
+    "RunIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "correlation_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "delivery_phase_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Delivery Phase Id",
+          "type": "string"
+        },
+        "run_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Run Id",
+          "type": "string"
+        },
+        "work_item_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Work Item Id",
+          "type": "string"
+        },
+        "work_item_revision_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Work Item Revision Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "work_item_id",
+        "work_item_revision_id",
+        "delivery_phase_id",
+        "run_id",
+        "attempt_id",
+        "correlation_id"
+      ],
+      "title": "RunIdentity",
+      "type": "object"
+    },
+    "RunnerBuildIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "anyOf": [
+            {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Image"
+        },
+        "source_commit": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{40}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Commit"
+        },
+        "version": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "version"
+      ],
+      "title": "RunnerBuildIdentity",
+      "type": "object"
+    }
+  },
+  "$id": "urn:ai-native:factory-runner:v1:verification-evidence",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "environment_kind": {
+            "const": "authoring"
+          }
+        },
+        "required": [
+          "environment_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "change_set_digest": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "environment_kind": {
+            "const": "clean_verification"
+          }
+        },
+        "required": [
+          "environment_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "change_set_digest": {
+            "not": {
+              "type": "null"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "properties": {
+    "advisory_observations": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Advisory Observations",
+      "type": "array"
+    },
+    "change_set_digest": {
+      "anyOf": [
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Change Set Digest"
+    },
+    "context_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Context Digest",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$",
+      "title": "Created At",
+      "type": "string"
+    },
+    "environment_kind": {
+      "enum": [
+        "authoring",
+        "clean_verification"
+      ],
+      "title": "Environment Kind",
+      "type": "string"
+    },
+    "evidence_set_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Evidence Set Digest",
+      "type": "string"
+    },
+    "identity": {
+      "$ref": "#/$defs/RunIdentity"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/$defs/EvidenceItem"
+      },
+      "minItems": 1,
+      "title": "Items",
+      "type": "array"
+    },
+    "overall_status": {
+      "enum": [
+        "passed",
+        "failed",
+        "blocked",
+        "not_run"
+      ],
+      "title": "Overall Status",
+      "type": "string"
+    },
+    "protocol": {
+      "const": "factory-runner-protocol/v1",
+      "title": "Protocol",
+      "type": "string"
+    },
+    "repository": {
+      "$ref": "#/$defs/RepositoryIdentity"
+    },
+    "runner": {
+      "$ref": "#/$defs/RunnerBuildIdentity"
+    },
+    "schema": {
+      "const": "verification-evidence/v1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "protocol",
+    "schema",
+    "schema_version",
+    "created_at",
+    "identity",
+    "repository",
+    "environment_kind",
+    "runner",
+    "context_digest",
+    "change_set_digest",
+    "items",
+    "overall_status",
+    "advisory_observations",
+    "evidence_set_digest"
+  ],
+  "title": "VerificationEvidence",
+  "type": "object"
+}

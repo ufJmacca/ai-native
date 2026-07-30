@@ -1,0 +1,63 @@
+{
+  "protocol": "factory-runner-protocol/v1",
+  "schema": "verification-evidence/v1",
+  "schema_version": 1,
+  "created_at": "2026-07-30T00:00:00Z",
+  "identity": {
+    "work_item_id": "w",
+    "work_item_revision_id": "r",
+    "delivery_phase_id": "p",
+    "run_id": "n",
+    "attempt_id": "a",
+    "correlation_id": "c"
+  },
+  "repository": {
+    "repository_id": "r",
+    "display_name": "r",
+    "base_commit_sha": "0000000000000000000000000000000000000000"
+  },
+  "environment_kind": "authoring",
+  "runner": {
+    "version": "1",
+    "image": null,
+    "source_commit": null
+  },
+  "context_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "change_set_digest": null,
+  "items": [
+    {
+      "phase": "verification",
+      "command": [
+        "t"
+      ],
+      "working_directory": ".",
+      "environment_keys": [],
+      "started_at": "2026-07-30T00:00:00Z",
+      "finished_at": "2026-07-30T00:00:00Z",
+      "duration_seconds": 0,
+      "exit_code": 0,
+      "termination_reason": "exited",
+      "expected_status": "passed",
+      "actual_status": "passed",
+      "failure_classification": "none",
+      "stdout": {
+        "path": "a",
+        "media_type": "application/octet-stream",
+        "byte_size": 0,
+        "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "stderr": {
+        "path": "a",
+        "media_type": "application/octet-stream",
+        "byte_size": 0,
+        "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "test_reports": [],
+      "tool_versions": {},
+      "repository_files_changed": false
+    }
+  ],
+  "overall_status": "passed",
+  "advisory_observations": [],
+  "evidence_set_digest": "sha256:d1901c9111474b09f52f4551abfa9dcbb73fad6007149cd48209ccbccd220e98"
+}

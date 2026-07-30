@@ -1,0 +1,588 @@
+{
+  "$defs": {
+    "CapabilityRequirements": {
+      "additionalProperties": false,
+      "properties": {
+        "optional": {
+          "items": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Optional",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "required": {
+          "items": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Required",
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "required",
+        "optional"
+      ],
+      "title": "CapabilityRequirements",
+      "type": "object"
+    },
+    "ContextInput": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Expected Digest",
+          "type": "string"
+        },
+        "manifest_path": {
+          "maxLength": 4096,
+          "minLength": 2,
+          "pattern": "^/(?!$)(?!.*//)(?!.*\\\\)(?!.*\\u0000)(?!.*(?:^|/)\\.\\.?($|/))(?!.*\\/$).+$",
+          "title": "Manifest Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "manifest_path",
+        "expected_digest"
+      ],
+      "title": "ContextInput",
+      "type": "object"
+    },
+    "OutputSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "output_dir": {
+          "maxLength": 4096,
+          "minLength": 2,
+          "pattern": "^/(?!$)(?!.*//)(?!.*\\\\)(?!.*\\u0000)(?!.*(?:^|/)\\.\\.?($|/))(?!.*\\/$).+$",
+          "title": "Output Dir",
+          "type": "string"
+        },
+        "stream_events_to_stdout": {
+          "title": "Stream Events To Stdout",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "output_dir",
+        "stream_events_to_stdout"
+      ],
+      "title": "OutputSpec",
+      "type": "object"
+    },
+    "RepositoryIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "base_commit_sha": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Base Commit Sha",
+          "type": "string"
+        },
+        "display_name": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Display Name",
+          "type": "string"
+        },
+        "repository_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Repository Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository_id",
+        "display_name",
+        "base_commit_sha"
+      ],
+      "title": "RepositoryIdentity",
+      "type": "object"
+    },
+    "ResumeInput": {
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "properties": {
+            "checkpoint_path": {
+              "type": "null"
+            },
+            "expected_digest": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "properties": {
+            "checkpoint_path": {
+              "type": "string"
+            },
+            "expected_digest": {
+              "type": "string"
+            }
+          }
+        }
+      ],
+      "properties": {
+        "checkpoint_path": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 2,
+              "pattern": "^/(?!$)(?!.*//)(?!.*\\\\)(?!.*\\u0000)(?!.*(?:^|/)\\.\\.?($|/))(?!.*\\/$).+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Checkpoint Path"
+        },
+        "expected_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Expected Digest"
+        }
+      },
+      "required": [
+        "checkpoint_path",
+        "expected_digest"
+      ],
+      "title": "ResumeInput",
+      "type": "object"
+    },
+    "RunIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "correlation_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "delivery_phase_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Delivery Phase Id",
+          "type": "string"
+        },
+        "run_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Run Id",
+          "type": "string"
+        },
+        "work_item_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Work Item Id",
+          "type": "string"
+        },
+        "work_item_revision_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Work Item Revision Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "work_item_id",
+        "work_item_revision_id",
+        "delivery_phase_id",
+        "run_id",
+        "attempt_id",
+        "correlation_id"
+      ],
+      "title": "RunIdentity",
+      "type": "object"
+    },
+    "RunPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_commands": {
+          "items": {
+            "items": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "title": "Allowed Commands",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "allowed_environment_keys": {
+          "items": {
+            "maxLength": 256,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "title": "Allowed Environment Keys",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "allowed_paths": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*//)(?!.*\\\\)(?!.*\\u0000)(?!.*(?:^|/)\\.\\.?($|/))(?!.*(?:^|/)\\.git($|/))(?!.*[?\\[])(?!.*\\/$)(?:\\*\\*|[^*]+(?:/\\*\\*)?)$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Allowed Paths",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "allowed_stages": {
+          "items": {
+            "enum": [
+              "intake",
+              "recon",
+              "plan",
+              "architecture",
+              "prd",
+              "slice",
+              "loop",
+              "verify"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Allowed Stages",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "credential_profile": {
+          "const": "no-external-credentials",
+          "title": "Credential Profile",
+          "type": "string"
+        },
+        "max_agent_turns": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "title": "Max Agent Turns",
+          "type": "integer"
+        },
+        "max_model_tokens": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "title": "Max Model Tokens",
+          "type": "integer"
+        },
+        "max_wall_seconds": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "title": "Max Wall Seconds",
+          "type": "integer"
+        },
+        "model_profile": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$",
+          "title": "Model Profile",
+          "type": "string"
+        },
+        "network_profile": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$",
+          "title": "Network Profile",
+          "type": "string"
+        },
+        "prohibited_paths": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*//)(?!.*\\\\)(?!.*\\u0000)(?!.*(?:^|/)\\.\\.?($|/))(?!.*[?\\[])(?!.*\\/$)(?:\\*\\*|[^*]+(?:/\\*\\*)?)$",
+            "type": "string"
+          },
+          "title": "Prohibited Paths",
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "allowed_paths",
+        "prohibited_paths",
+        "allowed_stages",
+        "allowed_commands",
+        "allowed_environment_keys",
+        "network_profile",
+        "credential_profile",
+        "model_profile",
+        "max_wall_seconds",
+        "max_agent_turns",
+        "max_model_tokens"
+      ],
+      "title": "RunPolicy",
+      "type": "object"
+    },
+    "TaskSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "acceptance_criteria": {
+          "items": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Acceptance Criteria",
+          "type": "array"
+        },
+        "constraints": {
+          "items": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Constraints",
+          "type": "array"
+        },
+        "non_goals": {
+          "items": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Non Goals",
+          "type": "array"
+        },
+        "outcome": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Outcome",
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "acceptance_criteria",
+        "non_goals",
+        "constraints"
+      ],
+      "title": "TaskSpec",
+      "type": "object"
+    },
+    "VerificationInput": {
+      "additionalProperties": false,
+      "properties": {
+        "change_set_path": {
+          "maxLength": 4096,
+          "minLength": 2,
+          "pattern": "^/(?!$)(?!.*//)(?!.*\\\\)(?!.*\\u0000)(?!.*(?:^|/)\\.\\.?($|/))(?!.*\\/$).+$",
+          "title": "Change Set Path",
+          "type": "string"
+        },
+        "expected_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Expected Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "change_set_path",
+        "expected_digest"
+      ],
+      "title": "VerificationInput",
+      "type": "object"
+    },
+    "WorkspaceSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "initial_state": {
+          "enum": [
+            "clean_base",
+            "prepared_verification"
+          ],
+          "title": "Initial State",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 4096,
+          "minLength": 2,
+          "pattern": "^/(?!$)(?!.*//)(?!.*\\\\)(?!.*\\u0000)(?!.*(?:^|/)\\.\\.?($|/))(?!.*\\/$).+$",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "initial_state"
+      ],
+      "title": "WorkspaceSpec",
+      "type": "object"
+    }
+  },
+  "$id": "urn:ai-native:factory-runner:v1:run-spec",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "author"
+          }
+        },
+        "required": [
+          "operation"
+        ]
+      },
+      "then": {
+        "properties": {
+          "verification_input": {
+            "type": "null"
+          },
+          "workspace": {
+            "properties": {
+              "initial_state": {
+                "const": "clean_base"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "verify"
+          }
+        },
+        "required": [
+          "operation"
+        ]
+      },
+      "then": {
+        "properties": {
+          "policy": {
+            "properties": {
+              "allowed_stages": {
+                "const": [
+                  "verify"
+                ]
+              }
+            }
+          },
+          "verification_input": {
+            "not": {
+              "type": "null"
+            }
+          },
+          "workspace": {
+            "properties": {
+              "initial_state": {
+                "const": "prepared_verification"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "properties": {
+    "capabilities": {
+      "$ref": "#/$defs/CapabilityRequirements"
+    },
+    "context": {
+      "$ref": "#/$defs/ContextInput"
+    },
+    "created_at": {
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$",
+      "title": "Created At",
+      "type": "string"
+    },
+    "identity": {
+      "$ref": "#/$defs/RunIdentity"
+    },
+    "operation": {
+      "enum": [
+        "author",
+        "verify"
+      ],
+      "title": "Operation",
+      "type": "string"
+    },
+    "outputs": {
+      "$ref": "#/$defs/OutputSpec"
+    },
+    "policy": {
+      "$ref": "#/$defs/RunPolicy"
+    },
+    "protocol": {
+      "const": "factory-runner-protocol/v1",
+      "title": "Protocol",
+      "type": "string"
+    },
+    "repository": {
+      "$ref": "#/$defs/RepositoryIdentity"
+    },
+    "resume": {
+      "$ref": "#/$defs/ResumeInput"
+    },
+    "schema": {
+      "const": "run-spec/v1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "task": {
+      "$ref": "#/$defs/TaskSpec"
+    },
+    "verification_input": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/VerificationInput"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "workspace": {
+      "$ref": "#/$defs/WorkspaceSpec"
+    }
+  },
+  "required": [
+    "protocol",
+    "schema",
+    "schema_version",
+    "created_at",
+    "identity",
+    "repository",
+    "operation",
+    "workspace",
+    "task",
+    "policy",
+    "capabilities",
+    "context",
+    "verification_input",
+    "resume",
+    "outputs"
+  ],
+  "title": "RunSpec",
+  "type": "object"
+}

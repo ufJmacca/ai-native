@@ -19,13 +19,16 @@ UV_RUN = $(RUNNER) uv run
 UV_SYNC = $(RUNNER) uv sync
 PLAYWRIGHT_INSTALL = $(RUNNER) uv run python -m playwright install chromium
 
-.PHONY: help bootstrap browsers doctor test lint require-target-dir run plan architect prd slice loop verify commit pr
+.PHONY: help bootstrap browsers doctor factory-schemas factory-schemas-check test-contracts test lint require-target-dir run plan architect prd slice loop verify commit pr
 
 help:
 	@printf "Targets:\n"
 	@printf "  make bootstrap          Install Python deps and Playwright Chromium in the current runtime (and build the image when run on the host)\n"
 	@printf "  make browsers           Install Playwright Chromium in the current runtime\n"
 	@printf "  make doctor             Check runtime and auth mounts in the current runtime\n"
+	@printf "  make factory-schemas    Regenerate factory-runner-protocol/v1 JSON Schemas\n"
+	@printf "  make factory-schemas-check  Fail on checked-in factory schema drift\n"
+	@printf "  make test-contracts     Run the factory runner contract suite\n"
 	@printf "  make plan SPEC=... TARGET_DIR=/path/to/repo      Run intake, recon, and planning stages\n"
 	@printf "  make architect SPEC=... TARGET_DIR=/path/to/repo Run architecture stage and critique\n"
 	@printf "  make prd SPEC=... TARGET_DIR=/path/to/repo       Run PRD stage and critique\n"
@@ -85,6 +88,15 @@ run: require-target-dir
 
 lint:
 	$(UV_RUN) python -m compileall ai_native tests
+
+factory-schemas:
+	$(UV_RUN) python scripts/generate_factory_runner_schemas.py --write
+
+factory-schemas-check:
+	$(UV_RUN) python scripts/generate_factory_runner_schemas.py --check
+
+test-contracts:
+	$(UV_RUN) pytest tests/factory_runner/contract
 
 test:
 	$(UV_RUN) pytest

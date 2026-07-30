@@ -1,0 +1,603 @@
+{
+  "$defs": {
+    "AcceptanceCriterionResult": {
+      "additionalProperties": false,
+      "properties": {
+        "criterion": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Criterion",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "blocked",
+            "not_run"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "criterion",
+        "status"
+      ],
+      "title": "AcceptanceCriterionResult",
+      "type": "object"
+    },
+    "ArtifactReference": {
+      "additionalProperties": false,
+      "properties": {
+        "byte_size": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Byte Size",
+          "type": "integer"
+        },
+        "digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "media_type": {
+          "maxLength": 256,
+          "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$",
+          "title": "Media Type",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*//)(?!.*\\\\)(?!.*\\u0000)(?!.*(?:^|/)\\.\\.?($|/))(?!.*(?:^|/)\\.git($|/))(?!.*[?*\\[])(?!.*\\/$).+$",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "media_type",
+        "byte_size",
+        "digest"
+      ],
+      "title": "ArtifactReference",
+      "type": "object"
+    },
+    "ChangedFile": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "add"
+              }
+            },
+            "required": [
+              "operation"
+            ]
+          },
+          "then": {
+            "properties": {
+              "previous_blob_digest": {
+                "type": "null"
+              },
+              "previous_mode": {
+                "type": "null"
+              },
+              "previous_path": {
+                "type": "null"
+              },
+              "resulting_blob_digest": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "resulting_mode": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "delete"
+              }
+            },
+            "required": [
+              "operation"
+            ]
+          },
+          "then": {
+            "properties": {
+              "previous_blob_digest": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "previous_mode": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "previous_path": {
+                "type": "null"
+              },
+              "resulting_blob_digest": {
+                "type": "null"
+              },
+              "resulting_mode": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "modify"
+              }
+            },
+            "required": [
+              "operation"
+            ]
+          },
+          "then": {
+            "properties": {
+              "previous_blob_digest": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "previous_mode": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "previous_path": {
+                "type": "null"
+              },
+              "resulting_blob_digest": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "resulting_mode": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "rename"
+              }
+            },
+            "required": [
+              "operation"
+            ]
+          },
+          "then": {
+            "properties": {
+              "previous_blob_digest": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "previous_mode": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "previous_path": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "resulting_blob_digest": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "resulting_mode": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "allowed_path_decision": {
+          "const": "allowed",
+          "title": "Allowed Path Decision",
+          "type": "string"
+        },
+        "binary": {
+          "title": "Binary",
+          "type": "boolean"
+        },
+        "operation": {
+          "enum": [
+            "add",
+            "modify",
+            "delete",
+            "rename"
+          ],
+          "title": "Operation",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*//)(?!.*\\\\)(?!.*\\u0000)(?!.*(?:^|/)\\.\\.?($|/))(?!.*(?:^|/)\\.git($|/))(?!.*[?*\\[])(?!.*\\/$).+$",
+          "title": "Path",
+          "type": "string"
+        },
+        "previous_blob_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Previous Blob Digest"
+        },
+        "previous_mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "100644",
+                "100755"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Previous Mode"
+        },
+        "previous_path": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "pattern": "^(?!/)(?!.*//)(?!.*\\\\)(?!.*\\u0000)(?!.*(?:^|/)\\.\\.?($|/))(?!.*(?:^|/)\\.git($|/))(?!.*[?*\\[])(?!.*\\/$).+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Previous Path"
+        },
+        "resulting_blob_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Resulting Blob Digest"
+        },
+        "resulting_mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "100644",
+                "100755"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Resulting Mode"
+        }
+      },
+      "required": [
+        "path",
+        "operation",
+        "previous_path",
+        "previous_blob_digest",
+        "resulting_blob_digest",
+        "previous_mode",
+        "resulting_mode",
+        "binary",
+        "allowed_path_decision"
+      ],
+      "title": "ChangedFile",
+      "type": "object"
+    },
+    "PatchArtifact": {
+      "additionalProperties": false,
+      "properties": {
+        "byte_size": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Byte Size",
+          "type": "integer"
+        },
+        "digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "media_type": {
+          "const": "application/vnd.git.binary-patch",
+          "title": "Media Type",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*//)(?!.*\\\\)(?!.*\\u0000)(?!.*(?:^|/)\\.\\.?($|/))(?!.*(?:^|/)\\.git($|/))(?!.*[?*\\[])(?!.*\\/$).+$",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "media_type",
+        "byte_size",
+        "digest"
+      ],
+      "title": "PatchArtifact",
+      "type": "object"
+    },
+    "RepositoryIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "base_commit_sha": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Base Commit Sha",
+          "type": "string"
+        },
+        "display_name": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Display Name",
+          "type": "string"
+        },
+        "repository_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Repository Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository_id",
+        "display_name",
+        "base_commit_sha"
+      ],
+      "title": "RepositoryIdentity",
+      "type": "object"
+    },
+    "RunIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "correlation_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "delivery_phase_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Delivery Phase Id",
+          "type": "string"
+        },
+        "run_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Run Id",
+          "type": "string"
+        },
+        "work_item_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Work Item Id",
+          "type": "string"
+        },
+        "work_item_revision_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Work Item Revision Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "work_item_id",
+        "work_item_revision_id",
+        "delivery_phase_id",
+        "run_id",
+        "attempt_id",
+        "correlation_id"
+      ],
+      "title": "RunIdentity",
+      "type": "object"
+    }
+  },
+  "$id": "urn:ai-native:factory-runner:v1:change-set",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "acceptance_criteria_results": {
+      "items": {
+        "$ref": "#/$defs/AcceptanceCriterionResult"
+      },
+      "title": "Acceptance Criteria Results",
+      "type": "array"
+    },
+    "assumptions": {
+      "items": {
+        "maxLength": 16384,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Assumptions",
+      "type": "array"
+    },
+    "change_set_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Change Set Digest",
+      "type": "string"
+    },
+    "change_set_id": {
+      "maxLength": 512,
+      "minLength": 1,
+      "title": "Change Set Id",
+      "type": "string"
+    },
+    "changed_files": {
+      "items": {
+        "$ref": "#/$defs/ChangedFile"
+      },
+      "minItems": 1,
+      "title": "Changed Files",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "context_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Context Digest",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$",
+      "title": "Created At",
+      "type": "string"
+    },
+    "diff_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Diff Digest",
+      "type": "string"
+    },
+    "evidence_refs": {
+      "items": {
+        "$ref": "#/$defs/ArtifactReference"
+      },
+      "minItems": 1,
+      "title": "Evidence Refs",
+      "type": "array"
+    },
+    "evidence_set_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Evidence Set Digest",
+      "type": "string"
+    },
+    "generated_artifacts": {
+      "items": {
+        "$ref": "#/$defs/ArtifactReference"
+      },
+      "title": "Generated Artifacts",
+      "type": "array"
+    },
+    "identity": {
+      "$ref": "#/$defs/RunIdentity"
+    },
+    "outcome_summary": {
+      "maxLength": 16384,
+      "minLength": 1,
+      "title": "Outcome Summary",
+      "type": "string"
+    },
+    "patch": {
+      "$ref": "#/$defs/PatchArtifact"
+    },
+    "policy_observations": {
+      "items": {
+        "maxLength": 16384,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Policy Observations",
+      "type": "array"
+    },
+    "protocol": {
+      "const": "factory-runner-protocol/v1",
+      "title": "Protocol",
+      "type": "string"
+    },
+    "repository": {
+      "$ref": "#/$defs/RepositoryIdentity"
+    },
+    "residual_risks": {
+      "items": {
+        "maxLength": 16384,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Residual Risks",
+      "type": "array"
+    },
+    "runner_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Runner Digest",
+      "type": "string"
+    },
+    "schema": {
+      "const": "change-set/v1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "protocol",
+    "schema",
+    "schema_version",
+    "created_at",
+    "identity",
+    "repository",
+    "change_set_id",
+    "runner_digest",
+    "context_digest",
+    "patch",
+    "diff_digest",
+    "changed_files",
+    "evidence_set_digest",
+    "evidence_refs",
+    "acceptance_criteria_results",
+    "outcome_summary",
+    "assumptions",
+    "residual_risks",
+    "policy_observations",
+    "generated_artifacts",
+    "change_set_digest"
+  ],
+  "title": "ChangeSet",
+  "type": "object"
+}

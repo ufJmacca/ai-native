@@ -1,0 +1,41 @@
+{
+  "manifest_version": 1,
+  "cases": [
+    {
+      "path": "change-set.invalid-file-mode.json",
+      "schema": "change-set/v1",
+      "validator": "enum"
+    },
+    {
+      "path": "checkpoint.unknown-stage.json",
+      "schema": "checkpoint/v1",
+      "validator": "enum"
+    },
+    {
+      "path": "context-bundle.malformed-digest.json",
+      "schema": "context-bundle/v1",
+      "validator": "pattern"
+    },
+    {
+      "path": "run-result.unknown-outcome.json",
+      "schema": "run-result/v1",
+      "validator": "enum"
+    },
+    {
+      "path": "run-spec.unknown-field.json",
+      "schema": "run-spec/v1",
+      "validator": "additionalProperties"
+    },
+    {
+      "path": "runner-event.zero-sequence.json",
+      "schema": "runner-event/v1",
+      "validator": "exclusiveMinimum"
+    },
+    {
+      "path": "verification-evidence.shell-command.json",
+      "schema": "verification-evidence/v1",
+      "validator": "type"
+    }
+  ]
+}
+

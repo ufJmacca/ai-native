@@ -1,0 +1,50 @@
+{
+  "canonicalization": "RFC 8785",
+  "json_schema_draft": "https://json-schema.org/draft/2020-12/schema",
+  "manifest_version": 1,
+  "protocol": "factory-runner-protocol/v1",
+  "schemas": [
+    {
+      "digest": "sha256:906288e82399a0bf147af1462eeae31ee81e1f5a52966ce6b7be78bcd6e1aaf7",
+      "path": "change-set.schema.json",
+      "schema": "change-set/v1",
+      "schema_id": "urn:ai-native:factory-runner:v1:change-set"
+    },
+    {
+      "digest": "sha256:ac9df4ec3a9ce25634f062a68e7e2b079c589bb0ccffbfa18ad950d04a036900",
+      "path": "checkpoint.schema.json",
+      "schema": "checkpoint/v1",
+      "schema_id": "urn:ai-native:factory-runner:v1:checkpoint"
+    },
+    {
+      "digest": "sha256:1f7eeec2f3992435636e81195c313e7cf1c5a3b3bde8743a81b4a078e580161d",
+      "path": "context-bundle.schema.json",
+      "schema": "context-bundle/v1",
+      "schema_id": "urn:ai-native:factory-runner:v1:context-bundle"
+    },
+    {
+      "digest": "sha256:a635f64fa658fc76035a36a24e2b5adb7a3fb4602ae39023e4e2904b69dcf07a",
+      "path": "run-result.schema.json",
+      "schema": "run-result/v1",
+      "schema_id": "urn:ai-native:factory-runner:v1:run-result"
+    },
+    {
+      "digest": "sha256:de171381915f2bcebb636704386f0a44684b3119bc20e9e603f959fd627a19b1",
+      "path": "run-spec.schema.json",
+      "schema": "run-spec/v1",
+      "schema_id": "urn:ai-native:factory-runner:v1:run-spec"
+    },
+    {
+      "digest": "sha256:871f3615aefcb1057eed10dd118c3009c5dc87c806190f0caff5174a236abad8",
+      "path": "runner-event.schema.json",
+      "schema": "runner-event/v1",
+      "schema_id": "urn:ai-native:factory-runner:v1:runner-event"
+    },
+    {
+      "digest": "sha256:ec73ad2602db3c43fc238179f582f14e3181b594b6c5450840fd3524163059df",
+      "path": "verification-evidence.schema.json",
+      "schema": "verification-evidence/v1",
+      "schema_id": "urn:ai-native:factory-runner:v1:verification-evidence"
+    }
+  ]
+}

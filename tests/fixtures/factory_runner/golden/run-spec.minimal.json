@@ -1,0 +1,64 @@
+{
+  "protocol": "factory-runner-protocol/v1",
+  "schema": "run-spec/v1",
+  "schema_version": 1,
+  "created_at": "2026-07-30T00:00:00Z",
+  "identity": {
+    "work_item_id": "w",
+    "work_item_revision_id": "r",
+    "delivery_phase_id": "p",
+    "run_id": "n",
+    "attempt_id": "a",
+    "correlation_id": "c"
+  },
+  "repository": {
+    "repository_id": "r",
+    "display_name": "r",
+    "base_commit_sha": "0000000000000000000000000000000000000000"
+  },
+  "operation": "author",
+  "workspace": {
+    "path": "/w",
+    "initial_state": "clean_base"
+  },
+  "task": {
+    "outcome": "x",
+    "acceptance_criteria": [],
+    "non_goals": [],
+    "constraints": []
+  },
+  "policy": {
+    "allowed_paths": [
+      "**"
+    ],
+    "prohibited_paths": [],
+    "allowed_stages": [
+      "plan"
+    ],
+    "allowed_commands": [],
+    "allowed_environment_keys": [],
+    "network_profile": "n",
+    "credential_profile": "no-external-credentials",
+    "model_profile": "m",
+    "max_wall_seconds": 1,
+    "max_agent_turns": 1,
+    "max_model_tokens": 1
+  },
+  "capabilities": {
+    "required": [],
+    "optional": []
+  },
+  "context": {
+    "manifest_path": "/c",
+    "expected_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "verification_input": null,
+  "resume": {
+    "checkpoint_path": null,
+    "expected_digest": null
+  },
+  "outputs": {
+    "output_dir": "/o",
+    "stream_events_to_stdout": false
+  }
+}
