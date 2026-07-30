@@ -1,20 +1,27 @@
-from __future__ import annotations
+"""Compatibility imports for stage capability definitions.
 
-LEGACY_ORDERED_STAGES = (
-    "intake",
-    "recon",
-    "plan",
-    "architecture",
-    "prd",
-    "slice",
-    "loop",
-    "verify",
-    "commit",
-    "pr",
+The dependency-free source of truth lives at :mod:`ai_native.workflow_stages`
+so lower-level runtime modules do not need to import the handler package.
+"""
+
+from ai_native.workflow_stages import (
+    CLI_STAGE_CHOICES,
+    FACTORY_ELIGIBLE_STAGES,
+    LEGACY_ORDERED_STAGES,
+    PRE_SLICE_STAGES,
+    PUBLICATION_STAGES,
+    REVIEW_TARGET_STAGES,
+    SLICE_PIPELINE_STAGES,
+    SLICE_SPECIFIC_STAGES,
 )
 
-PUBLICATION_STAGES = frozenset({"commit", "pr"})
-FACTORY_ELIGIBLE_STAGES = frozenset(
-    stage for stage in LEGACY_ORDERED_STAGES if stage not in PUBLICATION_STAGES
-)
-
+__all__ = [
+    "CLI_STAGE_CHOICES",
+    "FACTORY_ELIGIBLE_STAGES",
+    "LEGACY_ORDERED_STAGES",
+    "PRE_SLICE_STAGES",
+    "PUBLICATION_STAGES",
+    "REVIEW_TARGET_STAGES",
+    "SLICE_PIPELINE_STAGES",
+    "SLICE_SPECIFIC_STAGES",
+]

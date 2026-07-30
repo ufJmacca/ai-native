@@ -25,6 +25,7 @@ from ai_native.config import (
 from ai_native.gitops import discover_repo_root
 from ai_native.orchestrator import WorkflowOrchestrator
 from ai_native.state import StateStore
+from ai_native.workflow_stages import CLI_STAGE_CHOICES, REVIEW_TARGET_STAGES
 
 _AUTH_TYPES = ("api_key", "bearer", "basic", "none")
 _SECRET_KEYS = {"api_key", "token", "password"}
@@ -798,7 +799,7 @@ def build_parser() -> argparse.ArgumentParser:
     stage = subparsers.add_parser("stage", parents=[common])
     stage.add_argument("--spec", required=True)
     stage.add_argument("--workspace-dir")
-    stage.add_argument("--stage", required=True, choices=["plan", "architecture", "prd", "slice", "loop", "verify", "commit", "pr"])
+    stage.add_argument("--stage", required=True, choices=CLI_STAGE_CHOICES)
     stage.add_argument("--run-dir")
     stage.add_argument("--dry-run-pr", action="store_true")
     stage.add_argument("--slice-id")
@@ -828,7 +829,7 @@ def build_parser() -> argparse.ArgumentParser:
     review = subparsers.add_parser("review", parents=[common])
     review.add_argument("--spec", required=True)
     review.add_argument("--workspace-dir")
-    review.add_argument("--target", required=True, choices=["plan", "architecture", "prd", "slice", "verify", "pr"])
+    review.add_argument("--target", required=True, choices=REVIEW_TARGET_STAGES)
     review.add_argument("--run-dir")
     review.set_defaults(func=command_review)
 

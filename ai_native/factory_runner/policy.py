@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from ai_native.stages.capabilities import FACTORY_ELIGIBLE_STAGES
+from ai_native.workflow_stages import FACTORY_ELIGIBLE_STAGES
 
 
 class ExecutionMode(StrEnum):
@@ -53,4 +53,3 @@ class FactoryModeCapabilities:
 
 
 DEFAULT_FACTORY_MODE_CAPABILITIES = FactoryModeCapabilities()
-

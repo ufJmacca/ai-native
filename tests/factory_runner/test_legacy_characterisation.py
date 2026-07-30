@@ -9,6 +9,12 @@ from ai_native.cli import _discover_config_path, build_parser, main
 from ai_native.config import AppConfig
 from ai_native.orchestrator import WorkflowOrchestrator
 from ai_native.stages import ORDERED_STAGES
+from ai_native.stages.capabilities import (
+    CLI_STAGE_CHOICES,
+    LEGACY_ORDERED_STAGES,
+    PRE_SLICE_STAGES,
+    SLICE_PIPELINE_STAGES,
+)
 from ai_native.stages.git_pr import commit_run, create_prs
 
 
@@ -91,6 +97,9 @@ def test_legacy_workflow_stage_order_and_publication_handlers_are_unchanged(app_
         "commit",
         "pr",
     ]
+    assert ORDERED_STAGES == list(LEGACY_ORDERED_STAGES)
+    assert PRE_SLICE_STAGES + SLICE_PIPELINE_STAGES == LEGACY_ORDERED_STAGES
+    assert CLI_STAGE_CHOICES == LEGACY_ORDERED_STAGES[2:]
 
     orchestrator = WorkflowOrchestrator(app_config)
     assert list(orchestrator.stage_handlers) == ORDERED_STAGES
