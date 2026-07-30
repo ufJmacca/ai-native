@@ -8,9 +8,10 @@ import pytest
 
 from tests.factory_runner.contract._support import (
     PROTOCOL,
+    bind_self_digest,
     checkpoint,
     protocol_api,
-    run_spec,
+    resuming_run_spec,
 )
 
 
@@ -77,15 +78,18 @@ def test_protocol_negotiation_fails_with_stable_codes(
 def test_checkpoint_can_resume_with_narrower_authority() -> None:
     api = protocol_api()
     stored = checkpoint()
-    resumed = run_spec()
-    resumed["identity"]["attempt_id"] = "attempt-02"
+    resumed = resuming_run_spec()
     resumed["policy"]["allowed_paths"] = ["src/app.py"]
     resumed["policy"]["allowed_stages"] = ["loop", "verify"]
     resumed["policy"]["max_wall_seconds"] = 300
     resumed["policy"]["max_agent_turns"] = 10
     resumed["policy"]["max_model_tokens"] = 25_000
 
-    api.validate_checkpoint_compatibility(stored, resumed)
+    api.validate_checkpoint_compatibility(
+        stored,
+        resumed,
+        supported_capabilities=["author", "structured-events"],
+    )
 
 
 @pytest.mark.parametrize(
@@ -115,8 +119,7 @@ def test_checkpoint_compatibility_rejects_identity_or_authority_escalation(
 ) -> None:
     api = protocol_api()
     stored = checkpoint()
-    resumed = run_spec()
-    resumed["identity"]["attempt_id"] = "attempt-02"
+    resumed = resuming_run_spec()
     if mutation == "same_attempt":
         resumed["identity"]["attempt_id"] = stored["producer_attempt_id"]
     elif mutation == "different_run":
@@ -133,6 +136,8 @@ def test_checkpoint_compatibility_rejects_identity_or_authority_escalation(
         resumed["context"]["expected_digest"] = "sha256:" + ("f" * 64)
     elif mutation == "unsupported_checkpoint_protocol":
         stored["compatibility"]["protocol"] = "factory-runner-protocol/v2"
+        bind_self_digest(stored, "checkpoint_digest")
+        resumed["resume"]["expected_digest"] = stored["checkpoint_digest"]
     elif mutation == "stage_escalation":
         resumed["policy"]["allowed_stages"].append("commit")
     elif mutation == "path_escalation":
@@ -153,6 +158,10 @@ def test_checkpoint_compatibility_rejects_identity_or_authority_escalation(
         resumed["policy"]["max_model_tokens"] = 50_001
 
     with pytest.raises(Exception) as exc_info:
-        api.validate_checkpoint_compatibility(stored, resumed)
+        api.validate_checkpoint_compatibility(
+            stored,
+            resumed,
+            supported_capabilities=["author", "structured-events"],
+        )
 
     assert getattr(exc_info.value, "code", None) == "checkpoint_incompatible"

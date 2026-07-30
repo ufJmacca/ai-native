@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
 import importlib
 from types import ModuleType
 from typing import Any, Callable
 
 import pytest
+import rfc8785
 
 
 PROTOCOL = "factory-runner-protocol/v1"
@@ -128,6 +130,15 @@ def artifact_ref(
     }
 
 
+def bind_self_digest(payload: dict[str, Any], field_name: str) -> dict[str, Any]:
+    projected = deepcopy(payload)
+    projected.pop(field_name)
+    payload[field_name] = (
+        "sha256:" + hashlib.sha256(rfc8785.dumps(projected)).hexdigest()
+    )
+    return payload
+
+
 def allowed_policy() -> dict[str, Any]:
     return {
         "allowed_paths": ["src/app.py", "tests/test_app.py"],
@@ -168,6 +179,7 @@ def run_spec() -> dict[str, Any]:
                 "manifest_path": "/factory/input/context/context-bundle.json",
                 "expected_digest": DIGEST_A,
             },
+            "verification_input": None,
             "resume": {
                 "checkpoint_path": None,
                 "expected_digest": None,
@@ -178,6 +190,28 @@ def run_spec() -> dict[str, Any]:
             },
         }
     )
+    return payload
+
+
+def resuming_run_spec() -> dict[str, Any]:
+    payload = run_spec()
+    payload["identity"]["attempt_id"] = "attempt-02"
+    payload["resume"] = {
+        "checkpoint_path": "/factory/input/resume/checkpoint.json",
+        "expected_digest": checkpoint()["checkpoint_digest"],
+    }
+    return payload
+
+
+def verification_run_spec() -> dict[str, Any]:
+    payload = run_spec()
+    payload["operation"] = "verify"
+    payload["workspace"]["initial_state"] = "prepared_verification"
+    payload["policy"]["allowed_stages"] = ["verify"]
+    payload["verification_input"] = {
+        "change_set_path": "/factory/input/verification/change-set.json",
+        "expected_digest": DIGEST_B,
+    }
     return payload
 
 
@@ -255,7 +289,7 @@ def checkpoint() -> dict[str, Any]:
             "checkpoint_digest": DIGEST_D,
         }
     )
-    return payload
+    return bind_self_digest(payload, "checkpoint_digest")
 
 
 def evidence_item(phase: str = "red") -> dict[str, Any]:

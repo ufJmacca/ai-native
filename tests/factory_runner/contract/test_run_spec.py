@@ -9,6 +9,7 @@ from tests.factory_runner.contract._support import (
     assert_invalid,
     run_spec,
     validate,
+    verification_run_spec,
 )
 
 
@@ -119,12 +120,34 @@ def test_run_spec_rejects_conflicting_or_authority_widening_input(
 
 
 def test_verify_operation_accepts_only_prepared_verification_authority() -> None:
-    payload = run_spec()
-    payload["operation"] = "verify"
-    payload["workspace"]["initial_state"] = "prepared_verification"
-    payload["policy"]["allowed_stages"] = ["verify"]
+    validate("RunSpec", verification_run_spec())
 
-    validate("RunSpec", payload)
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "author_with_verification_input",
+        "verify_without_verification_input",
+        "verify_with_unbound_change_set",
+    ],
+)
+def test_verification_input_is_operation_conditional_and_digest_bound(
+    mutation: str,
+) -> None:
+    if mutation == "author_with_verification_input":
+        payload = run_spec()
+        payload["verification_input"] = {
+            "change_set_path": "/factory/input/verification/change-set.json",
+            "expected_digest": DIGEST_A,
+        }
+    else:
+        payload = verification_run_spec()
+        if mutation == "verify_without_verification_input":
+            payload["verification_input"] = None
+        else:
+            payload["verification_input"]["expected_digest"] = None
+
+    assert_invalid("RunSpec", payload)
 
 
 def test_model_profile_is_an_opaque_identifier_not_a_secret() -> None:
