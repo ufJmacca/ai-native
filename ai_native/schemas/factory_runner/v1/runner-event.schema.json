@@ -1,0 +1,510 @@
+{
+  "$defs": {
+    "ArtifactReference": {
+      "additionalProperties": false,
+      "properties": {
+        "byte_size": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Byte Size",
+          "type": "integer"
+        },
+        "digest": {
+          "maxLength": 71,
+          "minLength": 71,
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "media_type": {
+          "maxLength": 256,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
+          "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$",
+          "title": "Media Type",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
+          "pattern": "^(?!/)(?!.*//)(?!.*\\\\)(?!.*\\u0000)(?!.*(?:^|/)\\.\\.?($|/))(?!.*(?:^|/)\\.git($|/))(?!.*[?*\\[])(?!.*\\/$).+$",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "media_type",
+        "byte_size",
+        "digest"
+      ],
+      "title": "ArtifactReference",
+      "type": "object"
+    },
+    "SanitisedJsonDepth1": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
+        },
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/SanitisedJsonDepth2"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/SanitisedJsonDepth2"
+          },
+          "propertyNames": {
+            "not": {
+              "pattern": "^(?:[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][rR][aA][nN][cC][hH]_[nN][aA][mM][eE]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[gG][iI][tT][hH][uU][bB]_[tT][oO][kK][eE][nN]|[hH][iI][dD][dD][eE][nN]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[mM][eE][rR][gG][eE]|[pP][aA][sS][sS][wW][oO][rR][dD]|[pP][rR]_[bB][oO][dD][yY]|[pP][rR]_[tT][iI][tT][lL][eE]|[pP][uU][bB][lL][iI][cC][aA][tT][iI][oO][nN]_[tT][oO][kK][eE][nN]|[pP][uU][lL][lL]_[rR][eE][qQ][uU][eE][sS][tT]|[rR][aA][wW]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[sS][eE][cC][rR][eE][tT]|[tT][oO][kK][eE][nN])$"
+            }
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "SanitisedJsonDepth2": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
+        },
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/SanitisedJsonDepth3"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/SanitisedJsonDepth3"
+          },
+          "propertyNames": {
+            "not": {
+              "pattern": "^(?:[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][rR][aA][nN][cC][hH]_[nN][aA][mM][eE]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[gG][iI][tT][hH][uU][bB]_[tT][oO][kK][eE][nN]|[hH][iI][dD][dD][eE][nN]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[mM][eE][rR][gG][eE]|[pP][aA][sS][sS][wW][oO][rR][dD]|[pP][rR]_[bB][oO][dD][yY]|[pP][rR]_[tT][iI][tT][lL][eE]|[pP][uU][bB][lL][iI][cC][aA][tT][iI][oO][nN]_[tT][oO][kK][eE][nN]|[pP][uU][lL][lL]_[rR][eE][qQ][uU][eE][sS][tT]|[rR][aA][wW]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[sS][eE][cC][rR][eE][tT]|[tT][oO][kK][eE][nN])$"
+            }
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "SanitisedJsonDepth3": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
+        },
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/SanitisedJsonDepth4"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/SanitisedJsonDepth4"
+          },
+          "propertyNames": {
+            "not": {
+              "pattern": "^(?:[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][rR][aA][nN][cC][hH]_[nN][aA][mM][eE]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[gG][iI][tT][hH][uU][bB]_[tT][oO][kK][eE][nN]|[hH][iI][dD][dD][eE][nN]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[mM][eE][rR][gG][eE]|[pP][aA][sS][sS][wW][oO][rR][dD]|[pP][rR]_[bB][oO][dD][yY]|[pP][rR]_[tT][iI][tT][lL][eE]|[pP][uU][bB][lL][iI][cC][aA][tT][iI][oO][nN]_[tT][oO][kK][eE][nN]|[pP][uU][lL][lL]_[rR][eE][qQ][uU][eE][sS][tT]|[rR][aA][wW]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[sS][eE][cC][rR][eE][tT]|[tT][oO][kK][eE][nN])$"
+            }
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "SanitisedJsonDepth4": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
+        },
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/SanitisedJsonDepth5"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/SanitisedJsonDepth5"
+          },
+          "propertyNames": {
+            "not": {
+              "pattern": "^(?:[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][rR][aA][nN][cC][hH]_[nN][aA][mM][eE]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[gG][iI][tT][hH][uU][bB]_[tT][oO][kK][eE][nN]|[hH][iI][dD][dD][eE][nN]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[mM][eE][rR][gG][eE]|[pP][aA][sS][sS][wW][oO][rR][dD]|[pP][rR]_[bB][oO][dD][yY]|[pP][rR]_[tT][iI][tT][lL][eE]|[pP][uU][bB][lL][iI][cC][aA][tT][iI][oO][nN]_[tT][oO][kK][eE][nN]|[pP][uU][lL][lL]_[rR][eE][qQ][uU][eE][sS][tT]|[rR][aA][wW]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[sS][eE][cC][rR][eE][tT]|[tT][oO][kK][eE][nN])$"
+            }
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "SanitisedJsonDepth5": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
+        },
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/SanitisedJsonDepth6"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/SanitisedJsonDepth6"
+          },
+          "propertyNames": {
+            "not": {
+              "pattern": "^(?:[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][rR][aA][nN][cC][hH]_[nN][aA][mM][eE]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[gG][iI][tT][hH][uU][bB]_[tT][oO][kK][eE][nN]|[hH][iI][dD][dD][eE][nN]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[mM][eE][rR][gG][eE]|[pP][aA][sS][sS][wW][oO][rR][dD]|[pP][rR]_[bB][oO][dD][yY]|[pP][rR]_[tT][iI][tT][lL][eE]|[pP][uU][bB][lL][iI][cC][aA][tT][iI][oO][nN]_[tT][oO][kK][eE][nN]|[pP][uU][lL][lL]_[rR][eE][qQ][uU][eE][sS][tT]|[rR][aA][wW]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[sS][eE][cC][rR][eE][tT]|[tT][oO][kK][eE][nN])$"
+            }
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "SanitisedJsonDepth6": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
+        },
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/SanitisedJsonDepth7"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/SanitisedJsonDepth7"
+          },
+          "propertyNames": {
+            "not": {
+              "pattern": "^(?:[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][rR][aA][nN][cC][hH]_[nN][aA][mM][eE]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[gG][iI][tT][hH][uU][bB]_[tT][oO][kK][eE][nN]|[hH][iI][dD][dD][eE][nN]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[mM][eE][rR][gG][eE]|[pP][aA][sS][sS][wW][oO][rR][dD]|[pP][rR]_[bB][oO][dD][yY]|[pP][rR]_[tT][iI][tT][lL][eE]|[pP][uU][bB][lL][iI][cC][aA][tT][iI][oO][nN]_[tT][oO][kK][eE][nN]|[pP][uU][lL][lL]_[rR][eE][qQ][uU][eE][sS][tT]|[rR][aA][wW]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[sS][eE][cC][rR][eE][tT]|[tT][oO][kK][eE][nN])$"
+            }
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "SanitisedJsonDepth7": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
+        },
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/SanitisedJsonDepth8"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/SanitisedJsonDepth8"
+          },
+          "propertyNames": {
+            "not": {
+              "pattern": "^(?:[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][rR][aA][nN][cC][hH]_[nN][aA][mM][eE]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[gG][iI][tT][hH][uU][bB]_[tT][oO][kK][eE][nN]|[hH][iI][dD][dD][eE][nN]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[mM][eE][rR][gG][eE]|[pP][aA][sS][sS][wW][oO][rR][dD]|[pP][rR]_[bB][oO][dD][yY]|[pP][rR]_[tT][iI][tT][lL][eE]|[pP][uU][bB][lL][iI][cC][aA][tT][iI][oO][nN]_[tT][oO][kK][eE][nN]|[pP][uU][lL][lL]_[rR][eE][qQ][uU][eE][sS][tT]|[rR][aA][wW]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[sS][eE][cC][rR][eE][tT]|[tT][oO][kK][eE][nN])$"
+            }
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "SanitisedJsonDepth8": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
+        },
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "maxItems": 0,
+          "type": "array"
+        },
+        {
+          "maxProperties": 0,
+          "propertyNames": {
+            "not": {
+              "pattern": "^(?:[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][rR][aA][nN][cC][hH]_[nN][aA][mM][eE]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[gG][iI][tT][hH][uU][bB]_[tT][oO][kK][eE][nN]|[hH][iI][dD][dD][eE][nN]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[mM][eE][rR][gG][eE]|[pP][aA][sS][sS][wW][oO][rR][dD]|[pP][rR]_[bB][oO][dD][yY]|[pP][rR]_[tT][iI][tT][lL][eE]|[pP][uU][bB][lL][iI][cC][aA][tT][iI][oO][nN]_[tT][oO][kK][eE][nN]|[pP][uU][lL][lL]_[rR][eE][qQ][uU][eE][sS][tT]|[rR][aA][wW]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[sS][eE][cC][rR][eE][tT]|[tT][oO][kK][eE][nN])$"
+            }
+          },
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "$id": "urn:ai-native:factory-runner:v1:runner-event",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "artifact_refs": {
+      "items": {
+        "$ref": "#/$defs/ArtifactReference"
+      },
+      "title": "Artifact Refs",
+      "type": "array"
+    },
+    "attempt_id": {
+      "maxLength": 512,
+      "minLength": 1,
+      "not": {
+        "pattern": "[\\u0000-\\u001f\\u007f]"
+      },
+      "title": "Attempt Id",
+      "type": "string"
+    },
+    "causation_id": {
+      "anyOf": [
+        {
+          "maxLength": 512,
+          "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Causation Id"
+    },
+    "correlation_id": {
+      "maxLength": 512,
+      "minLength": 1,
+      "not": {
+        "pattern": "[\\u0000-\\u001f\\u007f]"
+      },
+      "title": "Correlation Id",
+      "type": "string"
+    },
+    "event_type": {
+      "enum": [
+        "RunnerStarted",
+        "InputValidated",
+        "CheckpointRestored",
+        "StageStarted",
+        "StageCompleted",
+        "ToolStarted",
+        "ToolCompleted",
+        "TestStarted",
+        "TestCompleted",
+        "FileManifestChanged",
+        "CheckpointWritten",
+        "ChangeSetWritten",
+        "VerificationEvidenceWritten",
+        "PolicyDenied",
+        "RunnerCancellationRequested",
+        "RunnerCompleted",
+        "RunnerFailed"
+      ],
+      "title": "Event Type",
+      "type": "string"
+    },
+    "protocol": {
+      "const": "factory-runner-protocol/v1",
+      "title": "Protocol",
+      "type": "string"
+    },
+    "run_id": {
+      "maxLength": 512,
+      "minLength": 1,
+      "not": {
+        "pattern": "[\\u0000-\\u001f\\u007f]"
+      },
+      "title": "Run Id",
+      "type": "string"
+    },
+    "sanitised_payload": {
+      "additionalProperties": {
+        "$ref": "#/$defs/SanitisedJsonDepth1"
+      },
+      "propertyNames": {
+        "not": {
+          "pattern": "^(?:[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][rR][aA][nN][cC][hH]_[nN][aA][mM][eE]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[gG][iI][tT][hH][uU][bB]_[tT][oO][kK][eE][nN]|[hH][iI][dD][dD][eE][nN]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[mM][eE][rR][gG][eE]|[pP][aA][sS][sS][wW][oO][rR][dD]|[pP][rR]_[bB][oO][dD][yY]|[pP][rR]_[tT][iI][tT][lL][eE]|[pP][uU][bB][lL][iI][cC][aA][tT][iI][oO][nN]_[tT][oO][kK][eE][nN]|[pP][uU][lL][lL]_[rR][eE][qQ][uU][eE][sS][tT]|[rR][aA][wW]_[rR][eE][aA][sS][oO][nN][iI][nN][gG]|[sS][eE][cC][rR][eE][tT]|[tT][oO][kK][eE][nN])$"
+        }
+      },
+      "type": "object"
+    },
+    "schema": {
+      "const": "runner-event/v1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "sequence": {
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991,
+      "title": "Sequence",
+      "type": "integer"
+    },
+    "timestamp": {
+      "format": "date-time",
+      "maxLength": 30,
+      "minLength": 20,
+      "not": {
+        "pattern": "[\\u0000-\\u001f\\u007f]"
+      },
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$",
+      "title": "Timestamp",
+      "type": "string"
+    }
+  },
+  "required": [
+    "protocol",
+    "schema",
+    "schema_version",
+    "run_id",
+    "attempt_id",
+    "sequence",
+    "timestamp",
+    "event_type",
+    "correlation_id",
+    "causation_id",
+    "sanitised_payload",
+    "artifact_refs"
+  ],
+  "title": "RunnerEvent",
+  "type": "object"
+}

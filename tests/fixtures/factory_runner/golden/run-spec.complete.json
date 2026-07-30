@@ -1,0 +1,84 @@
+{
+  "protocol": "factory-runner-protocol/v1",
+  "schema": "run-spec/v1",
+  "schema_version": 1,
+  "created_at": "2026-07-30T10:00:00Z",
+  "identity": {
+    "work_item_id": "work-item-01",
+    "work_item_revision_id": "revision-01",
+    "delivery_phase_id": "phase-01",
+    "run_id": "run-01",
+    "attempt_id": "attempt-01",
+    "correlation_id": "correlation-01"
+  },
+  "repository": {
+    "repository_id": "repository-01",
+    "display_name": "owner/repository",
+    "base_commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "operation": "author",
+  "workspace": {
+    "path": "/workspace/target",
+    "initial_state": "clean_base"
+  },
+  "task": {
+    "outcome": "Implement the deterministic fixture.",
+    "acceptance_criteria": [
+      "The fixture passes."
+    ],
+    "non_goals": [],
+    "constraints": [
+      "Do not publish."
+    ]
+  },
+  "policy": {
+    "allowed_paths": [
+      "src/app.py",
+      "tests/test_app.py"
+    ],
+    "prohibited_paths": [
+      ".git"
+    ],
+    "allowed_stages": [
+      "plan",
+      "loop",
+      "verify"
+    ],
+    "allowed_commands": [
+      [
+        "pytest",
+        "-q"
+      ]
+    ],
+    "allowed_environment_keys": [
+      "PATH"
+    ],
+    "network_profile": "model-gateway-only",
+    "credential_profile": "no-external-credentials",
+    "model_profile": "default-model",
+    "max_wall_seconds": 600,
+    "max_agent_turns": 20,
+    "max_model_tokens": 50000
+  },
+  "capabilities": {
+    "required": [
+      "author"
+    ],
+    "optional": [
+      "structured-events"
+    ]
+  },
+  "context": {
+    "manifest_path": "/factory/input/context/context-bundle.json",
+    "expected_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "verification_input": null,
+  "resume": {
+    "checkpoint_path": null,
+    "expected_digest": null
+  },
+  "outputs": {
+    "output_dir": "/factory/output",
+    "stream_events_to_stdout": false
+  }
+}

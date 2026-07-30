@@ -1,0 +1,562 @@
+{
+  "$defs": {
+    "ArtifactReference": {
+      "additionalProperties": false,
+      "properties": {
+        "byte_size": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Byte Size",
+          "type": "integer"
+        },
+        "digest": {
+          "maxLength": 71,
+          "minLength": 71,
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "media_type": {
+          "maxLength": 256,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
+          "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$",
+          "title": "Media Type",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
+          "pattern": "^(?!/)(?!.*//)(?!.*\\\\)(?!.*\\u0000)(?!.*(?:^|/)\\.\\.?($|/))(?!.*(?:^|/)\\.git($|/))(?!.*[?*\\[])(?!.*\\/$).+$",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "media_type",
+        "byte_size",
+        "digest"
+      ],
+      "title": "ArtifactReference",
+      "type": "object"
+    },
+    "RepositoryIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "base_commit_sha": {
+          "maxLength": 40,
+          "minLength": 40,
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Base Commit Sha",
+          "type": "string"
+        },
+        "display_name": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Display Name",
+          "type": "string"
+        },
+        "repository_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
+          "title": "Repository Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository_id",
+        "display_name",
+        "base_commit_sha"
+      ],
+      "title": "RepositoryIdentity",
+      "type": "object"
+    },
+    "RunIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "correlation_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "delivery_phase_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
+          "title": "Delivery Phase Id",
+          "type": "string"
+        },
+        "run_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
+          "title": "Run Id",
+          "type": "string"
+        },
+        "work_item_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
+          "title": "Work Item Id",
+          "type": "string"
+        },
+        "work_item_revision_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
+          "title": "Work Item Revision Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "work_item_id",
+        "work_item_revision_id",
+        "delivery_phase_id",
+        "run_id",
+        "attempt_id",
+        "correlation_id"
+      ],
+      "title": "RunIdentity",
+      "type": "object"
+    },
+    "RunnerBuildIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "anyOf": [
+            {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Image"
+        },
+        "source_commit": {
+          "anyOf": [
+            {
+              "maxLength": 40,
+              "minLength": 40,
+              "pattern": "^[0-9a-f]{40}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Source Commit"
+        },
+        "version": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "image",
+        "source_commit"
+      ],
+      "title": "RunnerBuildIdentity",
+      "type": "object"
+    }
+  },
+  "$id": "urn:ai-native:factory-runner:v1:run-result",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "not": {
+              "const": "invalid_input"
+            }
+          }
+        },
+        "required": [
+          "outcome"
+        ]
+      },
+      "then": {
+        "properties": {
+          "identity": {
+            "not": {
+              "type": "null"
+            }
+          },
+          "repository": {
+            "not": {
+              "type": "null"
+            }
+          }
+        },
+        "required": [
+          "identity",
+          "repository"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "author"
+          }
+        },
+        "required": [
+          "operation"
+        ]
+      },
+      "then": {
+        "properties": {
+          "verification_evidence": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "verify"
+          }
+        },
+        "required": [
+          "operation"
+        ]
+      },
+      "then": {
+        "properties": {
+          "change_set": {
+            "type": "null"
+          },
+          "completed_stages": {
+            "items": {
+              "const": "verify"
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "author"
+          },
+          "outcome": {
+            "const": "succeeded"
+          }
+        },
+        "required": [
+          "operation",
+          "outcome"
+        ]
+      },
+      "then": {
+        "properties": {
+          "change_set": {
+            "not": {
+              "type": "null"
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "verify"
+          },
+          "outcome": {
+            "const": "succeeded"
+          }
+        },
+        "required": [
+          "operation",
+          "outcome"
+        ]
+      },
+      "then": {
+        "properties": {
+          "completed_stages": {
+            "const": [
+              "verify"
+            ]
+          },
+          "verification_evidence": {
+            "not": {
+              "type": "null"
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "no_change"
+          }
+        },
+        "required": [
+          "outcome"
+        ]
+      },
+      "then": {
+        "properties": {
+          "change_set": {
+            "type": "null"
+          },
+          "operation": {
+            "const": "author"
+          },
+          "verification_evidence": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ],
+  "properties": {
+    "change_set": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactReference"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "completed_stages": {
+      "items": {
+        "enum": [
+          "intake",
+          "recon",
+          "plan",
+          "architecture",
+          "prd",
+          "slice",
+          "loop",
+          "verify"
+        ],
+        "type": "string"
+      },
+      "title": "Completed Stages",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "created_at": {
+      "format": "date-time",
+      "maxLength": 30,
+      "minLength": 20,
+      "not": {
+        "pattern": "[\\u0000-\\u001f\\u007f]"
+      },
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$",
+      "title": "Created At",
+      "type": "string"
+    },
+    "event_stream_digest": {
+      "maxLength": 71,
+      "minLength": 71,
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Event Stream Digest",
+      "type": "string"
+    },
+    "finished_at": {
+      "format": "date-time",
+      "maxLength": 30,
+      "minLength": 20,
+      "not": {
+        "pattern": "[\\u0000-\\u001f\\u007f]"
+      },
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$",
+      "title": "Finished At",
+      "type": "string"
+    },
+    "identity": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RunIdentity"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "latest_checkpoint": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactReference"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "message": {
+      "maxLength": 4096,
+      "minLength": 1,
+      "title": "Message",
+      "type": "string"
+    },
+    "operation": {
+      "enum": [
+        "author",
+        "verify"
+      ],
+      "title": "Operation",
+      "type": "string"
+    },
+    "outcome": {
+      "enum": [
+        "succeeded",
+        "no_change",
+        "blocked",
+        "failed",
+        "cancelled",
+        "timed_out",
+        "invalid_input",
+        "checkpoint_incompatible",
+        "policy_denied"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "output_manifest_digest": {
+      "maxLength": 71,
+      "minLength": 71,
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Output Manifest Digest",
+      "type": "string"
+    },
+    "protocol": {
+      "const": "factory-runner-protocol/v1",
+      "title": "Protocol",
+      "type": "string"
+    },
+    "reason_code": {
+      "maxLength": 128,
+      "minLength": 1,
+      "not": {
+        "pattern": "[\\u0000-\\u001f\\u007f]"
+      },
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "title": "Reason Code",
+      "type": "string"
+    },
+    "repository": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RepositoryIdentity"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "result_digest": {
+      "maxLength": 71,
+      "minLength": 71,
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Result Digest",
+      "type": "string"
+    },
+    "runner_build": {
+      "$ref": "#/$defs/RunnerBuildIdentity"
+    },
+    "schema": {
+      "const": "run-result/v1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "started_at": {
+      "format": "date-time",
+      "maxLength": 30,
+      "minLength": 20,
+      "not": {
+        "pattern": "[\\u0000-\\u001f\\u007f]"
+      },
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$",
+      "title": "Started At",
+      "type": "string"
+    },
+    "verification_evidence": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactReference"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "protocol",
+    "schema",
+    "schema_version",
+    "created_at",
+    "identity",
+    "repository",
+    "operation",
+    "outcome",
+    "reason_code",
+    "message",
+    "started_at",
+    "finished_at",
+    "completed_stages",
+    "latest_checkpoint",
+    "change_set",
+    "verification_evidence",
+    "event_stream_digest",
+    "output_manifest_digest",
+    "runner_build",
+    "result_digest"
+  ],
+  "title": "RunResult",
+  "type": "object"
+}

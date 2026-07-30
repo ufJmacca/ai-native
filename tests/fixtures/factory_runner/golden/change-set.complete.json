@@ -1,0 +1,63 @@
+{
+  "protocol": "factory-runner-protocol/v1",
+  "schema": "change-set/v1",
+  "schema_version": 1,
+  "created_at": "2026-07-30T10:00:00Z",
+  "identity": {
+    "work_item_id": "work-item-01",
+    "work_item_revision_id": "revision-01",
+    "delivery_phase_id": "phase-01",
+    "run_id": "run-01",
+    "attempt_id": "attempt-01",
+    "correlation_id": "correlation-01"
+  },
+  "repository": {
+    "repository_id": "repository-01",
+    "display_name": "owner/repository",
+    "base_commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "change_set_id": "change-set-01",
+  "runner_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "context_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "patch": {
+    "path": "changeset/change.patch",
+    "media_type": "application/vnd.git.binary-patch",
+    "byte_size": 3,
+    "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "diff_digest": "sha256:e124a9cff23b6dcf3f797e9598bb311287a1218403d96ae90c3ba2a3e9b1a6a1",
+  "changed_files": [
+    {
+      "path": "src/app.py",
+      "operation": "modify",
+      "previous_path": null,
+      "previous_blob_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "resulting_blob_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "previous_mode": "100644",
+      "resulting_mode": "100644",
+      "binary": false,
+      "allowed_path_decision": "allowed"
+    }
+  ],
+  "evidence_set_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "evidence_refs": [
+    {
+      "path": "evidence/evidence.json",
+      "media_type": "application/octet-stream",
+      "byte_size": 3,
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "acceptance_criteria_results": [
+    {
+      "criterion": "The fixture passes.",
+      "status": "passed"
+    }
+  ],
+  "outcome_summary": "Implemented the deterministic fixture.",
+  "assumptions": [],
+  "residual_risks": [],
+  "policy_observations": [],
+  "generated_artifacts": [],
+  "change_set_digest": "sha256:441bbad3e02ac5394ca3b0947330bcce4f1d3e3dfb9fe01f817f16e22b0ce726"
+}

@@ -1,0 +1,365 @@
+{
+  "$defs": {
+    "ContextConstruction": {
+      "additionalProperties": false,
+      "properties": {
+        "builder": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Builder",
+          "type": "string"
+        },
+        "source_digests": {
+          "items": {
+            "maxLength": 71,
+            "minLength": 71,
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "title": "Source Digests",
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "builder",
+        "source_digests"
+      ],
+      "title": "ContextConstruction",
+      "type": "object"
+    },
+    "ContextManifestEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "byte_size": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Byte Size",
+          "type": "integer"
+        },
+        "classification": {
+          "enum": [
+            "work_item_revision",
+            "repository_instruction",
+            "trusted_policy",
+            "approved_project_memory",
+            "dependency_output",
+            "operator_input",
+            "supporting_artifact"
+          ],
+          "title": "Classification",
+          "type": "string"
+        },
+        "digest": {
+          "maxLength": 71,
+          "minLength": 71,
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "logical_path": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
+          "pattern": "^(?!/)(?!.*//)(?!.*\\\\)(?!.*\\u0000)(?!.*(?:^|/)\\.\\.?($|/))(?!.*(?:^|/)\\.git($|/))(?!.*[?*\\[])(?!.*\\/$).+$",
+          "title": "Logical Path",
+          "type": "string"
+        },
+        "media_type": {
+          "maxLength": 256,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
+          "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$",
+          "title": "Media Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "logical_path",
+        "media_type",
+        "byte_size",
+        "digest",
+        "classification"
+      ],
+      "title": "ContextManifestEntry",
+      "type": "object"
+    },
+    "NormalisedWorkItemRevision": {
+      "additionalProperties": false,
+      "properties": {
+        "acceptance_criteria": {
+          "items": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Acceptance Criteria",
+          "type": "array"
+        },
+        "outcome": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Outcome",
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "acceptance_criteria"
+      ],
+      "title": "NormalisedWorkItemRevision",
+      "type": "object"
+    },
+    "RepositoryIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "base_commit_sha": {
+          "maxLength": 40,
+          "minLength": 40,
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Base Commit Sha",
+          "type": "string"
+        },
+        "display_name": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Display Name",
+          "type": "string"
+        },
+        "repository_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
+          "title": "Repository Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository_id",
+        "display_name",
+        "base_commit_sha"
+      ],
+      "title": "RepositoryIdentity",
+      "type": "object"
+    },
+    "RunIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "correlation_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "delivery_phase_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
+          "title": "Delivery Phase Id",
+          "type": "string"
+        },
+        "run_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
+          "title": "Run Id",
+          "type": "string"
+        },
+        "work_item_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
+          "title": "Work Item Id",
+          "type": "string"
+        },
+        "work_item_revision_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
+          "title": "Work Item Revision Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "work_item_id",
+        "work_item_revision_id",
+        "delivery_phase_id",
+        "run_id",
+        "attempt_id",
+        "correlation_id"
+      ],
+      "title": "RunIdentity",
+      "type": "object"
+    }
+  },
+  "$id": "urn:ai-native:factory-runner:v1:context-bundle",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "approved_repository_memory": {
+      "items": {
+        "maxLength": 16384,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Approved Repository Memory",
+      "type": "array"
+    },
+    "bundle_digest": {
+      "maxLength": 71,
+      "minLength": 71,
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Bundle Digest",
+      "type": "string"
+    },
+    "construction": {
+      "$ref": "#/$defs/ContextConstruction"
+    },
+    "context_bundle_id": {
+      "maxLength": 512,
+      "minLength": 1,
+      "not": {
+        "pattern": "[\\u0000-\\u001f\\u007f]"
+      },
+      "title": "Context Bundle Id",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "maxLength": 30,
+      "minLength": 20,
+      "not": {
+        "pattern": "[\\u0000-\\u001f\\u007f]"
+      },
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$",
+      "title": "Created At",
+      "type": "string"
+    },
+    "dependency_outputs": {
+      "items": {
+        "maxLength": 16384,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Dependency Outputs",
+      "type": "array"
+    },
+    "identity": {
+      "$ref": "#/$defs/RunIdentity"
+    },
+    "manifest_entries": {
+      "contains": {
+        "properties": {
+          "classification": {
+            "const": "work_item_revision"
+          }
+        },
+        "required": [
+          "classification"
+        ]
+      },
+      "items": {
+        "$ref": "#/$defs/ContextManifestEntry"
+      },
+      "maxContains": 1,
+      "minContains": 1,
+      "minItems": 1,
+      "title": "Manifest Entries",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "operator_input": {
+      "items": {
+        "maxLength": 16384,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Operator Input",
+      "type": "array"
+    },
+    "protocol": {
+      "const": "factory-runner-protocol/v1",
+      "title": "Protocol",
+      "type": "string"
+    },
+    "repository": {
+      "$ref": "#/$defs/RepositoryIdentity"
+    },
+    "repository_instructions": {
+      "items": {
+        "maxLength": 16384,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Repository Instructions",
+      "type": "array"
+    },
+    "schema": {
+      "const": "context-bundle/v1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "trusted_policy_summary": {
+      "items": {
+        "maxLength": 16384,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Trusted Policy Summary",
+      "type": "array"
+    },
+    "work_item_revision": {
+      "$ref": "#/$defs/NormalisedWorkItemRevision"
+    }
+  },
+  "required": [
+    "protocol",
+    "schema",
+    "schema_version",
+    "created_at",
+    "identity",
+    "repository",
+    "context_bundle_id",
+    "manifest_entries",
+    "work_item_revision",
+    "repository_instructions",
+    "trusted_policy_summary",
+    "approved_repository_memory",
+    "dependency_outputs",
+    "operator_input",
+    "construction",
+    "bundle_digest"
+  ],
+  "title": "ContextBundle",
+  "type": "object"
+}

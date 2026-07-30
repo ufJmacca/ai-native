@@ -1,0 +1,50 @@
+{
+  "protocol": "factory-runner-protocol/v1",
+  "schema": "context-bundle/v1",
+  "schema_version": 1,
+  "created_at": "2026-07-30T10:00:00Z",
+  "identity": {
+    "work_item_id": "work-item-01",
+    "work_item_revision_id": "revision-01",
+    "delivery_phase_id": "phase-01",
+    "run_id": "run-01",
+    "attempt_id": "attempt-01",
+    "correlation_id": "correlation-01"
+  },
+  "repository": {
+    "repository_id": "repository-01",
+    "display_name": "owner/repository",
+    "base_commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "context_bundle_id": "context-01",
+  "manifest_entries": [
+    {
+      "logical_path": "work-item/revision.md",
+      "media_type": "text/markdown",
+      "byte_size": 3,
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "classification": "work_item_revision"
+    }
+  ],
+  "work_item_revision": {
+    "outcome": "Implement the deterministic fixture.",
+    "acceptance_criteria": [
+      "The fixture passes."
+    ]
+  },
+  "repository_instructions": [],
+  "trusted_policy_summary": [
+    "No publication authority."
+  ],
+  "approved_repository_memory": [],
+  "dependency_outputs": [],
+  "operator_input": [],
+  "construction": {
+    "builder": "fixture-builder/v1",
+    "source_digests": [
+      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ]
+  },
+  "bundle_digest": "sha256:8c0423a9e7f76b971bba09bf724be59c6a0269422eaef75506b8fd23f7b06225"
+}
+

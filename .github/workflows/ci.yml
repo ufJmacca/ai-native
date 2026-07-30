@@ -17,5 +17,7 @@ jobs:
         run: docker compose build workspace
       - name: Bootstrap workspace
         run: docker compose run --rm --user root workspace uv sync
+      - name: Check factory protocol schema drift
+        run: docker compose run --rm --user root workspace uv run python scripts/generate_factory_runner_schemas.py --check
       - name: Run test suite
         run: docker compose run --rm --user root workspace uv run pytest

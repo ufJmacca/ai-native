@@ -1,0 +1,71 @@
+{
+  "protocol": "factory-runner-protocol/v1",
+  "schema": "checkpoint/v1",
+  "schema_version": 1,
+  "created_at": "2026-07-30T00:00:00Z",
+  "identity": {
+    "work_item_id": "w",
+    "work_item_revision_id": "r",
+    "delivery_phase_id": "p",
+    "run_id": "n",
+    "attempt_id": "a",
+    "correlation_id": "c"
+  },
+  "repository": {
+    "repository_id": "r",
+    "display_name": "r",
+    "base_commit_sha": "0000000000000000000000000000000000000000"
+  },
+  "checkpoint_id": "c",
+  "sequence": 1,
+  "producer_attempt_id": "a",
+  "compatibility": {
+    "protocol": "factory-runner-protocol/v1",
+    "required_capabilities": [],
+    "minimum_runner_version": "1.0.0"
+  },
+  "context_bundle_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "run_spec_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "operation": "author",
+  "verification_change_set_digest": null,
+  "workspace_patch_digest": null,
+  "completed_stages": [],
+  "next_permitted_stage": null,
+  "workflow_state": {},
+  "evidence_refs": [],
+  "artifact_manifest": [],
+  "authority": {
+    "allowed_paths": [
+      "**"
+    ],
+    "prohibited_paths": [],
+    "allowed_stages": [
+      "plan"
+    ],
+    "allowed_commands": [],
+    "allowed_environment_keys": [],
+    "network_profile": "n",
+    "credential_profile": "no-external-credentials",
+    "model_profile": "m",
+    "max_wall_seconds": 1,
+    "max_agent_turns": 1,
+    "max_model_tokens": 1
+  },
+  "budgets": {
+    "consumed": {
+      "wall_seconds": 0,
+      "agent_turns": 0,
+      "model_tokens": 0
+    },
+    "remaining": {
+      "wall_seconds": 1,
+      "agent_turns": 1,
+      "model_tokens": 1
+    }
+  },
+  "decisions": [],
+  "assumptions": [],
+  "open_questions": [],
+  "object_digests": [],
+  "checkpoint_digest": "sha256:1b3a542fb41651b0befdd8430245f0053396505f62aab1977ba5583ad13eab19"
+}
