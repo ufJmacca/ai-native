@@ -31,6 +31,16 @@ def test_factory_command_group_never_prompts(monkeypatch, capsys) -> None:
     assert "reserved" in capsys.readouterr().out.lower()
 
 
+def test_factory_run_and_verify_are_not_executable_in_an_00(monkeypatch) -> None:
+    for command in ("run", "verify"):
+        monkeypatch.setattr(sys, "argv", ["ainative", "factory", command])
+
+        with pytest.raises(SystemExit) as excinfo:
+            main()
+
+        assert excinfo.value.code == 2
+
+
 def test_installed_cli_exposes_reserved_factory_group() -> None:
     completed = subprocess.run(
         ["ainative", "factory", "--help"],

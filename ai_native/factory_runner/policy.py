@@ -37,12 +37,14 @@ _FACTORY_EXECUTION_CAPABILITIES = frozenset(
 class FactoryModeCapabilities:
     """Immutable authority ceiling for all future factory-runner work."""
 
-    mode: ExecutionMode = ExecutionMode.FACTORY
+    mode: ExecutionMode = field(default=ExecutionMode.FACTORY, init=False)
     allowed: frozenset[ExecutionCapability] = field(
-        default_factory=lambda: _FACTORY_EXECUTION_CAPABILITIES
+        default_factory=lambda: _FACTORY_EXECUTION_CAPABILITIES,
+        init=False,
     )
     allowed_stages: frozenset[str] = field(
-        default_factory=lambda: FACTORY_ELIGIBLE_STAGES
+        default_factory=lambda: FACTORY_ELIGIBLE_STAGES,
+        init=False,
     )
 
     def permits(self, capability: ExecutionCapability) -> bool:
