@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import sysconfig
 
 import pytest
 
@@ -81,12 +82,30 @@ def test_built_wheel_exposes_reserved_factory_group(tmp_path: Path) -> None:
 
     scripts_dir = environment_root / ("Scripts" if os.name == "nt" else "bin")
     environment_python = scripts_dir / ("python.exe" if os.name == "nt" else "python")
+    dependency_site = Path(sysconfig.get_paths()["purelib"])
+    isolated_site_query = subprocess.run(
+        [
+            str(environment_python),
+            "-c",
+            "import sysconfig; print(sysconfig.get_paths()['purelib'])",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert isolated_site_query.returncode == 0, isolated_site_query.stderr
+    isolated_site = Path(isolated_site_query.stdout.strip())
+    (isolated_site / "ainative-test-dependencies.pth").write_text(
+        f"{dependency_site}\n",
+        encoding="utf-8",
+    )
+
     installed = subprocess.run(
         [
             "uv",
             "pip",
             "install",
-            "--offline",
+            "--no-deps",
             "--python",
             str(environment_python),
             str(wheels[0]),
@@ -116,6 +135,7 @@ def test_built_wheel_exposes_reserved_factory_group(tmp_path: Path) -> None:
         text=True,
     )
     assert imported.returncode == 0, imported.stderr
+    assert str(environment_root) in imported.stdout
     assert str(repository_root) not in imported.stdout
 
     completed = subprocess.run(

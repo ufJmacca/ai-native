@@ -24,10 +24,11 @@ When invoked from the host, the Makefile runs the suite in the Docker Compose
 docker compose run --rm --user root workspace uv run pytest
 ```
 
-The new factory tests build the wheel, install it into a clean environment
-outside the source checkout, and run `ainative factory --help`. The optional
-run-registry service and UI remain separately versioned components and are not
-changed by AN-00.
+The new factory tests build the wheel, install its package into a fresh
+environment outside the source checkout, reuse the already-synchronised test
+environment for third-party dependencies, and run `ainative factory --help`.
+The optional run-registry service and UI remain separately versioned
+components and are not changed by AN-00.
 
 Boundary records:
 
