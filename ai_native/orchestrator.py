@@ -26,7 +26,6 @@ from ai_native.models import RunHeartbeat, RunState, SliceDefinition, SliceExecu
 from ai_native.prompting import PromptLibrary
 from ai_native.specs import load_prompt_spec_text
 from ai_native.slice_runtime import (
-    SLICE_SPECIFIC_STAGES,
     infer_slice_state,
     load_slice_plan,
     read_commit_sha,
@@ -40,9 +39,12 @@ from ai_native.state import StateStore
 from ai_native.stages import ORDERED_STAGES, commit_run, create_prs, run_architecture, run_intake, run_loop, run_plan, run_prd, run_recon, run_slice, run_verify
 from ai_native.stages.common import ExecutionContext, StageError
 from ai_native.utils import read_text, sha256_file, utc_now, write_json, write_text
+from ai_native.workflow_stages import (
+    PRE_SLICE_STAGES,
+    SLICE_PIPELINE_STAGES,
+    SLICE_SPECIFIC_STAGES,
+)
 
-PRE_SLICE_STAGES = ("intake", "recon", "plan", "architecture", "prd", "slice")
-SLICE_PIPELINE_STAGES = ("loop", "verify", "commit", "pr")
 TERMINAL_SLICE_STATUSES = {"committed", "pr_opened"}
 SLICE_STAGE_TERMINAL_STATUSES = {
     "loop": {"ready", "verified", "committed", "pr_opened"},

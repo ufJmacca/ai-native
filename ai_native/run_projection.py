@@ -4,15 +4,14 @@ from pathlib import Path
 
 from ai_native.models import RunProjection, RunProjectionBlockedStep, RunState, SlicePlan
 from ai_native.utils import read_json
+from ai_native.workflow_stages import PRE_SLICE_STAGES, SLICE_PIPELINE_STAGES
 
 PROJECTION_SCHEMA_VERSION = 1
-SLICE_PIPELINE = ("loop", "verify", "commit", "pr")
+SLICE_PIPELINE = SLICE_PIPELINE_STAGES
 
 
 def _pre_slice_stages() -> tuple[str, ...]:
-    from ai_native.stages import ORDERED_STAGES
-
-    return tuple(stage for stage in ORDERED_STAGES if stage not in SLICE_PIPELINE)
+    return PRE_SLICE_STAGES
 
 
 def _load_slice_plan(run_dir: Path) -> SlicePlan | None:
@@ -29,7 +28,7 @@ def _is_stage_completed(state: RunState, stage: str) -> bool:
 
 def _slice_stage_prefix(slice_id: str, stage: str) -> list[str]:
     completed: list[str] = []
-    for pipeline_stage in SLICE_PIPELINE:
+    for pipeline_stage in SLICE_PIPELINE_STAGES:
         if pipeline_stage == stage:
             break
         completed.append(f"{slice_id}:{pipeline_stage}")
@@ -110,7 +109,9 @@ def build_run_projection(state: RunState, slice_plan: SlicePlan | None = None) -
             continue
 
         if slice_state.status == "pr_opened":
-            completed_steps.extend([f"{slice_def.id}:{stage}" for stage in SLICE_PIPELINE])
+            completed_steps.extend(
+                [f"{slice_def.id}:{stage}" for stage in SLICE_PIPELINE_STAGES]
+            )
             continue
         if slice_state.status == "committed":
             completed_steps.extend([f"{slice_def.id}:loop", f"{slice_def.id}:verify", f"{slice_def.id}:commit"])
@@ -126,7 +127,10 @@ def build_run_projection(state: RunState, slice_plan: SlicePlan | None = None) -
             completed_steps.extend(_slice_stage_prefix(slice_def.id, slice_state.current_stage))
             continue
 
-        if slice_state.status == "failed" and slice_state.current_stage in SLICE_PIPELINE:
+        if (
+            slice_state.status == "failed"
+            and slice_state.current_stage in SLICE_PIPELINE_STAGES
+        ):
             completed_steps.extend(_slice_stage_prefix(slice_def.id, slice_state.current_stage))
             next_executable_steps.append(f"{slice_def.id}:{slice_state.current_stage}")
             continue

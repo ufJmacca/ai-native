@@ -102,6 +102,18 @@ Codex gets the full multimodal path, including direct image attachments for refe
 - `make pr SPEC=... TARGET_DIR=... SLICE=S001`
 - `make run SPEC=... TARGET_DIR=...`
 
+## Factory Runner Boundary
+
+`ainative factory` is reserved for the versioned, non-interactive
+`factory-runner-protocol/v1` boundary. In AN-00 it intentionally provides help
+only; author and verify execution arrive in later, separately reviewed phases.
+The factory profile excludes interactive input and all commit, push, PR, and
+merge authority while leaving the existing interactive CLI unchanged.
+
+See [docs/factory-runner/README.md](docs/factory-runner/README.md) for the
+boundary ADR, module inventory, threat analysis, phase manifest, and
+deterministic verification command.
+
 ## Auth Model
 
 The devcontainer inherits the following host paths:

@@ -7,17 +7,20 @@ from ai_native.stages.prd import run as run_prd
 from ai_native.stages.recon import run as run_recon
 from ai_native.stages.slicing import run as run_slice
 from ai_native.stages.verify import run as run_verify
+from ai_native.workflow_stages import LEGACY_ORDERED_STAGES
 
-ORDERED_STAGES = [
-    "intake",
-    "recon",
-    "plan",
-    "architecture",
-    "prd",
-    "slice",
-    "loop",
-    "verify",
-    "commit",
-    "pr",
+ORDERED_STAGES = list(LEGACY_ORDERED_STAGES)
+
+__all__ = [
+    "ORDERED_STAGES",
+    "commit_run",
+    "create_prs",
+    "run_architecture",
+    "run_intake",
+    "run_loop",
+    "run_plan",
+    "run_prd",
+    "run_recon",
+    "run_slice",
+    "run_verify",
 ]
-
