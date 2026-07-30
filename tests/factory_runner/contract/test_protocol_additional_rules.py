@@ -323,6 +323,27 @@ def test_nested_contract_instances_are_always_revalidated() -> None:
     assert_invalid("RunSpec", payload)
 
 
+@pytest.mark.parametrize(
+    ("model_name", "builder", "field_name"),
+    [
+        ("Checkpoint", checkpoint, "workflow_state"),
+        ("RunnerEvent", runner_event, "sanitised_payload"),
+    ],
+)
+def test_nested_frozen_json_subdocuments_can_be_revalidated(
+    model_name: str,
+    builder: Callable[[], dict[str, Any]],
+    field_name: str,
+) -> None:
+    api = protocol_api()
+    payload = builder()
+    payload[field_name] = {"nested": [{"items": [1, 2]}]}
+    model = getattr(api, model_name)
+    validated = model.model_validate(payload)
+
+    assert model.model_validate(validated) == validated
+
+
 def test_nested_json_integers_stay_inside_the_rfc_8785_domain() -> None:
     stored = checkpoint()
     stored["workflow_state"] = {"nested": [10**30]}
