@@ -86,6 +86,7 @@ class FixtureFactory:
             fixture_id=fixture_id,
             operation=operation,
             root=root,
+            workspace=workspace,
             run_spec_path=run_spec_path,
             output_dir=output_dir,
             gateway_command=("python3", str(fake_agent)),
@@ -106,6 +107,7 @@ class FakeExecutor:
         self.local_runtime_image = local_runtime_image
         self.local_image_id = local_image_id
         self.calls: list[tuple[str, ...]] = []
+        self.environments: list[dict[str, str]] = []
         self.wheel_identity = FactoryRunnerBuildIdentity(
             schema=BUILD_IDENTITY_SCHEMA,
             distribution="ai-native-base",
@@ -126,9 +128,10 @@ class FakeExecutor:
         environment: Mapping[str, str],
         timeout_seconds: int,
     ) -> CommandResult:
-        del cwd, environment, timeout_seconds
+        del cwd, timeout_seconds
         argv = tuple(command)
         self.calls.append(argv)
+        self.environments.append(dict(environment))
 
         if argv[:3] == ("git", "rev-parse", "HEAD"):
             return CommandResult(0, SOURCE_COMMIT + "\n", "")
@@ -203,10 +206,7 @@ class FakeExecutor:
                 ),
                 "",
             )
-        if (
-            _OCI_OUTPUT_HANDOFF_PROGRAM in argv
-            or _OCI_OUTPUT_CLEANUP_PROGRAM in argv
-        ):
+        if _OCI_OUTPUT_HANDOFF_PROGRAM in argv or _OCI_OUTPUT_CLEANUP_PROGRAM in argv:
             return CommandResult(0, "", "")
         if "--run-spec" in argv:
             run_spec_path = Path(argv[argv.index("--run-spec") + 1])
@@ -298,6 +298,37 @@ def test_oci_fixture_keeps_git_security_metadata_read_only(
     assert stat.S_IMODE(index.stat().st_mode) == 0o600
 
 
+def test_oci_verify_fixture_preserves_supported_workspace_modes(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "invocation"
+    workspace = root / "workspace"
+    git_dir = workspace / ".git"
+    git_dir.mkdir(parents=True)
+    (git_dir / "index").write_bytes(b"fixture-index")
+    authored_file = workspace / "app.py"
+    authored_file.write_text("greeting = 'after'\n", encoding="utf-8")
+    executable = workspace / "verify.sh"
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o755)
+    input_file = root / "input" / "run-spec.json"
+    input_file.parent.mkdir()
+    input_file.write_text("{}\n", encoding="utf-8")
+
+    _make_oci_fixture_writable(
+        root,
+        read_only_workspace=workspace,
+    )
+
+    assert stat.S_IMODE(root.stat().st_mode) == 0o777
+    assert stat.S_IMODE(input_file.stat().st_mode) == 0o666
+    assert stat.S_IMODE(workspace.stat().st_mode) == 0o555
+    assert stat.S_IMODE(authored_file.stat().st_mode) == 0o644
+    assert stat.S_IMODE(executable.stat().st_mode) == 0o755
+    assert stat.S_IMODE(git_dir.stat().st_mode) == 0o555
+    assert stat.S_IMODE((git_dir / "index").stat().st_mode) == 0o444
+
+
 def test_compatibility_agent_replaces_foreign_writable_file_with_supported_mode(
     tmp_path: Path,
 ) -> None:
@@ -367,12 +398,28 @@ def test_runner_executes_every_mandatory_fixture_against_exact_artifacts(
         for fixture in report.fixtures
     )
 
-    execution_calls = [call for call in executor.calls if "--run-spec" in call]
+    execution_records = [
+        (call, environment)
+        for call, environment in zip(
+            executor.calls,
+            executor.environments,
+            strict=True,
+        )
+        if "--run-spec" in call
+    ]
+    execution_calls = [call for call, _environment in execution_records]
     assert len(execution_calls) == 9
     assert sum(call[0] == "docker" for call in execution_calls) == 3
-    oci_calls = [
-        call for call in executor.calls if call[:2] == ("docker", "run")
-    ]
+    runtime_tmp_values = {
+        environment["TMPDIR"] for _call, environment in execution_records
+    }
+    assert runtime_tmp_values == {str(tmp_path / "work" / "invocation" / "runtime-tmp")}
+    for call, environment in execution_records:
+        if call[0] == "docker":
+            tmpdir_argument = f"TMPDIR={environment['TMPDIR']}"
+            tmpdir_index = call.index(tmpdir_argument)
+            assert call[tmpdir_index - 1] == "--env"
+    oci_calls = [call for call in executor.calls if call[:2] == ("docker", "run")]
     assert len(oci_calls) == 9
     assert sum(_OCI_OUTPUT_HANDOFF_PROGRAM in call for call in oci_calls) == 3
     assert sum(_OCI_OUTPUT_CLEANUP_PROGRAM in call for call in oci_calls) == 3

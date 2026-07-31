@@ -231,6 +231,7 @@ class CompatibilityInvocation:
     fixture_id: str
     operation: Literal["author", "verify"]
     root: Path
+    workspace: Path
     run_spec_path: Path
     output_dir: Path
     gateway_command: tuple[str, ...]
@@ -375,6 +376,7 @@ def _default_fixture_factory(
         fixture_id=fixture_id,
         operation=operation,
         root=root,
+        workspace=invocation.workspace,
         run_spec_path=invocation.run_spec_path,
         output_dir=invocation.output_dir,
         gateway_command=tuple(gateway),
@@ -435,13 +437,37 @@ def _load_result(
     return validated, _tree_digest(invocation.output_dir)
 
 
-def _make_oci_fixture_writable(root: Path) -> None:
+def _make_oci_fixture_writable(
+    root: Path,
+    *,
+    read_only_workspace: Path | None = None,
+) -> None:
+    if read_only_workspace is not None:
+        metadata = read_only_workspace.lstat()
+        if (
+            read_only_workspace.resolve(strict=True) != read_only_workspace
+            or not stat.S_ISDIR(metadata.st_mode)
+            or not read_only_workspace.is_relative_to(root)
+        ):
+            raise CompatibilityExecutionError(
+                "compatibility verify workspace is unsafe"
+            )
     for path in sorted(root.rglob("*")):
         metadata = path.lstat()
+        in_read_only_workspace = read_only_workspace is not None and (
+            path == read_only_workspace or path.is_relative_to(read_only_workspace)
+        )
         if stat.S_ISDIR(metadata.st_mode):
-            path.chmod(0o777)
+            path.chmod(0o555 if in_read_only_workspace else 0o777)
         elif stat.S_ISREG(metadata.st_mode):
-            path.chmod(0o666)
+            if in_read_only_workspace:
+                permissions = stat.S_IMODE(metadata.st_mode)
+                if permissions not in {0o444, 0o555, 0o644, 0o755}:
+                    raise CompatibilityExecutionError(
+                        "compatibility verify workspace has an unsupported mode"
+                    )
+            else:
+                path.chmod(0o666)
         else:
             raise CompatibilityExecutionError(
                 "compatibility fixture contains a non-regular filesystem entry"
@@ -759,6 +785,7 @@ class CompatibilityRunner:
             separators=(",", ":"),
             sort_keys=True,
         )
+        environment["TMPDIR"] = str(invocation.root / "runtime-tmp")
         if source_checkout:
             environment["PYTHONPATH"] = str(self.inputs.repository_root)
         return environment
@@ -809,6 +836,13 @@ class CompatibilityRunner:
         execution_identity: FactoryRunnerBuildIdentity,
         outside_checkout: Path,
     ) -> ArtifactFixtureResult:
+        runtime_tmp = invocation.root / "runtime-tmp"
+        try:
+            runtime_tmp.mkdir(mode=0o700)
+        except FileExistsError as exc:
+            raise CompatibilityExecutionError(
+                "compatibility runtime temp path must not pre-exist"
+            ) from exc
         wrapper = invocation.root / "compatibility-entrypoint.py"
         wrapper.write_text(_COMPATIBILITY_ENTRYPOINT, encoding="utf-8")
         operation = "run" if invocation.operation == "author" else "verify"
@@ -844,7 +878,12 @@ class CompatibilityRunner:
             command = (str(wheel_python), str(wrapper), *runner_arguments)
             cwd = outside_checkout
         else:
-            _make_oci_fixture_writable(invocation.root)
+            _make_oci_fixture_writable(
+                invocation.root,
+                read_only_workspace=(
+                    invocation.workspace if invocation.operation == "verify" else None
+                ),
+            )
             environment = self._execution_environment(
                 invocation,
                 python_executable="/opt/ainative/bin/python",
@@ -863,6 +902,7 @@ class CompatibilityRunner:
                     "AINATIVE_FACTORY_AGENT_COMMAND_JSON",
                     "LC_ALL",
                     "PYTHONHASHSEED",
+                    "TMPDIR",
                     "TZ",
                 ),
             )
