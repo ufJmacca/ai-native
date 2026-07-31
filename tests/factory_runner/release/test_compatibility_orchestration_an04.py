@@ -36,6 +36,7 @@ from tests.factory_runner.contract._support import run_result
 SOURCE_COMMIT = "a" * 40
 IMAGE_DIGEST = "sha256:" + ("4" * 64)
 IMAGE_REFERENCE = "ghcr.io/ufjmacca/ai-native-factory-runner@" + IMAGE_DIGEST
+LOCAL_RUNTIME_IMAGE = f"ai-native-factory-runner:ci-{SOURCE_COMMIT}"
 
 
 def _operation_and_outcome(fixture_id: str) -> tuple[str, str]:
@@ -87,9 +88,13 @@ class FakeExecutor:
         *,
         wheel_path: Path,
         divergent_artifact: str | None = None,
+        local_runtime_image: str | None = None,
+        local_image_id: str = IMAGE_DIGEST,
     ) -> None:
         self.wheel_path = wheel_path
         self.divergent_artifact = divergent_artifact
+        self.local_runtime_image = local_runtime_image
+        self.local_image_id = local_image_id
         self.calls: list[tuple[str, ...]] = []
         self.wheel_identity = FactoryRunnerBuildIdentity(
             schema=BUILD_IDENTITY_SCHEMA,
@@ -147,9 +152,11 @@ class FakeExecutor:
                 "",
             )
         if argv[:2] == ("docker", "pull"):
+            assert self.local_runtime_image is None
             assert argv[2] == IMAGE_REFERENCE
             return CommandResult(0, "", "")
         if argv[:3] == ("docker", "image", "inspect"):
+            assert argv[3] == (self.local_runtime_image or IMAGE_REFERENCE)
             labels = {
                 "io.ai-native.factory-runner.distribution": "ai-native-base",
                 "io.ai-native.factory-runner.protocol": ("factory-runner-protocol/v1"),
@@ -169,7 +176,10 @@ class FakeExecutor:
                 json.dumps(
                     [
                         {
-                            "RepoDigests": [IMAGE_REFERENCE],
+                            "Id": self.local_image_id,
+                            "RepoDigests": (
+                                [] if self.local_runtime_image else [IMAGE_REFERENCE]
+                            ),
                             "Config": {
                                 "User": "10001:10001",
                                 "Entrypoint": [
@@ -229,8 +239,13 @@ class FakeExecutor:
         result_path.write_bytes(canonical_json_bytes(payload))
 
 
-def _inputs(tmp_path: Path, wheel_path: Path) -> CertificationInputs:
-    return CertificationInputs(
+def _inputs(
+    tmp_path: Path,
+    wheel_path: Path,
+    *,
+    local_runtime_image: str | None = None,
+) -> CertificationInputs:
+    values = dict(
         repository_root=Path(__file__).resolve().parents[3],
         source_python=Path("/usr/local/bin/python"),
         source_commit=SOURCE_COMMIT,
@@ -239,6 +254,9 @@ def _inputs(tmp_path: Path, wheel_path: Path) -> CertificationInputs:
         generated_at="2026-07-31T06:00:00Z",
         work_dir=tmp_path / "work",
     )
+    if local_runtime_image is not None:
+        values["oci_runtime_image"] = local_runtime_image
+    return CertificationInputs(**values)
 
 
 def test_runner_executes_every_mandatory_fixture_against_exact_artifacts(
@@ -272,8 +290,88 @@ def test_runner_executes_every_mandatory_fixture_against_exact_artifacts(
     execution_calls = [call for call in executor.calls if "--run-spec" in call]
     assert len(execution_calls) == 9
     assert sum(call[0] == "docker" for call in execution_calls) == 3
+    for call in (item for item in execution_calls if item[0] == "docker"):
+        assert "--read-only" in call
+        assert ("--network", "none") == call[
+            call.index("--network") : call.index("--network") + 2
+        ]
+        assert ("--user", "10001:10001") == call[
+            call.index("--user") : call.index("--user") + 2
+        ]
+        assert ("--cap-drop", "ALL") == call[
+            call.index("--cap-drop") : call.index("--cap-drop") + 2
+        ]
+        assert ("--security-opt", "no-new-privileges") == call[
+            call.index("--security-opt") : call.index("--security-opt") + 2
+        ]
     assert any(call[:3] == ("uv", "pip", "install") for call in executor.calls)
     assert ("docker", "pull", IMAGE_REFERENCE) in executor.calls
+
+
+def test_runner_can_execute_an_explicit_local_ci_image_without_weakening_report(
+    tmp_path: Path,
+) -> None:
+    wheel_path = tmp_path / f"ai_native_base-{__version__}-py3-none-any.whl"
+    wheel_path.write_bytes(b"exact-wheel")
+    executor = FakeExecutor(
+        wheel_path=wheel_path,
+        local_runtime_image=LOCAL_RUNTIME_IMAGE,
+    )
+
+    report = CompatibilityRunner(
+        inputs=_inputs(
+            tmp_path,
+            wheel_path,
+            local_runtime_image=LOCAL_RUNTIME_IMAGE,
+        ),
+        executor=executor,
+        fixture_factory=FixtureFactory(),
+    ).run()
+
+    assert report.artifacts[2].reference == IMAGE_REFERENCE
+    assert report.artifacts[2].digest == IMAGE_DIGEST
+    assert not any(call[:2] == ("docker", "pull") for call in executor.calls)
+    assert (
+        "docker",
+        "image",
+        "inspect",
+        LOCAL_RUNTIME_IMAGE,
+    ) in executor.calls
+    oci_calls = [
+        call
+        for call in executor.calls
+        if call[:2] == ("docker", "run") and "--run-spec" in call
+    ]
+    assert len(oci_calls) == 3
+    assert all(LOCAL_RUNTIME_IMAGE in call for call in oci_calls)
+
+
+def test_runner_rejects_a_local_ci_tag_for_a_different_image_id(
+    tmp_path: Path,
+) -> None:
+    wheel_path = tmp_path / f"ai_native_base-{__version__}-py3-none-any.whl"
+    wheel_path.write_bytes(b"exact-wheel")
+    executor = FakeExecutor(
+        wheel_path=wheel_path,
+        local_runtime_image=LOCAL_RUNTIME_IMAGE,
+        local_image_id="sha256:" + ("5" * 64),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="OCI image config does not match",
+    ):
+        CompatibilityRunner(
+            inputs=_inputs(
+                tmp_path,
+                wheel_path,
+                local_runtime_image=LOCAL_RUNTIME_IMAGE,
+            ),
+            executor=executor,
+            fixture_factory=FixtureFactory(),
+        ).run()
+
+    assert not any("--run-spec" in call for call in executor.calls)
 
 
 def test_runner_fails_closed_on_mutable_image_reference(
@@ -328,6 +426,7 @@ def test_cli_input_resolution_preserves_the_selected_python_environment(
         receipt=None,
         source_commit=SOURCE_COMMIT,
         oci_image=IMAGE_REFERENCE,
+        oci_runtime_image=None,
         repository_root=Path(__file__).resolve().parents[3],
         source_python=environment_python,
         wheel=wheel_path,

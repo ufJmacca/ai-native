@@ -205,6 +205,7 @@ class CertificationInputs(StrictContractModel):
     source_commit: GitCommitSha
     wheel_path: Path
     oci_image: str
+    oci_runtime_image: str | None = None
     generated_at: UtcTimestamp
     work_dir: Path
     uv_command: str = "uv"
@@ -223,6 +224,14 @@ class CertificationInputs(StrictContractModel):
         if _IMAGE_PATTERN.fullmatch(self.oci_image) is None:
             raise ValueError(
                 "oci_image must be an immutable digest-pinned factory-runner reference"
+            )
+        if (
+            self.oci_runtime_image is not None
+            and self.oci_runtime_image
+            != f"ai-native-factory-runner:ci-{self.source_commit}"
+        ):
+            raise ValueError(
+                "oci_runtime_image must be the source-bound local CI image tag"
             )
         if "," in os.fspath(self.work_dir) or "\n" in os.fspath(self.work_dir):
             raise ValueError("work_dir is unsafe for an OCI bind mount")
@@ -583,19 +592,21 @@ class CompatibilityRunner:
         wheel_digest: str,
     ) -> None:
         environment = _safe_environment()
-        _checked(
-            self.executor,
-            (self.inputs.docker_command, "pull", self.inputs.oci_image),
-            cwd=self.inputs.repository_root,
-            environment=environment,
-        )
+        runtime_image = self.inputs.oci_runtime_image or self.inputs.oci_image
+        if self.inputs.oci_runtime_image is None:
+            _checked(
+                self.executor,
+                (self.inputs.docker_command, "pull", self.inputs.oci_image),
+                cwd=self.inputs.repository_root,
+                environment=environment,
+            )
         inspected = _checked(
             self.executor,
             (
                 self.inputs.docker_command,
                 "image",
                 "inspect",
-                self.inputs.oci_image,
+                runtime_image,
             ),
             cwd=self.inputs.repository_root,
             environment=environment,
@@ -603,6 +614,7 @@ class CompatibilityRunner:
         try:
             payload = json.loads(inspected.stdout)
             image = payload[0]
+            image_id = image["Id"]
             config = image["Config"]
             labels = config["Labels"]
             repo_digests = image["RepoDigests"]
@@ -627,7 +639,14 @@ class CompatibilityRunner:
         if (
             not isinstance(labels, Mapping)
             or any(labels.get(key) != value for key, value in expected_labels.items())
-            or self.inputs.oci_image not in repo_digests
+            or (
+                self.inputs.oci_runtime_image is None
+                and self.inputs.oci_image not in repo_digests
+            )
+            or (
+                self.inputs.oci_runtime_image is not None
+                and image_id != self.inputs.oci_image.rsplit("@", 1)[1]
+            )
             or config.get("User") != "10001:10001"
             or config.get("Entrypoint") != ["/opt/ainative/bin/ainative", "factory"]
         ):
@@ -745,7 +764,7 @@ class CompatibilityRunner:
                 command_parts.extend(("--env", f"{key}={environment[key]}"))
             command_parts.extend(
                 (
-                    self.inputs.oci_image,
+                    self.inputs.oci_runtime_image or self.inputs.oci_image,
                     str(wrapper),
                     *runner_arguments,
                 )
@@ -889,12 +908,17 @@ def _resolve_inputs(
         source_commit=source_commit,
         wheel_path=args.wheel.resolve(),
         oci_image=oci_image,
+        oci_runtime_image=args.oci_runtime_image,
         generated_at=args.generated_at,
         work_dir=args.work_dir.resolve(),
         uv_command=args.uv_command,
         docker_command=args.docker_command,
     )
     if receipt is not None:
+        if inputs.oci_runtime_image is not None:
+            raise ValueError(
+                "--oci-runtime-image is only valid for an unreleased CI image"
+            )
         wheel_digest = sha256_digest(inputs.wheel_path.read_bytes())
         if (
             inputs.source_commit != receipt.source.git_commit_sha
@@ -960,6 +984,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--wheel", type=Path, required=True)
     parser.add_argument("--oci-image")
+    parser.add_argument(
+        "--oci-runtime-image",
+        help=(
+            "Source-bound local image tag used only to execute a pre-merge "
+            "image while --oci-image remains its immutable build digest."
+        ),
+    )
     parser.add_argument("--source-commit")
     parser.add_argument("--generated-at", required=True)
     parser.add_argument("--work-dir", type=Path, required=True)

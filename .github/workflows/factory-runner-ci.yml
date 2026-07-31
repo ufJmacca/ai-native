@@ -1,0 +1,164 @@
+name: Factory Runner CI
+
+on:
+  pull_request:
+    paths:
+      - .dockerignore
+      - .github/workflows/factory-runner-ci.yml
+      - .github/workflows/factory-runner-release.yml
+      - .github/workflows/release-please.yml
+      - .github/workflows/release-pr-uv-lock.yml
+      - .release-please-manifest.json
+      - CHANGELOG.md
+      - Makefile
+      - ai_native/**
+      - docs/factory-runner/**
+      - hatch_build.py
+      - images/factory-runner/**
+      - pyproject.toml
+      - release-please-config.json
+      - scripts/**
+      - tests/factory_runner/**
+      - uv.lock
+  push:
+    branches:
+      - main
+    paths:
+      - .dockerignore
+      - .github/workflows/factory-runner-ci.yml
+      - .github/workflows/factory-runner-release.yml
+      - .github/workflows/release-please.yml
+      - .github/workflows/release-pr-uv-lock.yml
+      - .release-please-manifest.json
+      - CHANGELOG.md
+      - Makefile
+      - ai_native/**
+      - docs/factory-runner/**
+      - hatch_build.py
+      - images/factory-runner/**
+      - pyproject.toml
+      - release-please-config.json
+      - scripts/**
+      - tests/factory_runner/**
+      - uv.lock
+
+permissions:
+  contents: read
+
+concurrency:
+  group: factory-runner-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_REPOSITORY: ghcr.io/ufjmacca/ai-native-factory-runner
+  LOCAL_IMAGE: ai-native-factory-runner:ci-${{ github.event.pull_request.head.sha || github.sha }}
+  PYTHON_BASE_IMAGE: docker.io/library/python@sha256:76d4b7b6305788c6b4c6a19d6a22a3921bf802e9af4d5e1e5bd771208dba74bf
+  SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+  UV_BASE_IMAGE: ghcr.io/astral-sh/uv@sha256:2381d6aa60c326b71fd40023f921a0a3b8f91b14d5db6b90402e65a635053709
+
+jobs:
+  factory-runner:
+    name: factory-runner-ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out the exact branch commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@ed21f2f24f8dd64503750218de024bcf64c7250a
+        with:
+          version: "0.8.15"
+          enable-cache: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
+      - name: Build the exact branch wheel once
+        id: wheel
+        env:
+          AINATIVE_FACTORY_BUILD_SOURCE_COMMIT: ${{ env.SOURCE_COMMIT }}
+        run: |
+          set -euo pipefail
+          test ! -e dist
+          uv build --wheel
+          mapfile -t wheels < <(find dist -maxdepth 1 -type f -name '*.whl' -print)
+          test "${#wheels[@]}" -eq 1
+          wheel="${wheels[0]}"
+          filename="$(basename "${wheel}")"
+          version="${filename#ai_native_base-}"
+          version="${version%-py3-none-any.whl}"
+          test "${filename}" = "ai_native_base-${version}-py3-none-any.whl"
+          test "${version}" = "$(printf '%s' "${version}" | grep -E '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')"
+          test "${SOURCE_COMMIT}" = "$(git rev-parse HEAD)"
+          commit_epoch="$(git show -s --format=%ct "${SOURCE_COMMIT}")"
+          created="$(date -u -d "@${commit_epoch}" +'%Y-%m-%dT%H:%M:%SZ')"
+          wheel_sha="sha256:$(sha256sum "${wheel}" | cut -d ' ' -f 1)"
+          schema_set="$(tr -d '\r\n' < ai_native/schemas/factory_runner/v1/schema-set.sha256)"
+          schema_manifest_sha="sha256:$(sha256sum ai_native/schemas/factory_runner/v1/schema-manifest.json | cut -d ' ' -f 1)"
+          printf 'created=%s\n' "${created}" >>"${GITHUB_OUTPUT}"
+          printf 'filename=%s\n' "${filename}" >>"${GITHUB_OUTPUT}"
+          printf 'path=%s\n' "${wheel}" >>"${GITHUB_OUTPUT}"
+          printf 'schema_manifest_sha=%s\n' "${schema_manifest_sha}" >>"${GITHUB_OUTPUT}"
+          printf 'schema_set=%s\n' "${schema_set}" >>"${GITHUB_OUTPUT}"
+          printf 'sha256=%s\n' "${wheel_sha}" >>"${GITHUB_OUTPUT}"
+          printf 'version=%s\n' "${version}" >>"${GITHUB_OUTPUT}"
+
+      - name: Build and load the hardened OCI image
+        id: image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: .
+          file: images/factory-runner/Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          pull: true
+          tags: ${{ env.LOCAL_IMAGE }}
+          build-args: |
+            PYTHON_BASE_IMAGE=${{ env.PYTHON_BASE_IMAGE }}
+            UV_BASE_IMAGE=${{ env.UV_BASE_IMAGE }}
+            FACTORY_RUNNER_CREATED=${{ steps.wheel.outputs.created }}
+            FACTORY_RUNNER_SCHEMA_MANIFEST_SHA256=${{ steps.wheel.outputs.schema_manifest_sha }}
+            FACTORY_RUNNER_SCHEMA_SET_DIGEST=${{ steps.wheel.outputs.schema_set }}
+            FACTORY_RUNNER_SOURCE_COMMIT=${{ env.SOURCE_COMMIT }}
+            FACTORY_RUNNER_SOURCE_TAG=
+            FACTORY_RUNNER_VERSION=${{ steps.wheel.outputs.version }}
+            FACTORY_RUNNER_WHEEL_SHA256=${{ steps.wheel.outputs.sha256 }}
+
+      - name: Reject certification schema drift
+        run: |
+          set -euo pipefail
+          uv run --frozen python \
+            scripts/generate_factory_runner_certification_schemas.py --check
+
+      - name: Run focused release tests
+        env:
+          AINATIVE_FACTORY_RUNNER_TEST_IMAGE: ${{ env.LOCAL_IMAGE }}
+        run: |
+          set -euo pipefail
+          uv run --frozen pytest tests/factory_runner/release -q
+
+      - name: Certify source wheel and OCI mandatory fixtures
+        env:
+          GENERATED_AT: ${{ steps.wheel.outputs.created }}
+          WHEEL_PATH: ${{ steps.wheel.outputs.path }}
+        run: |
+          set -euo pipefail
+          IMAGE_DIGEST="$(docker image inspect --format '{{.Id}}' "${LOCAL_IMAGE}")"
+          test "${IMAGE_DIGEST}" = "$(printf '%s' "${IMAGE_DIGEST}" | grep -E '^sha256:[0-9a-f]{64}$')"
+          IMAGE_REFERENCE="${IMAGE_REPOSITORY}@${IMAGE_DIGEST}"
+          uv run --frozen python scripts/run_factory_runner_compatibility.py \
+            --source-commit "${SOURCE_COMMIT}" \
+            --wheel "${WHEEL_PATH}" \
+            --oci-image "${IMAGE_REFERENCE}" \
+            --oci-runtime-image "${LOCAL_IMAGE}" \
+            --generated-at "${GENERATED_AT}" \
+            --work-dir "${RUNNER_TEMP}/factory-runner-compatibility" \
+            --output "${RUNNER_TEMP}/factory-runner-compatibility-report.json"
