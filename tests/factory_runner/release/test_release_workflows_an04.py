@@ -25,7 +25,7 @@ def _workflow(path: Path) -> dict:
     return yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
 
-def test_release_please_creates_a_draft_and_arms_protected_auto_merge() -> None:
+def test_release_please_delegates_merge_to_the_trusted_cli_controller() -> None:
     config = json.loads(RELEASE_PLEASE_CONFIG.read_text(encoding="utf-8"))
     package = config["packages"]["."]
     assert package["draft"] is True
@@ -38,17 +38,11 @@ def test_release_please_creates_a_draft_and_arms_protected_auto_merge() -> None:
     assert release_step["uses"] == (
         "googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071"
     )
-    auto_merge = next(
-        step
-        for step in job["steps"]
-        if step.get("name") == "Enable protected release PR auto-merge"
-    )
-    assert auto_merge["env"]["GH_TOKEN"] == "${{ secrets.RELEASE_PLEASE_TOKEN }}"
-    command = auto_merge["run"]
-    assert "gh pr merge" in command
-    assert "--auto" in command
-    assert "--merge" in command
-    assert "--admin" not in command
+    rendered_job = json.dumps(job)
+    assert "Enable protected release PR auto-merge" not in rendered_job
+    assert "gh pr merge" not in rendered_job
+    assert "--auto" not in rendered_job
+    assert "/pulls/" not in rendered_job
 
     release_job = workflow["jobs"]["factory-runner-release"]
     assert release_job["needs"] == "release-please"

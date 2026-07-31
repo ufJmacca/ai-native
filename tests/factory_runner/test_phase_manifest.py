@@ -25,9 +25,18 @@ def test_phase_manifest_preserves_serial_an_dependency_order() -> None:
         ["AN-03"],
     ]
     assert manifest["protocol"] == "factory-runner-protocol/v1"
+    assert manifest["merge_policy"] == {
+        "mode": "trusted_cli",
+        "merge_method": "merge",
+        "required_checks": ["test", "lint", "factory-runner-ci"],
+        "reviews_required": 0,
+        "exact_head_required": True,
+        "admin_bypass_forbidden": True,
+        "branch_protection": "enforce_when_available",
+    }
 
 
-def test_phase_manifest_completion_gates_require_protected_automation() -> None:
+def test_phase_manifest_completion_gates_require_trusted_exact_head_merge() -> None:
     repository_root = Path(__file__).resolve().parents[2]
     manifest_path = repository_root / "docs" / "factory-runner" / "phase-manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -39,5 +48,7 @@ def test_phase_manifest_completion_gates_require_protected_automation() -> None:
         assert "required automated checks" in gate, phase["id"]
         assert "machine-verifiable phase evidence" in gate, phase["id"]
         assert "trusted publisher" in gate, phase["id"]
-        assert "protected github auto-merge" in gate, phase["id"]
+        assert "trusted cli merge" in gate, phase["id"]
+        assert "exact pr head" in gate, phase["id"]
+        assert "auto-merge" not in gate, phase["id"]
         assert "exact default-branch head" in gate, phase["id"]
