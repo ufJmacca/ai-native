@@ -242,6 +242,7 @@ class OutputWriter:
         self._max_total_bytes = max_total_bytes
         self._total_bytes = 0
         self._sealed = False
+        self._protocol_manifest_reference: ArtifactReference | None = None
         self._write_lock = threading.RLock()
 
     def __del__(self) -> None:
@@ -424,12 +425,18 @@ class OutputWriter:
                 raise ValueError(
                     "protocol manifest requires a writer-owned event reference"
                 )
+            artifacts = tuple(sorted(self._manifest, key=lambda item: item.path))
             payload = {
                 "protocol": "factory-runner-protocol/v1",
                 "schema_version": 1,
                 "event_stream": event_stream.model_dump(mode="json"),
+                "artifacts": [
+                    reference.model_dump(mode="json") for reference in artifacts
+                ],
             }
-            return self.write_json("protocol-manifest.json", payload)
+            reference = self.write_json("protocol-manifest.json", payload)
+            self._protocol_manifest_reference = reference
+            return reference
 
     def write_run_result(
         self,
@@ -446,7 +453,20 @@ class OutputWriter:
         change_set: ArtifactReference | None = None,
         verification_evidence: ArtifactReference | None = None,
         event_stream_digest: str = EMPTY_DIGEST,
+        protocol_manifest: ArtifactReference | None = None,
     ) -> tuple[RunResult, ArtifactReference]:
+        manifest_reference = (
+            protocol_manifest
+            if protocol_manifest is not None
+            else self._protocol_manifest_reference
+        )
+        if (
+            manifest_reference is not None
+            and manifest_reference != self._protocol_manifest_reference
+        ):
+            raise ValueError(
+                "run result requires the writer-owned protocol manifest reference"
+            )
         payload: dict[str, Any] = {
             "protocol": "factory-runner-protocol/v1",
             "schema": "run-result/v1",
@@ -475,7 +495,11 @@ class OutputWriter:
                 else None
             ),
             "event_stream_digest": event_stream_digest,
-            "output_manifest_digest": self.manifest_digest,
+            "output_manifest_digest": (
+                manifest_reference.digest
+                if manifest_reference is not None
+                else self.manifest_digest
+            ),
             "runner_build": RunnerBuildIdentity(
                 version=__version__,
                 image=None,
@@ -497,7 +521,20 @@ class OutputWriter:
         *,
         result: RunResult,
         result_reference: ArtifactReference,
+        protocol_manifest: ArtifactReference | None = None,
     ) -> None:
+        manifest_reference = (
+            protocol_manifest
+            if protocol_manifest is not None
+            else self._protocol_manifest_reference
+        )
+        if (
+            manifest_reference is not None
+            and manifest_reference != self._protocol_manifest_reference
+        ):
+            raise ValueError(
+                "completion requires the writer-owned protocol manifest reference"
+            )
         completion = {
             "protocol": "factory-runner-protocol/v1",
             "schema_version": 1,
@@ -506,6 +543,10 @@ class OutputWriter:
             "output_manifest_digest": result.output_manifest_digest,
             "run_result": result_reference.model_dump(mode="json"),
         }
+        if manifest_reference is not None:
+            completion["protocol_manifest"] = manifest_reference.model_dump(
+                mode="json"
+            )
         with self._write_lock:
             self._ensure_writable()
             self.write_json("completion.json", completion, record=False)

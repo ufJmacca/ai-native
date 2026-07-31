@@ -278,6 +278,7 @@ def execute_author(
     boundary_check: Callable[[], None],
     restore_workspace: Callable[[], None],
     progress: Callable[[str], None],
+    stage_event: Callable[[str, str], None] | None = None,
 ) -> AuthorOutcome:
     """Run only explicitly admitted reusable stages in canonical order."""
 
@@ -360,6 +361,8 @@ def execute_author(
             break
         boundary_check()
         progress(f"[factory] {stage}: started")
+        if stage_event is not None:
+            stage_event("started", stage)
         try:
             try:
                 artifacts = handler(context, state)
@@ -389,6 +392,8 @@ def execute_author(
         )
         completed.append(stage)
         progress(f"[factory] {stage}: completed")
+        if stage_event is not None:
+            stage_event("completed", stage)
     return AuthorOutcome(completed_stages=tuple(completed))
 
 

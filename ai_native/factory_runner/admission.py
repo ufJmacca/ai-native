@@ -65,7 +65,7 @@ _RUNNER_BOOTSTRAP_ENVIRONMENT_KEYS = frozenset(
         *_GATEWAY_ONLY_ENVIRONMENT_KEYS,
     }
 )
-_SUPPORTED_CAPABILITIES = ("author", "verify")
+_SUPPORTED_CAPABILITIES = ("author", "verify", "structured-events")
 _SUPPORTED_NETWORK_PROFILES = frozenset(
     {
         "model-gateway-only",
@@ -309,7 +309,7 @@ def _audit_environment(environment: Mapping[str, str]) -> Mapping[str, str]:
 
 def _validate_capabilities_and_profiles(run_spec: RunSpec) -> None:
     try:
-        negotiate_protocol(
+        negotiation = negotiate_protocol(
             protocol=run_spec.protocol,
             required_capabilities=run_spec.capabilities.required,
             optional_capabilities=run_spec.capabilities.optional,
@@ -334,10 +334,13 @@ def _validate_capabilities_and_profiles(run_spec: RunSpec) -> None:
             ContractErrorCode.POLICY_DENIED,
             "credential profile is not available in factory mode",
         )
-    if run_spec.outputs.stream_events_to_stdout:
+    if (
+        run_spec.outputs.stream_events_to_stdout
+        and "structured-events" not in negotiation.negotiated_capabilities
+    ):
         raise _fail(
             ContractErrorCode.UNSUPPORTED_CAPABILITY,
-            "stdout event streaming is not available until AN-03",
+            "stdout event streaming requires structured-events negotiation",
         )
     if run_spec.operation == "author" and not policy.allowed_commands:
         raise _fail(

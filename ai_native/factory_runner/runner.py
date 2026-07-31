@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 import shutil
 import tempfile
-from typing import Any, Literal
+from typing import Any, BinaryIO, Literal
 
 from ai_native.factory_runner.admission import (
     FactoryAdmissionError,
@@ -28,6 +28,9 @@ from ai_native.factory_runner.changes import (
     validate_author_boundary,
 )
 from ai_native.factory_runner.contracts.run_spec import RunSpec
+from ai_native.factory_runner.contracts.common import ArtifactReference
+from ai_native.factory_runner.contracts.runner_event import RunnerEvent
+from ai_native.factory_runner.events import EventSink
 from ai_native.factory_runner.git_runtime import (
     FactoryGitCancelled,
     FactoryGitError,
@@ -74,6 +77,91 @@ _EXIT_BY_REASON = {
     "cancelled": 8,
     "timed_out": 9,
 }
+
+
+class _RunEvents:
+    """Own one attempt's ordered event identity and terminal finalization."""
+
+    def __init__(
+        self,
+        *,
+        writer: OutputWriter,
+        spec: RunSpec,
+        stdout: BinaryIO | None,
+    ) -> None:
+        self._sink = EventSink(writer=writer, stdout=stdout)
+        self._spec = spec
+        self._sequence = 0
+        self._terminal_emitted = False
+        self._reference: ArtifactReference | None = None
+
+    def emit(
+        self,
+        event_type: str,
+        *,
+        payload: Mapping[str, Any] | None = None,
+        artifact_refs: Sequence[ArtifactReference] = (),
+    ) -> None:
+        if self._terminal_emitted:
+            raise RuntimeError("events cannot be emitted after a terminal event")
+        sequence = self._sequence + 1
+        event = RunnerEvent.model_validate(
+            {
+                "protocol": "factory-runner-protocol/v1",
+                "schema": "runner-event/v1",
+                "schema_version": 1,
+                "run_id": self._spec.identity.run_id,
+                "attempt_id": self._spec.identity.attempt_id,
+                "sequence": sequence,
+                "timestamp": utc_timestamp(),
+                "event_type": event_type,
+                "correlation_id": self._spec.identity.correlation_id,
+                "causation_id": None,
+                "sanitised_payload": dict(payload or {}),
+                "artifact_refs": [
+                    reference.model_dump(mode="json")
+                    for reference in artifact_refs
+                ],
+            }
+        )
+        self._sink.append(event)
+        self._sequence = sequence
+
+    def finalize(
+        self,
+        *,
+        outcome: str,
+        reason_code: str,
+    ) -> ArtifactReference:
+        if self._reference is not None:
+            return self._reference
+        terminal_type = (
+            "RunnerCompleted" if reason_code == "completed" else "RunnerFailed"
+        )
+        self.emit(
+            terminal_type,
+            payload={
+                "operation": self._spec.operation,
+                "outcome": outcome,
+                "reason_code": reason_code,
+            },
+        )
+        self._terminal_emitted = True
+        self._reference = self._sink.finalize()
+        return self._reference
+
+
+def _stream_target(
+    spec: RunSpec,
+    event_stdout: BinaryIO | None,
+) -> BinaryIO | None:
+    if not spec.outputs.stream_events_to_stdout:
+        return None
+    capabilities = {
+        *spec.capabilities.required,
+        *spec.capabilities.optional,
+    }
+    return event_stdout if "structured-events" in capabilities else None
 
 
 def _git_environment(
@@ -123,7 +211,7 @@ def _safe_failure_output(
     *,
     output_dir: Path,
     candidate_spec: RunSpec | None,
-) -> tuple[OutputWriter, str] | None:
+) -> OutputWriter | None:
     try:
         resolved_output = output_dir.resolve(strict=False)
     except (OSError, RuntimeError):
@@ -149,10 +237,9 @@ def _safe_failure_output(
     try:
         validated_output = validate_output_root(resolved_output)
         writer = OutputWriter(validated_output)
-        event_reference = writer.write_events_placeholder()
     except (OSError, ValueError):
         return None
-    return writer, event_reference.digest
+    return writer
 
 
 def _finish(
@@ -167,9 +254,17 @@ def _finish(
     completed_stages: Sequence[str] = (),
     change_set: Any | None = None,
     verification_evidence: Any | None = None,
-    event_stream_digest: str,
+    events: _RunEvents | None = None,
 ) -> int:
     finished_at = utc_timestamp()
+    event_reference = (
+        events.finalize(outcome=outcome, reason_code=reason_code)
+        if events is not None
+        else writer.write_events_placeholder()
+    )
+    protocol_manifest = writer.write_protocol_manifest(
+        event_stream=event_reference,
+    )
     result, reference = writer.write_run_result(
         operation=operation,
         outcome=outcome,  # type: ignore[arg-type]
@@ -182,9 +277,14 @@ def _finish(
         completed_stages=completed_stages,
         change_set=change_set,
         verification_evidence=verification_evidence,
-        event_stream_digest=event_stream_digest,
+        event_stream_digest=event_reference.digest,
+        protocol_manifest=protocol_manifest,
     )
-    writer.write_completion(result=result, result_reference=reference)
+    writer.write_completion(
+        result=result,
+        result_reference=reference,
+        protocol_manifest=protocol_manifest,
+    )
     return _EXIT_BY_REASON[reason_code]
 
 
@@ -196,6 +296,7 @@ def execute_factory(
     environment: Mapping[str, str],
     cancellation_token: CancellationToken,
     log: Callable[[str], None],
+    event_stdout: BinaryIO | None = None,
 ) -> int:
     """Execute one complete factory invocation and return its stable exit code."""
 
@@ -217,7 +318,21 @@ def execute_factory(
         )
         if failure_output is None:
             return _EXIT_BY_REASON[reason_code]
-        writer, event_digest = failure_output
+        writer = failure_output
+        events = (
+            _RunEvents(
+                writer=writer,
+                spec=candidate_spec,
+                stdout=_stream_target(candidate_spec, event_stdout),
+            )
+            if candidate_spec is not None
+            else None
+        )
+        if events is not None:
+            events.emit(
+                "RunnerStarted",
+                payload={"operation": expected_operation},
+            )
         outcome = "policy_denied" if reason_code == "policy_denied" else "invalid_input"
         return _finish(
             writer=writer,
@@ -227,17 +342,32 @@ def execute_factory(
             message="Factory input admission failed.",
             started_at=started_at,
             spec=candidate_spec,
-            event_stream_digest=event_digest,
+            events=events,
         )
     except Exception:
         log("[factory] admission failed")
+        candidate_spec = _candidate_run_spec(run_spec_path)
         failure_output = _safe_failure_output(
             output_dir=output_dir,
-            candidate_spec=_candidate_run_spec(run_spec_path),
+            candidate_spec=candidate_spec,
         )
         if failure_output is None:
             return _EXIT_BY_REASON["invalid_input"]
-        writer, event_digest = failure_output
+        writer = failure_output
+        events = (
+            _RunEvents(
+                writer=writer,
+                spec=candidate_spec,
+                stdout=_stream_target(candidate_spec, event_stdout),
+            )
+            if candidate_spec is not None
+            else None
+        )
+        if events is not None:
+            events.emit(
+                "RunnerStarted",
+                payload={"operation": expected_operation},
+            )
         return _finish(
             writer=writer,
             operation=expected_operation,
@@ -245,14 +375,26 @@ def execute_factory(
             reason_code="invalid_input",
             message="Factory input admission failed.",
             started_at=started_at,
-            spec=None,
-            event_stream_digest=event_digest,
+            spec=candidate_spec,
+            events=events,
         )
 
     try:
         validated_output = validate_output_root(inputs.output_dir)
         writer = OutputWriter(validated_output)
-        event_reference = writer.write_events_placeholder()
+        events = _RunEvents(
+            writer=writer,
+            spec=inputs.run_spec,
+            stdout=_stream_target(inputs.run_spec, event_stdout),
+        )
+        events.emit(
+            "RunnerStarted",
+            payload={"operation": expected_operation},
+        )
+        events.emit(
+            "InputValidated",
+            payload={"operation": expected_operation},
+        )
     except (OSError, ValueError):
         log("[factory] invalid output directory")
         return _EXIT_BY_REASON["invalid_input"]
@@ -299,7 +441,7 @@ def execute_factory(
                 message="Acceptance criteria are required for unattended authoring.",
                 started_at=started_at,
                 spec=inputs.run_spec,
-                event_stream_digest=event_reference.digest,
+                events=events,
             )
 
         security_snapshot = capture_repository_security_snapshot(git_runtime)
@@ -330,6 +472,15 @@ def execute_factory(
                 security_snapshot=security_snapshot,
             )
 
+        def emit_stage_event(status: str, stage: str) -> None:
+            event_type = {
+                "started": "StageStarted",
+                "completed": "StageCompleted",
+            }.get(status)
+            if event_type is None:
+                raise ValueError("author stage event status is invalid")
+            events.emit(event_type, payload={"stage": stage})
+
         if cancellation_token.cancelled:
             raise _Cancelled
         if deadline.expired:
@@ -348,6 +499,14 @@ def execute_factory(
                 boundary_check=boundary_check,
                 git_runtime=git_runtime,
             )
+            events.emit(
+                "VerificationEvidenceWritten",
+                payload={
+                    "environment_kind": verification.evidence.environment_kind,
+                    "overall_status": verification.evidence.overall_status,
+                },
+                artifact_refs=(verification.reference,),
+            )
             if verification.cancelled:
                 raise _Cancelled
             if verification.timed_out:
@@ -364,7 +523,7 @@ def execute_factory(
                     spec=inputs.run_spec,
                     completed_stages=(),
                     verification_evidence=verification.reference,
-                    event_stream_digest=event_reference.digest,
+                    events=events,
                 )
             return _finish(
                 writer=writer,
@@ -376,7 +535,7 @@ def execute_factory(
                 spec=inputs.run_spec,
                 completed_stages=("verify",),
                 verification_evidence=verification.reference,
-                event_stream_digest=event_reference.digest,
+                events=events,
             )
 
         child_environment = build_child_environment(
@@ -398,6 +557,7 @@ def execute_factory(
             boundary_check=boundary_check,
             restore_workspace=restore_workspace,
             progress=log,
+            stage_event=emit_stage_event,
         )
         completed_stages = author.completed_stages
         if cancellation_token.cancelled:
@@ -417,6 +577,14 @@ def execute_factory(
             boundary_check=boundary_check,
             git_runtime=git_runtime,
         )
+        events.emit(
+            "VerificationEvidenceWritten",
+            payload={
+                "environment_kind": verification.evidence.environment_kind,
+                "overall_status": verification.evidence.overall_status,
+            },
+            artifact_refs=(verification.reference,),
+        )
         if verification.cancelled:
             raise _Cancelled
         if verification.timed_out:
@@ -431,7 +599,7 @@ def execute_factory(
                 started_at=started_at,
                 spec=inputs.run_spec,
                 completed_stages=completed_stages,
-                event_stream_digest=event_reference.digest,
+                events=events,
             )
 
         change_set, change_reference = build_change_set(
@@ -441,6 +609,11 @@ def execute_factory(
             evidence=verification.evidence,
             evidence_reference=verification.reference,
         )
+        if change_set is not None and change_reference is not None:
+            events.emit(
+                "ChangeSetWritten",
+                artifact_refs=(change_set.patch, change_reference),
+            )
         if change_set is None or change_reference is None:
             return _finish(
                 writer=writer,
@@ -451,7 +624,7 @@ def execute_factory(
                 started_at=started_at,
                 spec=inputs.run_spec,
                 completed_stages=completed_stages,
-                event_stream_digest=event_reference.digest,
+                events=events,
             )
         return _finish(
             writer=writer,
@@ -463,7 +636,7 @@ def execute_factory(
             spec=inputs.run_spec,
             completed_stages=completed_stages,
             change_set=change_reference,
-            event_stream_digest=event_reference.digest,
+            events=events,
         )
     except FactoryAdmissionError as exc:
         reason_code = exc.reason_code
@@ -478,7 +651,7 @@ def execute_factory(
             started_at=started_at,
             spec=inputs.run_spec,
             completed_stages=completed_stages,
-            event_stream_digest=event_reference.digest,
+            events=events,
         )
     except FactoryClarificationRequired:
         log("[factory] blocked: immutable context is incomplete")
@@ -491,7 +664,7 @@ def execute_factory(
             started_at=started_at,
             spec=inputs.run_spec,
             completed_stages=completed_stages,
-            event_stream_digest=event_reference.digest,
+            events=events,
         )
     except FactoryAuthorCancelled:
         return _finish(
@@ -503,7 +676,7 @@ def execute_factory(
             started_at=started_at,
             spec=inputs.run_spec,
             completed_stages=completed_stages,
-            event_stream_digest=event_reference.digest,
+            events=events,
         )
     except FactoryAuthorTimedOut:
         return _finish(
@@ -515,7 +688,7 @@ def execute_factory(
             started_at=started_at,
             spec=inputs.run_spec,
             completed_stages=completed_stages,
-            event_stream_digest=event_reference.digest,
+            events=events,
         )
     except FactoryGitCancelled:
         return _finish(
@@ -527,7 +700,7 @@ def execute_factory(
             started_at=started_at,
             spec=inputs.run_spec,
             completed_stages=completed_stages,
-            event_stream_digest=event_reference.digest,
+            events=events,
         )
     except FactoryGitTimedOut:
         return _finish(
@@ -539,7 +712,7 @@ def execute_factory(
             started_at=started_at,
             spec=inputs.run_spec,
             completed_stages=completed_stages,
-            event_stream_digest=event_reference.digest,
+            events=events,
         )
     except _Cancelled:
         return _finish(
@@ -551,7 +724,7 @@ def execute_factory(
             started_at=started_at,
             spec=inputs.run_spec,
             completed_stages=completed_stages,
-            event_stream_digest=event_reference.digest,
+            events=events,
         )
     except _TimedOut:
         return _finish(
@@ -563,7 +736,7 @@ def execute_factory(
             started_at=started_at,
             spec=inputs.run_spec,
             completed_stages=completed_stages,
-            event_stream_digest=event_reference.digest,
+            events=events,
         )
     except (FactoryPolicyViolation, ChangePolicyError, FactoryGitError):
         log("[factory] runtime policy denied the operation")
@@ -576,7 +749,7 @@ def execute_factory(
             started_at=started_at,
             spec=inputs.run_spec,
             completed_stages=completed_stages,
-            event_stream_digest=event_reference.digest,
+            events=events,
         )
     except FactoryAuthorError:
         log("[factory] author workflow failed")
@@ -589,7 +762,7 @@ def execute_factory(
             started_at=started_at,
             spec=inputs.run_spec,
             completed_stages=completed_stages,
-            event_stream_digest=event_reference.digest,
+            events=events,
         )
     except Exception:
         log("[factory] runner failed")
@@ -602,7 +775,7 @@ def execute_factory(
             started_at=started_at,
             spec=inputs.run_spec,
             completed_stages=completed_stages,
-            event_stream_digest=event_reference.digest,
+            events=events,
         )
     finally:
         if private_environment_root is not None:
