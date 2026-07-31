@@ -8,7 +8,6 @@ import os
 from pathlib import Path, PurePosixPath
 import shutil
 import stat
-import subprocess
 from types import MappingProxyType
 from uuid import uuid4
 
@@ -19,6 +18,12 @@ from ai_native.factory_runner.contracts.run_spec import RunSpec
 from ai_native.factory_runner.errors import (
     ContractErrorCode,
     ContractValidationError,
+)
+from ai_native.factory_runner.git_runtime import (
+    FactoryGitCancelled,
+    FactoryGitError,
+    FactoryGitRuntime,
+    FactoryGitTimedOut,
 )
 from ai_native.factory_runner.negotiation import (
     CheckpointCompatibilityResult,
@@ -359,7 +364,8 @@ class CheckpointManager:
         self,
         loaded: LoadedCheckpoint,
         *,
-        workspace: Path,
+        git_runtime: FactoryGitRuntime | None = None,
+        workspace: Path | None = None,
     ) -> None:
         """Apply the complete workspace patch or leave the worktree unchanged."""
 
@@ -368,56 +374,26 @@ class CheckpointManager:
         patch = loaded.workspace_patch
         if patch is None:
             return
-        candidate = Path(workspace)
+        if not isinstance(git_runtime, FactoryGitRuntime):
+            raise CheckpointError("restore requires a runner-owned Git runtime")
+        if workspace is not None:
+            try:
+                requested_workspace = Path(workspace).resolve(strict=True)
+                runtime_workspace = git_runtime.workspace.resolve(strict=True)
+            except (OSError, RuntimeError) as exc:
+                raise CheckpointError("restore workspace is missing") from exc
+            if requested_workspace != runtime_workspace:
+                raise CheckpointError(
+                    "restore workspace differs from its runner-owned Git runtime"
+                )
         try:
-            if candidate.is_symlink():
-                raise CheckpointError("restore workspace must not be a symbolic link")
-            resolved = candidate.resolve(strict=True)
-        except CheckpointError:
-            raise
-        except (OSError, RuntimeError) as exc:
-            raise CheckpointError("restore workspace is missing") from exc
-        if not resolved.is_dir():
-            raise CheckpointError("restore workspace must be a directory")
-
-        command = (
-            "git",
-            "-C",
-            str(resolved),
-            "apply",
-            "--whitespace=nowarn",
-            "-",
-        )
-        environment = {
-            "GIT_CONFIG_GLOBAL": os.devnull,
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_TERMINAL_PROMPT": "0",
-            "LC_ALL": "C",
-            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-        }
-        try:
-            checked = subprocess.run(
-                (*command[:4], "--check", *command[4:]),
-                input=patch,
-                capture_output=True,
-                env=environment,
-                check=False,
-            )
-            if checked.returncode != 0:
-                raise CheckpointError("checkpoint patch restore check failed")
-            applied = subprocess.run(
-                command,
-                input=patch,
-                capture_output=True,
-                env=environment,
-                check=False,
-            )
-        except OSError as exc:
-            raise CheckpointError("checkpoint patch restore could not run") from exc
-        if applied.returncode != 0:
-            raise CheckpointError(
-                "checkpoint patch restore failed without applying the patch"
-            )
+            git_runtime.apply_patch_transactionally(patch)
+        except FactoryGitCancelled as exc:
+            raise CheckpointError("checkpoint patch restore was cancelled") from exc
+        except FactoryGitTimedOut as exc:
+            raise CheckpointError("checkpoint patch restore timed out") from exc
+        except FactoryGitError as exc:
+            raise CheckpointError("checkpoint patch restore failed") from exc
 
 
 __all__ = [
