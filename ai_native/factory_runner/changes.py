@@ -9,7 +9,10 @@ from pathlib import Path
 import stat
 from typing import Any, cast
 
-from ai_native import __version__
+from ai_native.factory_runner.build_identity import (
+    canonical_build_identity_bytes,
+    load_build_identity,
+)
 from ai_native.factory_runner.admission import ValidatedInputs
 from ai_native.factory_runner.canonical import sha256_digest
 from ai_native.factory_runner.contracts.change_set import (
@@ -810,7 +813,7 @@ def build_change_set(
         patch,
         media_type="application/vnd.git.binary-patch",
     )
-    runner_digest = sha256_digest(__version__.encode("utf-8"))
+    runner_digest = sha256_digest(canonical_build_identity_bytes(load_build_identity()))
     payload: dict[str, Any] = {
         "protocol": "factory-runner-protocol/v1",
         "schema": "change-set/v1",

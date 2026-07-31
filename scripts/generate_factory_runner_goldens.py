@@ -104,6 +104,7 @@ def _execute_variant(
     *,
     variant: str,
     agent_mode: str,
+    python_executable: Path | str,
 ) -> dict[str, bytes]:
     invocation = build_invocation(root / variant, operation="author")
     for cache_directory in invocation.workspace.rglob("__pycache__"):
@@ -114,7 +115,7 @@ def _execute_variant(
         no_change=variant == "author-no-change",
     )
     command = [
-        sys.executable,
+        os.fspath(python_executable),
         str(GOLDEN_CLI),
         *factory_command(invocation)[3:],
     ]
@@ -154,7 +155,10 @@ def _execute_variant(
     return rendered
 
 
-def render_runtime_golden_artifacts() -> dict[str, bytes]:
+def render_runtime_golden_artifacts(
+    *,
+    python_executable: Path | str = sys.executable,
+) -> dict[str, bytes]:
     """Execute both deterministic author outcomes and retain their full trees."""
 
     with _deterministic_process_environment():
@@ -165,6 +169,7 @@ def render_runtime_golden_artifacts() -> dict[str, bytes]:
                     root,
                     variant=variant,
                     agent_mode=agent_mode,
+                    python_executable=python_executable,
                 )
                 overlap = rendered.keys() & variant_artifacts.keys()
                 if overlap:

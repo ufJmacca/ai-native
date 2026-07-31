@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import subprocess
+import zipfile
 
 import pytest
 
@@ -17,6 +20,7 @@ from ai_native.factory_runner.protocol import (
 
 
 SOURCE_COMMIT = "83e674f8161f38ef9bf4551e92bf655f278262c4"
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _identity_payload() -> dict[str, object]:
@@ -89,6 +93,37 @@ def test_source_fallback_has_real_schema_identity_without_inventing_release() ->
     assert identity.distribution == "ai-native-base"
     assert identity.version == __version__
     assert identity.source_commit is None
+    assert identity.source_tag is None
+    assert identity.image is None
+    assert identity.schema_set_digest == schema_set_digest()
+    assert identity.schema_manifest_sha256 == schema_manifest_digest()
+
+
+def test_built_wheel_embeds_the_explicit_source_and_schema_identity(
+    tmp_path: Path,
+) -> None:
+    wheelhouse = tmp_path / "wheelhouse"
+    environment = os.environ.copy()
+    environment["AINATIVE_FACTORY_BUILD_SOURCE_COMMIT"] = SOURCE_COMMIT
+    environment.pop("AINATIVE_FACTORY_BUILD_SOURCE_TAG", None)
+    built = subprocess.run(
+        ["uv", "build", "--wheel", "--out-dir", str(wheelhouse)],
+        cwd=REPOSITORY_ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert built.returncode == 0, built.stderr
+    wheels = tuple(wheelhouse.glob("*.whl"))
+    assert len(wheels) == 1
+
+    with zipfile.ZipFile(wheels[0]) as archive:
+        identity_bytes = archive.read("ai_native/factory_runner/_build_identity.json")
+    identity = FactoryRunnerBuildIdentity.model_validate_json(identity_bytes)
+
+    assert identity.version == __version__
+    assert identity.source_commit == SOURCE_COMMIT
     assert identity.source_tag is None
     assert identity.image is None
     assert identity.schema_set_digest == schema_set_digest()

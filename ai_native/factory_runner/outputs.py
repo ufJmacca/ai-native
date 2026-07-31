@@ -21,13 +21,12 @@ import threading
 from typing import Any, Literal
 import uuid
 
-from ai_native import __version__
+from ai_native.factory_runner.build_identity import load_build_identity
 from ai_native.factory_runner.canonical import canonical_json_bytes, sha256_digest
 from ai_native.factory_runner.contracts.common import (
     ArtifactReference,
     RepositoryIdentity,
     RunIdentity,
-    RunnerBuildIdentity,
 )
 from ai_native.factory_runner.contracts.run_result import RunOutcome, RunResult
 from ai_native.factory_runner.contracts.terminal_output import (
@@ -1613,11 +1612,9 @@ class OutputWriter:
                 if manifest_reference is not None
                 else self.manifest_digest
             ),
-            "runner_build": RunnerBuildIdentity(
-                version=__version__,
-                image=None,
-                source_commit=None,
-            ).model_dump(mode="json"),
+            "runner_build": load_build_identity()
+            .runner_identity()
+            .model_dump(mode="json"),
             "result_digest": EMPTY_DIGEST,
         }
         payload["result_digest"] = contract_document_digest(payload)
