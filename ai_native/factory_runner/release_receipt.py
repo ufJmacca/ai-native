@@ -24,7 +24,7 @@ RECEIPT_SCHEMA = "factory-runner-release-receipt/v1"
 COMPATIBILITY_SUITE = "factory-runner-compatibility/v1"
 _PLATFORM_PATTERN = re.compile(r"^linux/[a-z0-9][a-z0-9._-]{1,31}$")
 _ATTESTATION_PATTERN = re.compile(
-    r"^https://github\.com/ufJmacca/ai-native/attestations/[0-9a-f]{64}$"
+    r"^https://github\.com/ufJmacca/ai-native/attestations/[1-9][0-9]*$"
 )
 
 

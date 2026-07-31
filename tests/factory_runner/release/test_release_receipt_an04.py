@@ -71,7 +71,7 @@ def _receipt_payload() -> dict[str, object]:
             "provenance_url": f"{release_root}/provenance.intoto.jsonl",
             "provenance_sha256": PROVENANCE_DIGEST,
             "signature_reference": (
-                "https://github.com/ufJmacca/ai-native/attestations/" + ("9" * 64)
+                "https://github.com/ufJmacca/ai-native/attestations/123456"
             ),
         },
     }

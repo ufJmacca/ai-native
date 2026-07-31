@@ -8,8 +8,15 @@ import sys
 
 from scripts.generate_factory_runner_goldens import (
     DEFAULT_OUTPUT_DIR,
+    GOLDEN_CLI,
     render_runtime_golden_artifacts,
     runtime_golden_drift,
+)
+from tests.factory_runner.integration._support import (
+    build_invocation,
+    factory_environment,
+    load_valid_result,
+    load_valid_verification_evidence,
 )
 
 
@@ -108,3 +115,46 @@ def test_clean_wheel_installs_dependencies_and_matches_runtime_goldens(
     rendered = render_runtime_golden_artifacts(python_executable=environment_python)
 
     assert runtime_golden_drift(DEFAULT_OUTPUT_DIR, expected=rendered) == ()
+
+    verify = build_invocation(tmp_path / "verify-success", operation="verify")
+    run_spec = json.loads(verify.run_spec_path.read_bytes())
+    run_spec["policy"]["allowed_commands"][0][0] = "python3"
+    verify.run_spec_path.write_text(
+        json.dumps(run_spec, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    verify_environment = factory_environment(
+        verify,
+        agent_mode="fail-if-called",
+    )
+    verify_environment.pop("PYTHONPATH", None)
+    verify_environment["PYTHONNOUSERSITE"] = "1"
+    completed = subprocess.run(
+        [
+            str(environment_python),
+            str(GOLDEN_CLI),
+            "factory",
+            "verify",
+            "--run-spec",
+            str(verify.run_spec_path),
+            "--output-dir",
+            str(verify.output_dir),
+        ],
+        cwd=outside_checkout,
+        env=verify_environment,
+        stdin=subprocess.DEVNULL,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == ""
+    assert not verify.marker_path.exists()
+    result = load_valid_result(verify)
+    assert result.operation == "verify"
+    assert result.outcome == "succeeded"
+    assert result.runner_build.source_commit is None
+    evidence = load_valid_verification_evidence(verify, result)
+    assert evidence.environment_kind == "clean_verification"
+    assert evidence.overall_status == "passed"
