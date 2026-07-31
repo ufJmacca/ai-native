@@ -1,0 +1,2 @@
+flowchart LR
+  Name --> Greeting

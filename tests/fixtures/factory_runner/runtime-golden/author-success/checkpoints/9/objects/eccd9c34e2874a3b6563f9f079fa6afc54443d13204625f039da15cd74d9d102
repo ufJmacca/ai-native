@@ -1,0 +1,21 @@
+{
+  "slices": [
+    {
+      "acceptance_criteria": [
+        "greeting('Codex') returns 'Hello, Codex!'"
+      ],
+      "dependencies": [],
+      "file_impact": [
+        "app.py"
+      ],
+      "goal": "Return the requested greeting.",
+      "id": "S001",
+      "name": "Update greeting punctuation",
+      "test_plan": [
+        "Run the declared verification command"
+      ]
+    }
+  ],
+  "summary": "One deterministic vertical slice.",
+  "title": "Greeting implementation"
+}

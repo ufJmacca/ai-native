@@ -1,0 +1,10 @@
+# Critique History
+
+Carry forward unresolved test-quality blockers unless the revised slice resolves them explicitly.
+
+## Attempt 1
+- Verdict: `approved`
+- Summary: The deterministic fixture satisfies its criterion.
+
+Required changes:
+- None

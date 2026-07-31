@@ -1,0 +1,10 @@
+{
+  "assumptions": [
+    "The function remains synchronous"
+  ],
+  "diagram": "flowchart LR\n  Name --> Greeting",
+  "legend": [
+    "Greeting formats the supplied name"
+  ],
+  "title": "Greeting flow"
+}

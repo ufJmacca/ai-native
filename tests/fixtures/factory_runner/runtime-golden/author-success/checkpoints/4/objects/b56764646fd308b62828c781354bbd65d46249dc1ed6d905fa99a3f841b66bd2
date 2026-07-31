@@ -1,0 +1,22 @@
+{
+  "data_flow": [
+    "name -> greeting -> formatted string"
+  ],
+  "edge_cases": [
+    "Empty names remain representable"
+  ],
+  "implementation_steps": [
+    "Update app.py"
+  ],
+  "interfaces": [
+    "greeting(name: str) -> str"
+  ],
+  "rollout_notes": [
+    "No publication from the attempt sandbox"
+  ],
+  "summary": "Change the tracked greeting punctuation.",
+  "test_strategy": [
+    "Run the declared deterministic command"
+  ],
+  "title": "Deterministic greeting change"
+}

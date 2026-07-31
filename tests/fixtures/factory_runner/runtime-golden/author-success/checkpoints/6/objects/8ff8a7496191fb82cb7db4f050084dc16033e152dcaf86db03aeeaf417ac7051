@@ -1,0 +1,7 @@
+# Greeting flow
+
+## Legend
+- Greeting formats the supplied name
+
+## Assumptions
+- The function remains synchronous

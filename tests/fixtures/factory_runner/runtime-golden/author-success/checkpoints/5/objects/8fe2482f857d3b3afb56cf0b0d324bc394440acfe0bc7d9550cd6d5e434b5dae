@@ -1,0 +1,6 @@
+{
+  "findings": [],
+  "required_changes": [],
+  "summary": "The deterministic fixture satisfies its criterion.",
+  "verdict": "approved"
+}

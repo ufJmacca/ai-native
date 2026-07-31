@@ -1,0 +1,16 @@
+# Greeting punctuation
+
+## User Value
+The greeting uses the requested punctuation.
+
+## Scope
+- Update app.py
+
+## Constraints
+- Do not commit or publish
+
+## Acceptance Criteria
+- greeting('Codex') returns 'Hello, Codex!'
+
+## Out Of Scope
+- Additional greeting formats

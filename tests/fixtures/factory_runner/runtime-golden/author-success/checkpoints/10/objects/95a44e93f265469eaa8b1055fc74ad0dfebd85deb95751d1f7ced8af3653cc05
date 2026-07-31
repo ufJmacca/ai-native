@@ -1,0 +1,16 @@
+{
+  "acceptance_criteria": [
+    "greeting('Codex') returns 'Hello, Codex!'"
+  ],
+  "constraints": [
+    "Do not commit or publish"
+  ],
+  "out_of_scope": [
+    "Additional greeting formats"
+  ],
+  "scope": [
+    "Update app.py"
+  ],
+  "title": "Greeting punctuation",
+  "user_value": "The greeting uses the requested punctuation."
+}
