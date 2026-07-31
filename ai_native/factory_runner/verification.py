@@ -105,6 +105,13 @@ class FalseRedEvidenceError(EvidenceSufficiencyError):
         )
 
 
+class RedAlreadyGreen(EvidenceSufficiencyError):
+    """The declared behavior already passes before authoring begins."""
+
+    def __init__(self) -> None:
+        super().__init__("red probe found the declared behavior already satisfied")
+
+
 PhaseStartedCallback = Callable[[PhaseCommandStart], None]
 PhaseCompletedCallback = Callable[[PhaseCommandCompletion], None]
 RedObservationFactory = Callable[
@@ -398,6 +405,26 @@ def execute_declared_phase(
         )
         evidence_termination_reason = _termination_reason(result)
         if phase == "red":
+            if (
+                result.termination_reason == "exited"
+                and result.returncode == 0
+                and not repository_changed
+                and not result.stdout_truncated
+                and not result.stderr_truncated
+            ):
+                if on_command_completed is not None:
+                    on_command_completed(
+                        PhaseCommandCompletion(
+                            phase=phase,
+                            index=index,
+                            command=declared_command,
+                            actual_status="passed",
+                            failure_classification="none",
+                            exit_code=0,
+                            termination_reason="exited",
+                        )
+                    )
+                raise RedAlreadyGreen
             observation = red_observation_factory(
                 declared_command,
                 index,
@@ -619,6 +646,7 @@ __all__ = [
     "PhaseCommandCompletion",
     "PhaseCommandStart",
     "PhaseExecutionOutcome",
+    "RedAlreadyGreen",
     "VerificationOutcome",
     "execute_declared_phase",
     "execute_verification",
