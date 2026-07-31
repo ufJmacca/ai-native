@@ -12,6 +12,7 @@ on:
       - CHANGELOG.md
       - Makefile
       - ai_native/**
+      - docs/factory/**
       - docs/factory-runner/**
       - hatch_build.py
       - images/factory-runner/**
@@ -33,6 +34,7 @@ on:
       - CHANGELOG.md
       - Makefile
       - ai_native/**
+      - docs/factory/**
       - docs/factory-runner/**
       - hatch_build.py
       - images/factory-runner/**

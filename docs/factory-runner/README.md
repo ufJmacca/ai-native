@@ -31,8 +31,10 @@ receipt-backed release. Release Please remains the semantic-version authority;
 the release workflow fails closed in draft state until every artifact,
 security, provenance, and clean-download gate passes. Each phase starts only
 after automation verifies its prerequisite merge as the exact default-branch
-HEAD; protected auto-merge remains gated by required checks and
-machine-verifiable phase evidence.
+HEAD. The trusted CLI merge controller validates required checks and
+machine-verifiable phase evidence for the exact PR head before submitting one
+SHA-bound normal merge; routine human approval and native auto-merge are not
+gates.
 
 The complete deterministic root-package test command used by CI is:
 
