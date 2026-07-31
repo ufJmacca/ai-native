@@ -70,14 +70,6 @@ ENV HOME=/home/ainative \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates git \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd --gid 10001 ainative \
-    && useradd \
-        --uid 10001 \
-        --gid 10001 \
-        --no-create-home \
-        --home-dir /home/ainative \
-        --shell /usr/sbin/nologin \
-        ainative \
     && install -d -o root -g root -m 0555 \
         /home/ainative \
         /input \

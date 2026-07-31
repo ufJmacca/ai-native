@@ -179,6 +179,8 @@ def test_runner_dockerfile_has_minimal_fixed_runtime_contract() -> None:
     ):
         assert prohibited not in apt_lines[0].casefold()
 
+    assert "groupadd" not in content
+    assert "useradd" not in content
     assert "USER 10001:10001" in lines
     assert "TMPDIR=/run/ainative" in content
     assert "PYTHONDONTWRITEBYTECODE=1" in content
