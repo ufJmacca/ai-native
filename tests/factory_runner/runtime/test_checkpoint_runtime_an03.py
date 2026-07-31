@@ -34,11 +34,7 @@ CREATED_AT = "2026-07-31T00:00:00Z"
 
 
 def _spec(*, operation: str = "author") -> RunSpec:
-    payload = (
-        run_spec_fixture()
-        if operation == "author"
-        else verification_run_spec()
-    )
+    payload = run_spec_fixture() if operation == "author" else verification_run_spec()
     return RunSpec.model_validate(payload)
 
 
@@ -308,6 +304,7 @@ def test_checkpoint_identity_and_object_addresses_are_deterministic(
 ) -> None:
     spec_payload = run_spec_fixture()
     spec_payload["capabilities"]["required"] = ["structured-events", "author"]
+    spec_payload["capabilities"]["optional"] = []
     spec = RunSpec.model_validate(deepcopy(spec_payload))
 
     def write(root: Path) -> WrittenCheckpoint:
