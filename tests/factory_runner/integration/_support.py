@@ -69,6 +69,13 @@ FAKE_AGENT = Path(__file__).with_name("_fake_agent.py")
 AgentMode = Literal[
     "assert-first-prompt-context",
     "author",
+    "author-add",
+    "author-binary",
+    "author-delete",
+    "author-mode",
+    "author-no-change",
+    "author-rename",
+    "author-secret",
     "blocked",
     "fail-if-called",
     "mutate-git-config",

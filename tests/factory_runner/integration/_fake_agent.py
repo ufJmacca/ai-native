@@ -107,6 +107,13 @@ def main() -> int:
         choices=(
             "assert-first-prompt-context",
             "author",
+            "author-add",
+            "author-binary",
+            "author-delete",
+            "author-mode",
+            "author-no-change",
+            "author-rename",
+            "author-secret",
             "blocked",
             "fail-if-called",
             "mutate-git-config",
@@ -156,7 +163,26 @@ def main() -> int:
         return 0
 
     workspace = Path.cwd()
-    (workspace / "app.py").write_text(AUTHORED_APP, encoding="utf-8")
+    if args.mode in {"author", "assert-first-prompt-context", "mutate-git-config"}:
+        (workspace / "app.py").write_text(AUTHORED_APP, encoding="utf-8")
+    elif args.mode == "author-add":
+        (workspace / "added.txt").write_text("factory addition\n", encoding="utf-8")
+    elif args.mode == "author-delete":
+        (workspace / "app.py").unlink(missing_ok=True)
+    elif args.mode == "author-rename":
+        source = workspace / "app.py"
+        target = workspace / "renamed.py"
+        if source.exists():
+            source.rename(target)
+    elif args.mode == "author-binary":
+        (workspace / "app.py").write_bytes(b"\x00factory-binary\xff\n")
+    elif args.mode == "author-mode":
+        (workspace / "app.py").chmod(0o755)
+    elif args.mode == "author-secret":
+        (workspace / "app.py").write_text(
+            "FACTORY_SECRET_CANARY_AN03_8f4d1c7e\n",
+            encoding="utf-8",
+        )
 
     match = re.search(r"Slice artifact directory:\n(?P<path>.+)", prompt)
     if match:
