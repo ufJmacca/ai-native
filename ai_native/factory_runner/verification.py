@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import re
 import time
@@ -13,6 +13,7 @@ from ai_native import __version__
 from ai_native.factory_runner.admission import ValidatedInputs
 from ai_native.factory_runner.contracts.common import (
     ArtifactReference,
+    ENVIRONMENT_KEY_PATTERN,
     RunnerBuildIdentity,
 )
 from ai_native.factory_runner.contracts.verification_evidence import (
@@ -59,6 +60,7 @@ class VerificationOutcome:
     timed_out: bool
     evidence: VerificationEvidence
     reference: ArtifactReference
+    phase_outcome: PhaseExecutionOutcome | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +86,50 @@ class PhaseCommandCompletion:
 
 
 @dataclass(frozen=True, slots=True)
+class PhaseEvidenceAuthority:
+    """Non-executable provenance for the policy that produced phase evidence."""
+
+    allowed_commands: tuple[tuple[str, ...], ...]
+    allowed_environment_keys: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.allowed_commands, tuple)
+            or len(set(self.allowed_commands)) != len(self.allowed_commands)
+            or any(
+                not isinstance(command, tuple)
+                or not command
+                or any(
+                    not isinstance(argument, str)
+                    or not argument
+                    or len(argument) > 16_384
+                    or "\x00" in argument
+                    for argument in command
+                )
+                for command in self.allowed_commands
+            )
+            or not isinstance(self.allowed_environment_keys, tuple)
+            or len(set(self.allowed_environment_keys))
+            != len(self.allowed_environment_keys)
+            or any(
+                not isinstance(key, str)
+                or len(key) > 256
+                or re.fullmatch(ENVIRONMENT_KEY_PATTERN, key) is None
+                for key in self.allowed_environment_keys
+            )
+        ):
+            raise ValueError("phase evidence authority is invalid")
+
+
+def _phase_evidence_authority(inputs: ValidatedInputs) -> PhaseEvidenceAuthority:
+    policy = inputs.run_spec.policy
+    return PhaseEvidenceAuthority(
+        allowed_commands=tuple(tuple(command) for command in policy.allowed_commands),
+        allowed_environment_keys=tuple(policy.allowed_environment_keys),
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class PhaseExecutionOutcome:
     """Runner-owned evidence items produced by one named TDD phase."""
 
@@ -92,6 +138,29 @@ class PhaseExecutionOutcome:
     cancelled: bool
     timed_out: bool
     items: tuple[EvidenceItem, ...]
+    evidence_authority: PhaseEvidenceAuthority | None = field(
+        default=None,
+        compare=False,
+        repr=False,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class RedAlreadyGreenObservation:
+    """A successful pre-authoring probe that proves explicit no-change."""
+
+    command: tuple[str, ...]
+    environment_keys: tuple[str, ...]
+    started_at: str
+    finished_at: str
+    duration_seconds: float
+    stdout: ArtifactReference
+    stderr: ArtifactReference
+    evidence_authority: PhaseEvidenceAuthority | None = field(
+        default=None,
+        compare=False,
+        repr=False,
+    )
 
 
 class FalseRedEvidenceError(EvidenceSufficiencyError):
@@ -108,7 +177,10 @@ class FalseRedEvidenceError(EvidenceSufficiencyError):
 class RedAlreadyGreen(EvidenceSufficiencyError):
     """The declared behavior already passes before authoring begins."""
 
-    def __init__(self) -> None:
+    def __init__(self, observation: RedAlreadyGreenObservation) -> None:
+        if not isinstance(observation, RedAlreadyGreenObservation):
+            raise ValueError("already-green observation is invalid")
+        self.observation = observation
         super().__init__("red probe found the declared behavior already satisfied")
 
 
@@ -336,6 +408,7 @@ def execute_declared_phase(
     if phase not in _VALID_PHASES:
         raise ValueError(f"unsupported verification phase: {phase}")
     spec = inputs.run_spec
+    evidence_authority = _phase_evidence_authority(inputs)
     child_environment = build_child_environment(
         allowed_keys=spec.policy.allowed_environment_keys,
         source_env=inputs.environment,
@@ -424,7 +497,18 @@ def execute_declared_phase(
                             termination_reason="exited",
                         )
                     )
-                raise RedAlreadyGreen
+                raise RedAlreadyGreen(
+                    RedAlreadyGreenObservation(
+                        command=declared_command,
+                        environment_keys=tuple(spec.policy.allowed_environment_keys),
+                        started_at=started_at,
+                        finished_at=finished_at,
+                        duration_seconds=duration,
+                        stdout=stdout_reference,
+                        stderr=stderr_reference,
+                        evidence_authority=evidence_authority,
+                    )
+                )
             observation = red_observation_factory(
                 declared_command,
                 index,
@@ -513,6 +597,7 @@ def execute_declared_phase(
         cancelled=any_cancelled,
         timed_out=any_timed_out,
         items=tuple(items),
+        evidence_authority=evidence_authority,
     )
 
 
@@ -583,7 +668,6 @@ def execute_verification(
 ) -> VerificationOutcome:
     """Compatibility entry point for one deterministic verification phase."""
 
-    spec = inputs.run_spec
     phase_outcome = execute_declared_phase(
         inputs,
         phase="verification",
@@ -598,6 +682,32 @@ def execute_verification(
         on_command_started=on_command_started,
         on_command_completed=on_command_completed,
     )
+    return finalize_verification_evidence(
+        inputs,
+        writer=writer,
+        phase_outcome=phase_outcome,
+        clean_verification=clean_verification,
+    )
+
+
+def finalize_verification_evidence(
+    inputs: ValidatedInputs,
+    *,
+    writer: OutputWriter,
+    phase_outcome: PhaseExecutionOutcome,
+    clean_verification: bool,
+) -> VerificationOutcome:
+    """Materialise verification evidence from one completed or restored phase."""
+
+    if (
+        not isinstance(phase_outcome, PhaseExecutionOutcome)
+        or phase_outcome.phase != "verification"
+        or not phase_outcome.items
+    ):
+        raise EvidenceSufficiencyError(
+            "verification evidence requires one verification phase outcome"
+        )
+    spec = inputs.run_spec
     overall_status = "passed" if phase_outcome.passed else "failed"
     change_set_digest = (
         inputs.change_set.change_set_digest
@@ -638,6 +748,7 @@ def execute_verification(
         timed_out=phase_outcome.timed_out,
         evidence=evidence,
         reference=reference,
+        phase_outcome=phase_outcome,
     )
 
 
@@ -645,11 +756,14 @@ __all__ = [
     "FalseRedEvidenceError",
     "PhaseCommandCompletion",
     "PhaseCommandStart",
+    "PhaseEvidenceAuthority",
     "PhaseExecutionOutcome",
+    "RedAlreadyGreenObservation",
     "RedAlreadyGreen",
     "VerificationOutcome",
     "execute_declared_phase",
     "execute_verification",
     "finalize_authoring_evidence",
+    "finalize_verification_evidence",
     "observe_declared_red_failure",
 ]

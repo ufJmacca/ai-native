@@ -264,7 +264,7 @@ def test_passing_red_probe_is_distinguished_for_explicit_no_change(
     inputs = _inputs(tmp_path)
     writer = OutputWriter(inputs.output_dir)
 
-    with pytest.raises(RedAlreadyGreen):
+    with pytest.raises(RedAlreadyGreen) as raised:
         _execute_phase(
             inputs,
             phase="red",
@@ -272,6 +272,11 @@ def test_passing_red_probe_is_distinguished_for_explicit_no_change(
             writer=writer,
         )
 
+    observation = raised.value.observation
+    assert observation.command == COMMAND
+    assert observation.environment_keys == ()
+    assert observation.stdout.path.endswith("red-command-001.stdout")
+    assert observation.stderr.path.endswith("red-command-001.stderr")
     assert (
         inputs.output_dir / "evidence/objects/red-command-001.stdout"
     ).read_bytes() == b"already satisfied\n"

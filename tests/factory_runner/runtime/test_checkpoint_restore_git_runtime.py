@@ -12,7 +12,9 @@ from ai_native.factory_runner.checkpoints import (
     CheckpointManager,
     LoadedCheckpoint,
 )
-from ai_native.factory_runner.git_runtime import FactoryGitRuntime
+from ai_native.factory_runner.changes import validate_checkpoint_patch_paths
+from ai_native.factory_runner.contracts.run_spec import RunPolicy
+from ai_native.factory_runner.git_runtime import FactoryGitError, FactoryGitRuntime
 from ai_native.factory_runner.process import (
     CancellationToken,
     Deadline,
@@ -41,13 +43,18 @@ def _git(workspace: Path, *arguments: str, input_bytes: bytes | None = None) -> 
     return completed.stdout
 
 
-def _repository(tmp_path: Path) -> tuple[Path, bytes]:
+def _repository(
+    tmp_path: Path,
+    *,
+    relative_path: str = "app.py",
+) -> tuple[Path, bytes]:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     _git(workspace, "init", "--initial-branch=main")
-    source = workspace / "app.py"
+    source = workspace / relative_path
+    source.parent.mkdir(parents=True, exist_ok=True)
     source.write_text("before\n", encoding="utf-8")
-    _git(workspace, "add", "app.py")
+    _git(workspace, "add", relative_path)
     _git(
         workspace,
         "-c",
@@ -72,7 +79,7 @@ def _repository(tmp_path: Path) -> tuple[Path, bytes]:
         "HEAD",
         "--",
     )
-    _git(workspace, "checkout", "--", "app.py")
+    _git(workspace, "checkout", "--", relative_path)
     return workspace, patch
 
 
@@ -300,6 +307,114 @@ def test_restore_rolls_back_if_apply_loses_a_race_after_check(
     assert "--check" not in apply_commands[1]
     assert (workspace / "app.py").read_text(encoding="utf-8") == "before\n"
     assert not (workspace / "race.tmp").exists()
+    assert (
+        _git(
+            workspace,
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+        )
+        == b""
+    )
+
+
+def test_restore_rejects_patch_outside_narrowed_policy_before_mutation(
+    tmp_path: Path,
+) -> None:
+    workspace, patch = _repository(tmp_path, relative_path="src/app.py")
+    manager, loaded = _loaded(tmp_path, patch)
+    runtime = _runtime(tmp_path, workspace)
+    policy_payload = loaded.checkpoint.authority.model_dump(mode="json")
+    policy_payload["allowed_paths"] = ["tests/test_app.py"]
+    narrowed_policy = RunPolicy.model_validate(policy_payload)
+
+    with pytest.raises(CheckpointError, match="path|policy|restore"):
+        manager.restore_transactionally(
+            loaded,
+            git_runtime=runtime,
+            patch_validator=lambda candidate: validate_checkpoint_patch_paths(
+                narrowed_policy,
+                patch=candidate,
+                git_runtime=runtime,
+            ),
+        )
+
+    assert (workspace / "src/app.py").read_text(encoding="utf-8") == "before\n"
+    assert (
+        _git(
+            workspace,
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+        )
+        == b""
+    )
+
+
+def test_patch_inspection_rejects_explicit_rename_without_mutation(
+    tmp_path: Path,
+) -> None:
+    workspace, _patch = _repository(tmp_path)
+    _git(workspace, "mv", "app.py", "renamed.py")
+    rename_patch = _git(
+        workspace,
+        "diff",
+        "--binary",
+        "--full-index",
+        "--find-renames=100%",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        "HEAD",
+        "--",
+    )
+    _git(workspace, "reset", "--hard", "HEAD")
+    runtime = _runtime(tmp_path, workspace)
+
+    with pytest.raises(FactoryGitError, match="renames|copies"):
+        runtime.inspect_patch_paths(rename_patch)
+
+    assert (workspace / "app.py").read_text(encoding="utf-8") == "before\n"
+    assert not (workspace / "renamed.py").exists()
+    assert (
+        _git(
+            workspace,
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+        )
+        == b""
+    )
+
+
+def test_restore_rolls_back_applied_patch_when_postcondition_fails(
+    tmp_path: Path,
+) -> None:
+    workspace, patch = _repository(tmp_path)
+    manager, loaded = _loaded(tmp_path, patch)
+    runtime = _runtime(tmp_path, workspace)
+    postcondition_observed_applied_patch = False
+
+    def reject_restored_workspace() -> None:
+        nonlocal postcondition_observed_applied_patch
+        postcondition_observed_applied_patch = (workspace / "app.py").read_text(
+            encoding="utf-8"
+        ) == "after\n"
+        (workspace / "postcondition.tmp").write_text(
+            "must be rolled back\n",
+            encoding="utf-8",
+        )
+        raise RuntimeError("restored workspace violates current authority")
+
+    with pytest.raises(CheckpointError, match="postcondition|restore"):
+        manager.restore_transactionally(
+            loaded,
+            git_runtime=runtime,
+            postcondition=reject_restored_workspace,
+        )
+
+    assert postcondition_observed_applied_patch is True
+    assert (workspace / "app.py").read_text(encoding="utf-8") == "before\n"
+    assert not (workspace / "postcondition.tmp").exists()
     assert (
         _git(
             workspace,

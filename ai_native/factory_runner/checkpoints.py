@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 import os
 from pathlib import Path, PurePosixPath
@@ -55,6 +55,14 @@ class CheckpointError(RuntimeError):
         super().__init__(message)
 
 
+class CheckpointCancelled(CheckpointError):
+    """Checkpoint restore observed the attempt cancellation token."""
+
+
+class CheckpointTimedOut(CheckpointError):
+    """Checkpoint restore exhausted the admitted attempt deadline."""
+
+
 @dataclass(frozen=True, slots=True)
 class LoadedCheckpoint:
     """A verified checkpoint and detached immutable object payloads."""
@@ -100,9 +108,7 @@ class CheckpointManager:
         candidate = Path(path)
         try:
             relative = (
-                candidate.relative_to(root)
-                if candidate.is_absolute()
-                else candidate
+                candidate.relative_to(root) if candidate.is_absolute() else candidate
             )
         except (OSError, RuntimeError, ValueError) as exc:
             raise CheckpointError("checkpoint path escapes its trusted root") from exc
@@ -127,9 +133,7 @@ class CheckpointManager:
         for part in relative.parts:
             current = current / part
             if current.is_symlink():
-                raise CheckpointError(
-                    "checkpoint path traverses a symbolic link"
-                )
+                raise CheckpointError("checkpoint path traverses a symbolic link")
         try:
             resolved = current.resolve(strict=True)
         except (OSError, RuntimeError) as exc:
@@ -176,12 +180,12 @@ class CheckpointManager:
     @staticmethod
     def _validated_checkpoint(checkpoint: Checkpoint) -> Checkpoint:
         try:
-            validated = Checkpoint.model_validate(
-                checkpoint.model_dump(mode="json")
-            )
+            validated = Checkpoint.model_validate(checkpoint.model_dump(mode="json"))
             verify_contract_digest(validated)
         except Exception as exc:
-            raise CheckpointError("checkpoint contract or self digest is invalid") from exc
+            raise CheckpointError(
+                "checkpoint contract or self digest is invalid"
+            ) from exc
         return validated
 
     @staticmethod
@@ -189,7 +193,9 @@ class CheckpointManager:
         checkpoint: Checkpoint,
         objects: Mapping[str, bytes],
     ) -> dict[str, bytes]:
-        references = {reference.path: reference for reference in checkpoint.artifact_manifest}
+        references = {
+            reference.path: reference for reference in checkpoint.artifact_manifest
+        }
         if set(objects) != set(references):
             raise CheckpointError("checkpoint is missing a manifest object")
         manifest_digests = {reference.digest for reference in references.values()}
@@ -199,7 +205,9 @@ class CheckpointManager:
             checkpoint.workspace_patch_digest is not None
             and checkpoint.workspace_patch_digest not in manifest_digests
         ):
-            raise CheckpointError("checkpoint workspace patch is missing from its manifest")
+            raise CheckpointError(
+                "checkpoint workspace patch is missing from its manifest"
+            )
 
         detached: dict[str, bytes] = {}
         for path, reference in references.items():
@@ -242,7 +250,9 @@ class CheckpointManager:
                     "checkpoint manifest paths must remain inside its sequence"
                 ) from exc
             if PurePosixPath(reference.path) == checkpoint_relative:
-                raise CheckpointError("checkpoint manifest may not replace checkpoint.json")
+                raise CheckpointError(
+                    "checkpoint manifest may not replace checkpoint.json"
+                )
 
         target = root.joinpath(*sequence_root.parts)
         if target.exists() or target.is_symlink():
@@ -325,7 +335,9 @@ class CheckpointManager:
         except Exception as exc:
             raise CheckpointError("checkpoint contract is incompatible") from exc
 
-        references = {reference.path: reference for reference in model.artifact_manifest}
+        references = {
+            reference.path: reference for reference in model.artifact_manifest
+        }
         if {reference.digest for reference in references.values()} != set(
             model.object_digests
         ):
@@ -335,7 +347,9 @@ class CheckpointManager:
             and model.workspace_patch_digest
             not in {reference.digest for reference in references.values()}
         ):
-            raise CheckpointError("checkpoint workspace patch is missing from its manifest")
+            raise CheckpointError(
+                "checkpoint workspace patch is missing from its manifest"
+            )
 
         objects: dict[str, bytes] = {}
         for object_path, reference in references.items():
@@ -366,13 +380,34 @@ class CheckpointManager:
         *,
         git_runtime: FactoryGitRuntime | None = None,
         workspace: Path | None = None,
+        patch_validator: Callable[[bytes], None] | None = None,
+        postcondition: Callable[[], None] | None = None,
     ) -> None:
         """Apply the complete workspace patch or leave the worktree unchanged."""
 
         if not isinstance(loaded, LoadedCheckpoint):
             raise CheckpointError("restore requires a verified checkpoint")
+        if patch_validator is not None and not callable(patch_validator):
+            raise CheckpointError("checkpoint patch validator must be callable")
+        if postcondition is not None and not callable(postcondition):
+            raise CheckpointError("checkpoint restore postcondition must be callable")
         patch = loaded.workspace_patch
         if patch is None:
+            if postcondition is not None:
+                try:
+                    postcondition()
+                except FactoryGitCancelled as exc:
+                    raise CheckpointCancelled(
+                        "checkpoint restore postcondition was cancelled"
+                    ) from exc
+                except FactoryGitTimedOut as exc:
+                    raise CheckpointTimedOut(
+                        "checkpoint restore postcondition timed out"
+                    ) from exc
+                except Exception as exc:
+                    raise CheckpointError(
+                        "checkpoint restore postcondition failed"
+                    ) from exc
             return
         if not isinstance(git_runtime, FactoryGitRuntime):
             raise CheckpointError("restore requires a runner-owned Git runtime")
@@ -387,17 +422,28 @@ class CheckpointManager:
                     "restore workspace differs from its runner-owned Git runtime"
                 )
         try:
-            git_runtime.apply_patch_transactionally(patch)
+            if patch_validator is not None:
+                patch_validator(patch)
+            git_runtime.apply_patch_transactionally(
+                patch,
+                postcondition=postcondition,
+            )
         except FactoryGitCancelled as exc:
-            raise CheckpointError("checkpoint patch restore was cancelled") from exc
+            raise CheckpointCancelled("checkpoint patch restore was cancelled") from exc
         except FactoryGitTimedOut as exc:
-            raise CheckpointError("checkpoint patch restore timed out") from exc
+            raise CheckpointTimedOut("checkpoint patch restore timed out") from exc
         except FactoryGitError as exc:
             raise CheckpointError("checkpoint patch restore failed") from exc
+        except Exception as exc:
+            raise CheckpointError(
+                "checkpoint patch validation or restore postcondition failed"
+            ) from exc
 
 
 __all__ = [
+    "CheckpointCancelled",
     "CheckpointError",
     "CheckpointManager",
+    "CheckpointTimedOut",
     "LoadedCheckpoint",
 ]

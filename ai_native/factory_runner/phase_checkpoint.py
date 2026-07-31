@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import errno
 import json
 import os
@@ -23,13 +23,20 @@ from ai_native.factory_runner.contracts.verification_evidence import EvidenceIte
 from ai_native.factory_runner.outputs import OutputWriter
 from ai_native.factory_runner.process_policy import FactoryPolicyViolation
 from ai_native.factory_runner.redaction import SecretPolicy, SecretScanner
-from ai_native.factory_runner.verification import PhaseExecutionOutcome
+from ai_native.factory_runner.verification import (
+    PhaseEvidenceAuthority,
+    PhaseExecutionOutcome,
+    RedAlreadyGreenObservation,
+)
 
 
 PHASE_EVIDENCE_WORKFLOW_KEY = "phase_evidence"
+ALREADY_GREEN_WORKFLOW_KEY = "already_green_observation"
 
 _SCHEMA = "phase-evidence-state/v1"
 _OUTCOME_SCHEMA = "phase-execution-outcomes/v1"
+_ALREADY_GREEN_SCHEMA = "already-green-observation-state/v1"
+_ALREADY_GREEN_DOCUMENT_SCHEMA = "already-green-observation/v1"
 _AUTHOR_PHASES = ("red", "green", "refactor", "verification")
 _VERIFY_PHASES = ("verification",)
 _CONTROL_PATTERN = re.compile(r"[\x00-\x1f\x7f]")
@@ -103,18 +110,98 @@ def _reference_tuple(item: EvidenceItem) -> tuple[ArtifactReference, ...]:
     return (item.stdout, item.stderr, *item.test_reports)
 
 
+def _current_evidence_authority(inputs: Any) -> PhaseEvidenceAuthority:
+    policy = getattr(getattr(inputs, "run_spec", None), "policy", None)
+    try:
+        return PhaseEvidenceAuthority(
+            allowed_commands=tuple(
+                tuple(command) for command in getattr(policy, "allowed_commands", ())
+            ),
+            allowed_environment_keys=tuple(
+                getattr(policy, "allowed_environment_keys", ())
+            ),
+        )
+    except (TypeError, ValueError) as exc:
+        raise PhaseEvidenceError(
+            "phase evidence producer authority is invalid"
+        ) from exc
+
+
+def _authority_payload(authority: PhaseEvidenceAuthority) -> dict[str, Any]:
+    if not isinstance(authority, PhaseEvidenceAuthority):
+        raise PhaseEvidenceError("phase evidence producer authority is invalid")
+    return {
+        "allowed_commands": [list(command) for command in authority.allowed_commands],
+        "allowed_environment_keys": list(authority.allowed_environment_keys),
+    }
+
+
+def _parse_authority(value: Any) -> PhaseEvidenceAuthority:
+    if not isinstance(value, Mapping) or set(value) != {
+        "allowed_commands",
+        "allowed_environment_keys",
+    }:
+        raise PhaseEvidenceError("phase evidence producer authority is invalid")
+    raw_commands = value["allowed_commands"]
+    raw_environment_keys = value["allowed_environment_keys"]
+    if (
+        isinstance(raw_commands, str | bytes | bytearray)
+        or not isinstance(raw_commands, Sequence)
+        or isinstance(raw_environment_keys, str | bytes | bytearray)
+        or not isinstance(raw_environment_keys, Sequence)
+    ):
+        raise PhaseEvidenceError("phase evidence producer authority is invalid")
+    commands: list[tuple[str, ...]] = []
+    for raw_command in raw_commands:
+        if isinstance(raw_command, str | bytes | bytearray) or not isinstance(
+            raw_command, Sequence
+        ):
+            raise PhaseEvidenceError("phase evidence producer authority is invalid")
+        commands.append(tuple(raw_command))
+    try:
+        return PhaseEvidenceAuthority(
+            allowed_commands=tuple(commands),
+            allowed_environment_keys=tuple(raw_environment_keys),
+        )
+    except (TypeError, ValueError) as exc:
+        raise PhaseEvidenceError(
+            "phase evidence producer authority is invalid"
+        ) from exc
+
+
+def _resolved_evidence_authority(
+    current: PhaseEvidenceAuthority,
+    persisted: PhaseEvidenceAuthority | None,
+    *,
+    enforce_current_policy: bool,
+) -> PhaseEvidenceAuthority:
+    authority = current if persisted is None else persisted
+    if enforce_current_policy:
+        if authority != current:
+            raise PhaseEvidenceError(
+                "phase evidence producer authority differs from current policy"
+            )
+    elif not set(current.allowed_commands).issubset(
+        authority.allowed_commands
+    ) or not set(current.allowed_environment_keys).issubset(
+        authority.allowed_environment_keys
+    ):
+        raise PhaseEvidenceError(
+            "current policy exceeds phase evidence producer authority"
+        )
+    return authority
+
+
 def _validated_outcomes(
     inputs: Any,
     outcomes: Sequence[PhaseExecutionOutcome],
+    *,
+    enforce_current_policy: bool,
 ) -> tuple[tuple[PhaseExecutionOutcome, ...], tuple[ArtifactReference, ...]]:
     if isinstance(outcomes, str | bytes | bytearray):
         raise PhaseEvidenceError("phase outcomes must be an ordered sequence")
     operation = getattr(getattr(inputs, "run_spec", None), "operation", None)
-    policy = getattr(getattr(inputs, "run_spec", None), "policy", None)
-    commands = tuple(
-        tuple(command) for command in getattr(policy, "allowed_commands", ())
-    )
-    environment_keys = tuple(getattr(policy, "allowed_environment_keys", ()))
+    current_authority = _current_evidence_authority(inputs)
     expected_phases = (
         _AUTHOR_PHASES
         if operation == "author"
@@ -124,21 +211,28 @@ def _validated_outcomes(
     )
     copied = tuple(outcomes)
     phases = tuple(getattr(outcome, "phase", None) for outcome in copied)
-    if not expected_phases or phases != expected_phases[: len(phases)]:
+    no_change_verification = operation == "author" and phases == ("verification",)
+    if (
+        not expected_phases
+        or phases != expected_phases[: len(phases)]
+        and not no_change_verification
+    ):
         raise PhaseEvidenceError(
             "phase evidence order is incompatible with the admitted operation"
         )
-    if not commands and copied:
-        raise PhaseEvidenceError(
-            "phase evidence requires admitted deterministic commands"
-        )
-
     references: list[ArtifactReference] = []
     reference_paths: set[str] = set()
     validated: list[PhaseExecutionOutcome] = []
     for outcome in copied:
         if not isinstance(outcome, PhaseExecutionOutcome):
             raise PhaseEvidenceError("phase outcome type is invalid")
+        authority = _resolved_evidence_authority(
+            current_authority,
+            outcome.evidence_authority,
+            enforce_current_policy=enforce_current_policy,
+        )
+        commands = authority.allowed_commands
+        environment_keys = authority.allowed_environment_keys
         if (
             not isinstance(outcome.passed, bool)
             or not isinstance(outcome.cancelled, bool)
@@ -175,7 +269,7 @@ def _validated_outcomes(
             )
 
         for index, item in enumerate(items, start=1):
-            if tuple(item.command) != commands[index - 1]:
+            if index > len(commands) or tuple(item.command) != commands[index - 1]:
                 raise PhaseEvidenceError(
                     "phase evidence command differs from admitted authority"
                 )
@@ -220,6 +314,7 @@ def _validated_outcomes(
                 cancelled=outcome.cancelled,
                 timed_out=outcome.timed_out,
                 items=items,
+                evidence_authority=authority,
             )
         )
     return tuple(validated), tuple(references)
@@ -351,13 +446,162 @@ def _read_artifact(
 
 
 def _outcome_payload(outcome: PhaseExecutionOutcome) -> dict[str, Any]:
+    if outcome.evidence_authority is None:
+        raise PhaseEvidenceError("phase outcome omits its producer authority")
     return {
         "phase": outcome.phase,
         "passed": outcome.passed,
         "cancelled": outcome.cancelled,
         "timed_out": outcome.timed_out,
         "items": [item.model_dump(mode="json") for item in outcome.items],
+        "evidence_authority": _authority_payload(outcome.evidence_authority),
     }
+
+
+def _validated_already_green(
+    inputs: Any,
+    observation: RedAlreadyGreenObservation,
+    *,
+    enforce_current_policy: bool,
+) -> tuple[RedAlreadyGreenObservation, tuple[ArtifactReference, ...]]:
+    if not isinstance(observation, RedAlreadyGreenObservation):
+        raise PhaseEvidenceError("already-green observation type is invalid")
+    run_spec = getattr(inputs, "run_spec", None)
+    authority = _resolved_evidence_authority(
+        _current_evidence_authority(inputs),
+        observation.evidence_authority,
+        enforce_current_policy=enforce_current_policy,
+    )
+    commands = authority.allowed_commands
+    environment_keys = authority.allowed_environment_keys
+    if (
+        getattr(run_spec, "operation", None) != "author"
+        or (
+            not commands
+            or observation.command != commands[0]
+            or observation.environment_keys != environment_keys
+        )
+        or not isinstance(observation.started_at, str)
+        or not observation.started_at
+        or not isinstance(observation.finished_at, str)
+        or not observation.finished_at
+        or isinstance(observation.duration_seconds, bool)
+        or not isinstance(observation.duration_seconds, int | float)
+        or not 0 <= observation.duration_seconds < float("inf")
+    ):
+        raise PhaseEvidenceError("already-green observation authority is invalid")
+    expected_prefix = "evidence/objects/red-command-001"
+    if (
+        observation.stdout.path != expected_prefix + ".stdout"
+        or observation.stderr.path != expected_prefix + ".stderr"
+    ):
+        raise PhaseEvidenceError("already-green artifact paths are invalid")
+    references = (observation.stdout, observation.stderr)
+    for reference in references:
+        _path(reference.path, evidence=True)
+    return replace(observation, evidence_authority=authority), references
+
+
+def _already_green_payload(
+    observation: RedAlreadyGreenObservation,
+) -> dict[str, Any]:
+    if observation.evidence_authority is None:
+        raise PhaseEvidenceError(
+            "already-green observation omits its producer authority"
+        )
+    return {
+        "schema": _ALREADY_GREEN_DOCUMENT_SCHEMA,
+        "command": list(observation.command),
+        "environment_keys": list(observation.environment_keys),
+        "evidence_authority": _authority_payload(observation.evidence_authority),
+        "started_at": observation.started_at,
+        "finished_at": observation.finished_at,
+        "duration_seconds": observation.duration_seconds,
+        "exit_code": 0,
+        "termination_reason": "exited",
+        "repository_files_changed": False,
+        "stdout": observation.stdout.model_dump(mode="json"),
+        "stderr": observation.stderr.model_dump(mode="json"),
+    }
+
+
+def snapshot_already_green_observation(
+    inputs: Any,
+    *,
+    writer: OutputWriter,
+    observation: RedAlreadyGreenObservation,
+    secret_scanner: SecretScanner | None = None,
+    limits: PhaseEvidenceLimits = PhaseEvidenceLimits(),
+    enforce_current_policy: bool = True,
+) -> PhaseEvidenceSnapshot:
+    """Detach the exact successful Red probe used to justify no-change."""
+
+    if not isinstance(limits, PhaseEvidenceLimits):
+        raise TypeError("limits must be PhaseEvidenceLimits")
+    scanner = secret_scanner or SecretScanner(SecretPolicy())
+    if not isinstance(scanner, SecretScanner):
+        raise TypeError("secret_scanner must be a SecretScanner or null")
+    if not isinstance(enforce_current_policy, bool):
+        raise TypeError("enforce_current_policy must be a boolean")
+    validated, references = _validated_already_green(
+        inputs,
+        observation,
+        enforce_current_policy=enforce_current_policy,
+    )
+    document = canonical_json_bytes(_already_green_payload(validated))
+    if len(document) > limits.max_artifact_bytes:
+        raise PhaseEvidenceError("already-green state exceeds its artifact limit")
+    scanner.require_clean_chunks((document,))
+    state_object = CheckpointStateObject(
+        content=document,
+        media_type="application/json",
+    )
+    root = _output_root(inputs, writer)
+    try:
+        root_fd = os.open(root, _directory_flags())
+    except OSError as exc:
+        raise PhaseEvidenceError(
+            "already-green output root could not be opened safely"
+        ) from exc
+    objects: dict[str, CheckpointStateObject] = {
+        state_object.digest: state_object,
+    }
+    total_bytes = state_object.byte_size
+    try:
+        for reference in references:
+            content = _read_artifact(root_fd, reference, limits=limits)
+            scanner.require_clean_chunks((content,))
+            total_bytes += len(content)
+            if total_bytes > limits.max_total_bytes:
+                raise PhaseEvidenceError(
+                    "already-green objects exceed their total limit"
+                )
+            detached = CheckpointStateObject(
+                content=content,
+                media_type=reference.media_type,
+            )
+            objects.setdefault(detached.digest, detached)
+    finally:
+        os.close(root_fd)
+    descriptor = {
+        "schema": _ALREADY_GREEN_SCHEMA,
+        "observation_state": {
+            "object_digest": state_object.digest,
+            "byte_size": state_object.byte_size,
+        },
+        "artifacts": [
+            reference.model_dump(mode="json")
+            for reference in sorted(references, key=lambda item: item.path)
+        ],
+    }
+    descriptor_bytes = canonical_json_bytes(descriptor)
+    if len(descriptor_bytes) > _MAX_DESCRIPTOR_BYTES:
+        raise PhaseEvidenceError("already-green descriptor exceeds its size limit")
+    scanner.require_clean_chunks((descriptor_bytes,))
+    return PhaseEvidenceSnapshot(
+        descriptor=freeze_mapping(descriptor),
+        objects=tuple(objects[digest] for digest in sorted(objects)),
+    )
 
 
 def snapshot_phase_evidence(
@@ -367,6 +611,7 @@ def snapshot_phase_evidence(
     phase_outcomes: Sequence[PhaseExecutionOutcome],
     secret_scanner: SecretScanner | None = None,
     limits: PhaseEvidenceLimits = PhaseEvidenceLimits(),
+    enforce_current_policy: bool = True,
 ) -> PhaseEvidenceSnapshot:
     """Detach completed phase evidence and every referenced output artifact."""
 
@@ -375,7 +620,13 @@ def snapshot_phase_evidence(
     scanner = secret_scanner or SecretScanner(SecretPolicy())
     if not isinstance(scanner, SecretScanner):
         raise TypeError("secret_scanner must be a SecretScanner or null")
-    outcomes, references = _validated_outcomes(inputs, phase_outcomes)
+    if not isinstance(enforce_current_policy, bool):
+        raise TypeError("enforce_current_policy must be a boolean")
+    outcomes, references = _validated_outcomes(
+        inputs,
+        phase_outcomes,
+        enforce_current_policy=enforce_current_policy,
+    )
     if len(references) > limits.max_artifacts:
         raise PhaseEvidenceError("phase evidence artifact count exceeds its limit")
     outcome_document = canonical_json_bytes(
@@ -468,12 +719,26 @@ def _parse_outcome_document(
     outcomes: list[PhaseExecutionOutcome] = []
     try:
         for raw in raw_outcomes:
-            if not isinstance(raw, Mapping) or set(raw) != {
-                "phase",
-                "passed",
-                "cancelled",
-                "timed_out",
-                "items",
+            if not isinstance(raw, Mapping) or frozenset(raw) not in {
+                frozenset(
+                    {
+                        "phase",
+                        "passed",
+                        "cancelled",
+                        "timed_out",
+                        "items",
+                    }
+                ),
+                frozenset(
+                    {
+                        "phase",
+                        "passed",
+                        "cancelled",
+                        "timed_out",
+                        "items",
+                        "evidence_authority",
+                    }
+                ),
             }:
                 raise PhaseEvidenceError("phase evidence outcome descriptor is invalid")
             for field_name in ("passed", "cancelled", "timed_out"):
@@ -492,6 +757,11 @@ def _parse_outcome_document(
                     timed_out=raw["timed_out"],
                     items=tuple(
                         EvidenceItem.model_validate(item) for item in raw_items
+                    ),
+                    evidence_authority=(
+                        _parse_authority(raw["evidence_authority"])
+                        if "evidence_authority" in raw
+                        else None
                     ),
                 )
             )
@@ -570,8 +840,14 @@ def _validate_reference_consistency(
     inputs: Any,
     outcomes: Sequence[PhaseExecutionOutcome],
     artifacts: Sequence[ArtifactReference],
+    *,
+    enforce_current_policy: bool,
 ) -> tuple[PhaseExecutionOutcome, ...]:
-    validated, used_references = _validated_outcomes(inputs, outcomes)
+    validated, used_references = _validated_outcomes(
+        inputs,
+        outcomes,
+        enforce_current_policy=enforce_current_policy,
+    )
     declared = tuple(reference.model_dump(mode="json") for reference in artifacts)
     used = tuple(
         reference.model_dump(mode="json")
@@ -632,6 +908,200 @@ def _require_targets_absent(
                 raise PhaseEvidenceError("phase restore requires fresh artifact paths")
 
 
+def restore_already_green_observation(
+    inputs: Any,
+    *,
+    writer: OutputWriter,
+    descriptor: Mapping[str, Any],
+    objects: Mapping[str, bytes],
+    secret_scanner: SecretScanner | None = None,
+    limits: PhaseEvidenceLimits = PhaseEvidenceLimits(),
+    enforce_current_policy: bool = True,
+) -> RedAlreadyGreenObservation:
+    """Restore and validate the successful Red probe from a portable checkpoint."""
+
+    if not isinstance(limits, PhaseEvidenceLimits):
+        raise TypeError("limits must be PhaseEvidenceLimits")
+    scanner = secret_scanner or SecretScanner(SecretPolicy())
+    if not isinstance(scanner, SecretScanner):
+        raise TypeError("secret_scanner must be a SecretScanner or null")
+    if not isinstance(enforce_current_policy, bool):
+        raise TypeError("enforce_current_policy must be a boolean")
+    if not isinstance(descriptor, Mapping):
+        raise PhaseEvidenceError("already-green descriptor must be an object")
+    try:
+        descriptor_bytes = canonical_json_bytes(descriptor)
+    except ValueError as exc:
+        raise PhaseEvidenceError(
+            "already-green descriptor is not portable JSON"
+        ) from exc
+    if len(descriptor_bytes) > _MAX_DESCRIPTOR_BYTES:
+        raise PhaseEvidenceError("already-green descriptor exceeds its size limit")
+    scanner.require_clean_chunks((descriptor_bytes,))
+    if set(descriptor) != {"schema", "observation_state", "artifacts"} or (
+        descriptor.get("schema") != _ALREADY_GREEN_SCHEMA
+    ):
+        raise PhaseEvidenceError("already-green descriptor schema is invalid")
+    state_binding = descriptor["observation_state"]
+    raw_artifacts = descriptor["artifacts"]
+    if (
+        not isinstance(state_binding, Mapping)
+        or set(state_binding) != {"object_digest", "byte_size"}
+        or isinstance(raw_artifacts, str | bytes | bytearray)
+        or not isinstance(raw_artifacts, Sequence)
+    ):
+        raise PhaseEvidenceError("already-green descriptor bindings are invalid")
+    state_digest = state_binding["object_digest"]
+    state_size = state_binding["byte_size"]
+    if (
+        not isinstance(state_digest, str)
+        or _DIGEST_PATTERN.fullmatch(state_digest) is None
+        or isinstance(state_size, bool)
+        or not isinstance(state_size, int)
+        or not 0 <= state_size <= limits.max_artifact_bytes
+    ):
+        raise PhaseEvidenceError("already-green state binding is invalid")
+    try:
+        references = tuple(
+            ArtifactReference.model_validate(reference) for reference in raw_artifacts
+        )
+    except (TypeError, ValueError) as exc:
+        raise PhaseEvidenceError(
+            "already-green artifact descriptor is invalid"
+        ) from exc
+    if len(references) != 2 or tuple(
+        reference.path for reference in references
+    ) != tuple(sorted(reference.path for reference in references)):
+        raise PhaseEvidenceError("already-green artifact bindings are invalid")
+    required = frozenset(
+        (state_digest, *(reference.digest for reference in references))
+    )
+    by_digest = _object_content(objects, required=required)
+    document = by_digest.get(state_digest)
+    if (
+        document is None
+        or len(document) != state_size
+        or sha256_digest(document) != state_digest
+    ):
+        raise PhaseEvidenceError("already-green state object is invalid")
+    scanner.require_clean_chunks((document,))
+    try:
+        decoded = json.loads(document.decode("utf-8", errors="strict"))
+        if (
+            not isinstance(decoded, Mapping)
+            or frozenset(decoded)
+            not in {
+                frozenset(
+                    {
+                        "schema",
+                        "command",
+                        "environment_keys",
+                        "started_at",
+                        "finished_at",
+                        "duration_seconds",
+                        "exit_code",
+                        "termination_reason",
+                        "repository_files_changed",
+                        "stdout",
+                        "stderr",
+                    }
+                ),
+                frozenset(
+                    {
+                        "schema",
+                        "command",
+                        "environment_keys",
+                        "evidence_authority",
+                        "started_at",
+                        "finished_at",
+                        "duration_seconds",
+                        "exit_code",
+                        "termination_reason",
+                        "repository_files_changed",
+                        "stdout",
+                        "stderr",
+                    }
+                ),
+            }
+            or decoded.get("schema") != _ALREADY_GREEN_DOCUMENT_SCHEMA
+            or decoded.get("exit_code") != 0
+            or decoded.get("termination_reason") != "exited"
+            or decoded.get("repository_files_changed") is not False
+            or canonical_json_bytes(decoded) != document
+        ):
+            raise PhaseEvidenceError("already-green state document is invalid")
+        command = decoded["command"]
+        environment_keys = decoded["environment_keys"]
+        if (
+            isinstance(command, str | bytes | bytearray)
+            or not isinstance(command, Sequence)
+            or isinstance(environment_keys, str | bytes | bytearray)
+            or not isinstance(environment_keys, Sequence)
+            or any(
+                not isinstance(value, str) for value in (*command, *environment_keys)
+            )
+        ):
+            raise PhaseEvidenceError("already-green command binding is invalid")
+        observation = RedAlreadyGreenObservation(
+            command=tuple(command),
+            environment_keys=tuple(environment_keys),
+            started_at=decoded["started_at"],
+            finished_at=decoded["finished_at"],
+            duration_seconds=decoded["duration_seconds"],
+            stdout=ArtifactReference.model_validate(decoded["stdout"]),
+            stderr=ArtifactReference.model_validate(decoded["stderr"]),
+            evidence_authority=(
+                _parse_authority(decoded["evidence_authority"])
+                if "evidence_authority" in decoded
+                else None
+            ),
+        )
+    except PhaseEvidenceError:
+        raise
+    except (TypeError, UnicodeError, ValueError) as exc:
+        raise PhaseEvidenceError("already-green state document is invalid") from exc
+    observation, used_references = _validated_already_green(
+        inputs,
+        observation,
+        enforce_current_policy=enforce_current_policy,
+    )
+    if tuple(
+        reference.model_dump(mode="json")
+        for reference in sorted(used_references, key=lambda item: item.path)
+    ) != tuple(reference.model_dump(mode="json") for reference in references):
+        raise PhaseEvidenceError("already-green artifact references are inconsistent")
+
+    contents: dict[str, bytes] = {}
+    total_bytes = len(document)
+    for reference in references:
+        content = by_digest.get(reference.digest)
+        if (
+            content is None
+            or len(content) != reference.byte_size
+            or sha256_digest(content) != reference.digest
+            or len(content) > limits.max_artifact_bytes
+        ):
+            raise PhaseEvidenceError("already-green artifact object is invalid")
+        scanner.require_clean_chunks((content,))
+        total_bytes += len(content)
+        if total_bytes > limits.max_total_bytes:
+            raise PhaseEvidenceError("already-green objects exceed their total limit")
+        contents[reference.path] = content
+    root = _output_root(inputs, writer)
+    _require_targets_absent(root, references)
+    for reference in references:
+        restored = writer.write_bytes(
+            reference.path,
+            contents[reference.path],
+            media_type=reference.media_type,
+        )
+        if restored != reference:
+            raise PhaseEvidenceError(
+                "restored already-green artifact differs from its checkpoint"
+            )
+    return observation
+
+
 def restore_phase_evidence(
     inputs: Any,
     *,
@@ -640,6 +1110,7 @@ def restore_phase_evidence(
     objects: Mapping[str, bytes],
     secret_scanner: SecretScanner | None = None,
     limits: PhaseEvidenceLimits = PhaseEvidenceLimits(),
+    enforce_current_policy: bool = True,
 ) -> tuple[PhaseExecutionOutcome, ...]:
     """Validate and restore exact phase outcomes into a fresh output writer."""
 
@@ -648,6 +1119,8 @@ def restore_phase_evidence(
     scanner = secret_scanner or SecretScanner(SecretPolicy())
     if not isinstance(scanner, SecretScanner):
         raise TypeError("secret_scanner must be a SecretScanner or null")
+    if not isinstance(enforce_current_policy, bool):
+        raise TypeError("enforce_current_policy must be a boolean")
     if not isinstance(descriptor, Mapping):
         raise PhaseEvidenceError("phase evidence descriptor must be an object")
     outcome_digest, outcome_size, references = _descriptor_header(
@@ -674,6 +1147,7 @@ def restore_phase_evidence(
         inputs,
         _parse_outcome_document(outcome_content),
         references,
+        enforce_current_policy=enforce_current_policy,
     )
     contents: dict[str, bytes] = {}
     total_bytes = len(outcome_content)
@@ -712,10 +1186,13 @@ def restore_phase_evidence(
 
 
 __all__ = [
+    "ALREADY_GREEN_WORKFLOW_KEY",
     "PHASE_EVIDENCE_WORKFLOW_KEY",
     "PhaseEvidenceError",
     "PhaseEvidenceLimits",
     "PhaseEvidenceSnapshot",
+    "restore_already_green_observation",
     "restore_phase_evidence",
+    "snapshot_already_green_observation",
     "snapshot_phase_evidence",
 ]
