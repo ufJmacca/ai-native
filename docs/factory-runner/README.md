@@ -17,9 +17,15 @@ TTY, rejects configured Git remotes and publication commands, filters child
 environments, enforces cancellation and deadlines, and writes a minimal
 schema-valid terminal result with `completion.json` last.
 
-AN-03 will extend the minimal terminal surface with the complete append-only
-event, checkpoint, evidence, redaction, recovery, and ChangeSet output
-semantics. AN-04 owns release artifacts and compatibility certification. Each
+AN-03 implements the complete output lifecycle. Canonical events are durably
+staged before atomic publication, checkpoints preserve portable safe-boundary
+state for a later attempt, author and clean-verification evidence remain
+distinct, and deterministic ChangeSets cover add, modify, delete, rename,
+binary, and executable-mode changes. All durable output passes path, size, and
+secret policy before the schema-valid protocol manifest, RunResult, and
+last-written completion marker are published.
+
+AN-04 owns immutable release artifacts and compatibility certification. Each
 phase starts only after automation verifies its prerequisite merge as the
 exact default-branch HEAD; protected auto-merge remains gated by required
 checks and machine-verifiable phase evidence.
@@ -37,11 +43,14 @@ When invoked from the host, the Makefile runs the suite in the Docker Compose
 docker compose run --rm --user root workspace uv run pytest
 ```
 
-The factory contract suite independently validates the golden documents with
-the Python models and the packaged JSON Schemas. It also checks schema drift,
-canonical digests, protocol negotiation, checkpoint authority narrowing,
-installed-wheel schema resources, and the active non-interactive factory CLI
-surface.
+The factory contract suite independently validates 18 golden documents for
+the nine v1 schemas with the Python models and packaged JSON Schemas. It also
+checks schema and writer-generated terminal-golden drift, canonical digests,
+protocol negotiation, checkpoint authority narrowing, installed-wheel schema
+resources, and the active non-interactive factory CLI surface.
+
+Regenerate or check the deterministic terminal goldens with
+`make factory-goldens` or `make factory-goldens-check`.
 
 Protocol resources:
 
@@ -60,3 +69,4 @@ Boundary records:
 - [AN-00 test evidence](evidence/AN-00.md)
 - [AN-01 contract evidence](evidence/AN-01.md)
 - [AN-02 runner evidence](evidence/AN-02.md)
+- [AN-03 output and recovery evidence](evidence/AN-03.md)

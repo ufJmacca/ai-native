@@ -2,8 +2,9 @@
 
 `factory-runner-protocol/v1` is the language-neutral boundary between a
 factory and one non-interactive AI Native runner invocation. AN-01 defines the
-documents and pure compatibility rules. It does not implement runner
-execution.
+initial domain documents and pure compatibility rules. AN-02 implements
+bounded execution, and AN-03 implements the complete content-addressed output
+and recovery lifecycle.
 
 The authoritative machine-readable definitions are the checked-in
 [Draft 2020-12 JSON Schemas](../../ai_native/schemas/factory_runner/v1/).
@@ -12,7 +13,7 @@ conforming implementation must apply in addition to schema validation.
 
 ## Compatibility promise
 
-Protocol v1 contains seven top-level schemas:
+Protocol v1 contains nine top-level schemas:
 
 | Contract | Schema identifier | Purpose |
 |---|---|---|
@@ -21,7 +22,9 @@ Protocol v1 contains seven top-level schemas:
 | `Checkpoint` | `checkpoint/v1` | Portable progress and authority snapshot |
 | `VerificationEvidence` | `verification-evidence/v1` | Structured red, green, refactor, and verification evidence |
 | `ChangeSet` | `change-set/v1` | Sanitised authoring output and deterministic patch reference |
+| `ProtocolManifest` | `protocol-manifest/v1` | Acyclic content-addressed output inventory |
 | `RunResult` | `run-result/v1` | Terminal invocation receipt |
+| `CompletionManifest` | `completion/v1` | Last-write marker binding the result and output manifest |
 | `RunnerEvent` | `runner-event/v1` | Attempt-local progress fact |
 
 All documents use:
@@ -65,6 +68,7 @@ this document. These include:
   uniqueness is insufficient;
 - enforcing internally consistent checkpoint budgets and stage state;
 - enforcing evidence, changed-file, and result cross-field rules;
+- enforcing sorted acyclic terminal manifests and canonical artifact paths;
 - RFC 8785 canonicalisation and digest verification;
 - protocol and capability negotiation;
 - cross-document checkpoint compatibility and authority narrowing.
@@ -74,10 +78,10 @@ failures to stable protocol codes. A non-Python consumer must implement
 equivalent behavior; validating only against the JSON Schemas is not enough to
 verify a digest or authorise a resume.
 
-### 3. Deferred runtime enforcement
+### 3. Runtime enforcement
 
-AN-01 does not prove anything about a real workspace or execute an operation.
-Later runner phases must enforce:
+Schema and portable semantic validation do not prove anything about a real
+workspace or execute an operation. The AN-02 and AN-03 runtime enforces:
 
 - input and artifact paths against a real filesystem;
 - artifact byte sizes and digests against actual bytes;
@@ -86,10 +90,12 @@ Later runner phases must enforce:
   work is running;
 - evidence capture, event sequencing, output limits, and cancellation;
 - deterministic patch generation and changed-file inspection;
-- secret scanning, redaction, sandbox independence, and publication denial.
+- secret scanning, redaction, and runner-level publication denial independent
+  of the outer sandbox controls.
 
-A structurally valid `allowed_path_decision: "allowed"` is a claim to be
-established by runtime policy enforcement, not proof by itself.
+A structurally valid `allowed_path_decision: "allowed"` remains a claim to be
+established by runtime policy enforcement, not proof by itself. Hostile-code
+containment and publication authority remain private-factory responsibilities.
 
 ## Common wire rules
 
@@ -433,6 +439,22 @@ previous path. The patch artifact has a positive byte size.
 Branch names, commit identity, pull-request metadata, labels, merge state,
 publication tokens, and other control-plane data are outside this contract.
 
+## `ProtocolManifest`
+
+`ProtocolManifest` is the immutable inventory of all acknowledged artifacts
+that exist before the terminal RunResult. Its `artifacts` sequence is
+non-empty, sorted lexically by logical path, and has unique paths. It contains
+exactly the declared `events.ndjson` reference with media type
+`application/x-ndjson`.
+
+The manifest deliberately excludes `protocol-manifest.json`,
+`result/run-result.json`, and `completion.json`. This keeps the digest graph
+acyclic: the RunResult binds the exact-byte digest of the protocol manifest,
+and the completion marker can then bind both documents. JSON Schema enforces
+the canonical event path, exactly one event entry, and terminal-path
+exclusion; semantic validation additionally checks sort order and exact
+event-reference equality.
+
 ## `RunResult`
 
 `RunResult` is the terminal receipt. Outcomes are:
@@ -466,6 +488,21 @@ rules are:
 - `no_change` is author-only and has neither a `change_set` nor
   `verification_evidence` reference;
 - finish time must not precede start time.
+
+## `CompletionManifest`
+
+`CompletionManifest` is the last-written marker for one sealed output
+directory. It references the canonical `result/run-result.json` and requires
+the exact RunResult digest. When `protocol_manifest` is present, it references
+`protocol-manifest.json`; `output_manifest_digest` must equal that reference's
+digest. When the protocol-manifest reference is absent, the output-manifest
+digest remains a required legacy AN-02 artifact-inventory binding.
+
+The AN-03 writer always supplies the protocol-manifest reference. The nullable
+shape preserves compatibility with the minimal AN-02 completion chain while
+giving consumers one typed contract for both forms. Consumers treat an absent
+or invalid completion marker as an incomplete attempt, never as successful
+publication.
 
 ## `RunnerEvent`
 
@@ -542,12 +579,13 @@ To calculate or verify one:
 5. SHA-256 the canonical bytes and add the `sha256:` prefix.
 6. Compare the result with the declared value.
 
-`RunSpec` and `RunnerEvent` have no self-digest field. When an external digest
-is needed for either, it covers the canonical complete document.
+`RunSpec`, `RunnerEvent`, `ProtocolManifest`, and `CompletionManifest` have no
+self-digest field. When an external digest is needed for one of them, it
+covers the canonical complete document.
 
 ### Schema manifest
 
-Schema generation writes seven deterministic, pretty-printed schema files,
+Schema generation writes nine deterministic, pretty-printed schema files,
 `schema-manifest.json`, and `schema-set.sha256`.
 
 The manifest:
@@ -599,8 +637,14 @@ docker compose run --rm workspace \
 
 docker compose run --rm workspace \
   uv run python scripts/generate_factory_runner_schemas.py --check
+
+docker compose run --rm workspace \
+  uv run python scripts/generate_factory_runner_goldens.py --write
+
+docker compose run --rm workspace \
+  uv run python scripts/generate_factory_runner_goldens.py --check
 ```
 
-CI treats checked-in schema drift, missing package resources, and golden
-fixture disagreement between Pydantic and independent Draft 2020-12
-validation as failures.
+CI treats checked-in schema drift, writer-generated terminal-golden drift,
+missing package resources, and golden fixture disagreement between Pydantic
+and independent Draft 2020-12 validation as failures.

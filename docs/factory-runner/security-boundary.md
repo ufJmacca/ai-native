@@ -2,7 +2,7 @@
 
 ## Scope
 
-This is the public-runner threat analysis updated through AN-02. It does not
+This is the public-runner threat analysis updated through AN-03. It does not
 claim that Python policy can contain hostile repository code. The private
 factory must enforce the outer sandbox, filesystem mounts, network policy,
 credentials, resource limits, and attempt lifecycle.
@@ -13,8 +13,10 @@ Untrusted inputs include repository contents, work-item text, context objects,
 agent output, command output, and any resume artifact. Trusted inputs are
 limited to schema-valid protocol documents whose identities and content
 digests have been verified, the released runner build, and attempt-scoped
-capabilities supplied by the factory. AN-02 rejects resume input until AN-03
-implements durable checkpoint semantics.
+capabilities supplied by the factory. Resume input is admitted only after its
+checkpoint contract, self digest, artifact bytes, run/repository identity,
+operation, capability requirements, original authority, and remaining
+budgets validate; restoration is transactional.
 
 Assets to protect are:
 
@@ -69,6 +71,25 @@ AN-02 also:
 - validates referenced ChangeSet artifacts, prepared file content/modes,
   allowed paths, and canonical patch bytes before clean verification.
 
+AN-03 additionally:
+
+- scans every durable artifact for exact and built-in secret canaries and
+  keeps gateway credentials outside durable runner state;
+- stages and fsyncs each canonical event line without exposing a valid event
+  artifact before atomic finalisation;
+- writes immutable content-addressed checkpoints at configured stage and TDD
+  boundaries, including tokenised portable private author state and complete
+  phase evidence;
+- verifies checkpoint lineage and restores repository state transactionally
+  without widening path, command, stage, environment, network, credential,
+  model, or resource authority;
+- classifies genuine red behavioral failures separately from infrastructure,
+  dependency, collection, syntax, timeout, and unrelated failures;
+- emits deterministic complete ChangeSets and distinguishes authoring
+  evidence from clean-verification evidence; and
+- validates the acyclic protocol manifest and writes the completion marker
+  last, so a missing marker denotes an interrupted attempt.
+
 The exact gateway environment, file, credential, budget, deadline, and
 logging rules are recorded in the
 [AN-02 attempt-scoped model-gateway contract](gateway-contract.md).
@@ -93,18 +114,19 @@ factory's outer filesystem, process, and network sandbox.
 | Excess agent authority | Interactive adapters may use broad tool permissions | Factory adapter uses an attempt-scoped gateway and factory-specific permission profile |
 | Undeclared egress | Registry, telemetry, agents, or repository commands may contact remote services | Disable runner-managed remote endpoints; outer sandbox enforces an allowlisted network profile |
 | Path traversal or symlink escape | Target and artifact paths are repository-controlled | Resolve roots, reject traversal/special files/symlink escapes, and atomically write bounded output |
-| Secret persistence | Logs, patches, events, checkpoints, and agent output may contain secrets | AN-02 does not persist gateway child output; AN-03 must redact and scan before every durable write and fail finalisation on contamination |
-| Tampered context or resume data | Local files may be replaced or crossed between attempts | Verify every admitted digest and identity; reject resume in AN-02 and add transactional restore in AN-03 |
+| Secret persistence | Logs, patches, events, checkpoints, and agent output may contain secrets | Do not persist gateway child output; scan every durable write and fail finalisation on contamination |
+| Tampered context or resume data | Local files may be replaced or crossed between attempts | Verify every admitted digest, artifact, identity, lineage, and authority field before transactional restore |
 | Evidence spoofing | Unrelated failures can look like red TDD evidence | Classify expected behavioral failure and distinguish authoring from clean verification |
 | Resource exhaustion | Agents, commands, logs, and patches may be unbounded | Enforce wall-time, turn, token, command, and output budgets |
 | Docker-socket or host mount access | Interactive devcontainer may mount both | Factory image and sandbox must not receive them |
 
 ## Verification responsibilities
 
-Through AN-02, the AI Native runner is responsible for deterministic
-validation, permission checks, local output safety, and minimal terminal
-protocol evidence. AN-03 adds redaction, secret scanning, and complete
-evidence/output semantics. The private factory independently provides:
+Through AN-03, the AI Native runner is responsible for deterministic
+validation, permission checks, local output safety, redaction and secret
+scanning, portable checkpoints, complete evidence and ChangeSets, and the
+content-addressed terminal protocol chain. The private factory independently
+provides:
 
 - ephemeral sandbox creation and destruction;
 - authoring/verification isolation;

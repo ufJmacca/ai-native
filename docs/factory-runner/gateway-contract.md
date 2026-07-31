@@ -42,9 +42,11 @@ When a gateway credential is required, the private factory:
    selected profile; and
 5. revokes the credential and destroys the mount when the attempt ends.
 
-The credential value is never a CLI argument or an environment value. The
-runner passes only the file path to gateway children; it does not read, copy,
-log, checkpoint, or write the credential value into protocol output.
+The credential value is never a CLI argument or an environment value. At
+attempt startup, the runner reads the bounded regular credential file through
+a no-follow descriptor only to seed its in-memory exact-value secret scanner.
+It passes only the file path to gateway children and never logs, checkpoints,
+or writes the credential value into protocol output.
 Deterministic project commands do not receive
 `ATTEMPT_GATEWAY_TOKEN_FILE`. Admission rejects a `RunSpec` that tries to add
 that reserved key to `policy.allowed_environment_keys`.
@@ -141,8 +143,9 @@ descendants before returning a terminal result.
 ## Logging and failure disclosure
 
 Runner progress and safe failure summaries go to standard error. Standard
-output remains empty in AN-02 because event streaming is rejected until
-AN-03.
+output remains empty unless `structured-events` is negotiated and the RunSpec
+requests streaming; in that case it contains only the exact canonical NDJSON
+bytes also committed to `events.ndjson`.
 
 Gateway standard output and standard error are captured only to bounded
 in-memory buffers for process supervision. They are not returned as an
