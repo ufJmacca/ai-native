@@ -1,0 +1,99 @@
+{
+  "$id": "urn:ai-native:factory-runner:certification:v1:build-identity",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Identity embedded in a wheel and inherited by its OCI image.",
+  "properties": {
+    "distribution": {
+      "const": "ai-native-base",
+      "title": "Distribution",
+      "type": "string"
+    },
+    "image": {
+      "anyOf": [
+        {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Image"
+    },
+    "schema": {
+      "const": "factory-runner-build-identity/v1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "schema_manifest_sha256": {
+      "maxLength": 71,
+      "minLength": 71,
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Schema Manifest Sha256",
+      "type": "string"
+    },
+    "schema_set_digest": {
+      "maxLength": 71,
+      "minLength": 71,
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Schema Set Digest",
+      "type": "string"
+    },
+    "source_commit": {
+      "anyOf": [
+        {
+          "maxLength": 40,
+          "minLength": 40,
+          "pattern": "^[0-9a-f]{40}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Source Commit"
+    },
+    "source_repository": {
+      "const": "ufJmacca/ai-native",
+      "title": "Source Repository",
+      "type": "string"
+    },
+    "source_tag": {
+      "anyOf": [
+        {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Tag"
+    },
+    "version": {
+      "maxLength": 128,
+      "not": {
+        "pattern": "[\\u0000-\\u001f\\u007f]"
+      },
+      "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$",
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema",
+    "distribution",
+    "version",
+    "source_repository",
+    "source_commit",
+    "schema_set_digest",
+    "schema_manifest_sha256"
+  ],
+  "title": "FactoryRunnerBuildIdentity",
+  "type": "object"
+}

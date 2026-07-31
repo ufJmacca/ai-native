@@ -1,0 +1,25 @@
+{
+  "canonicalization": "RFC 8785",
+  "json_schema_draft": "https://json-schema.org/draft/2020-12/schema",
+  "manifest_schema": "factory-runner-certification-schema-manifest/v1",
+  "schemas": [
+    {
+      "digest": "sha256:2cf302c1deb6b382682eb8b4cb50b09eaa2edd2a073bd25d28a6e9cd824af1d6",
+      "path": "build-identity.schema.json",
+      "schema": "factory-runner-build-identity/v1",
+      "schema_id": "urn:ai-native:factory-runner:certification:v1:build-identity"
+    },
+    {
+      "digest": "sha256:0a7cd16577ab55db3dbea3cf0aadc5e006de140b53dbcee35a75efca63b2ecc9",
+      "path": "compatibility-report.schema.json",
+      "schema": "factory-runner-compatibility-report/v1",
+      "schema_id": "urn:ai-native:factory-runner:certification:v1:compatibility-report"
+    },
+    {
+      "digest": "sha256:e276b00c0c05837fcd1aad297e1936d85b5f43935a356ca1e0c062dc0df30cc1",
+      "path": "release-receipt.schema.json",
+      "schema": "factory-runner-release-receipt/v1",
+      "schema_id": "urn:ai-native:factory-runner:certification:v1:release-receipt"
+    }
+  ]
+}

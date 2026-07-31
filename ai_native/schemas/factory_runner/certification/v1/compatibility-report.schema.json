@@ -1,0 +1,366 @@
+{
+  "$defs": {
+    "ArtifactFixtureResult": {
+      "additionalProperties": false,
+      "description": "Observed terminal identity for one fixture and executable form.",
+      "properties": {
+        "actual_outcome": {
+          "enum": [
+            "succeeded",
+            "no_change"
+          ],
+          "title": "Actual Outcome",
+          "type": "string"
+        },
+        "artifact": {
+          "enum": [
+            "source",
+            "wheel",
+            "oci"
+          ],
+          "title": "Artifact",
+          "type": "string"
+        },
+        "output_manifest_digest": {
+          "maxLength": 71,
+          "minLength": 71,
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Output Manifest Digest",
+          "type": "string"
+        },
+        "output_tree_digest": {
+          "maxLength": 71,
+          "minLength": 71,
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Output Tree Digest",
+          "type": "string"
+        },
+        "run_result_digest": {
+          "maxLength": 71,
+          "minLength": 71,
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Run Result Digest",
+          "type": "string"
+        },
+        "status": {
+          "const": "passed",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact",
+        "status",
+        "actual_outcome",
+        "run_result_digest",
+        "output_manifest_digest",
+        "output_tree_digest"
+      ],
+      "title": "ArtifactFixtureResult",
+      "type": "object"
+    },
+    "CertifiedArtifact": {
+      "additionalProperties": false,
+      "description": "One executable form certified by the compatibility suite.",
+      "properties": {
+        "build_identity": {
+          "$ref": "#/$defs/FactoryRunnerBuildIdentity"
+        },
+        "digest": {
+          "anyOf": [
+            {
+              "maxLength": 71,
+              "minLength": 71,
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Digest"
+        },
+        "kind": {
+          "enum": [
+            "source",
+            "wheel",
+            "oci"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "reference": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "title": "Reference",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "reference",
+        "digest",
+        "build_identity"
+      ],
+      "title": "CertifiedArtifact",
+      "type": "object"
+    },
+    "FactoryRunnerBuildIdentity": {
+      "additionalProperties": false,
+      "description": "Identity embedded in a wheel and inherited by its OCI image.",
+      "properties": {
+        "distribution": {
+          "const": "ai-native-base",
+          "title": "Distribution",
+          "type": "string"
+        },
+        "image": {
+          "anyOf": [
+            {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Image"
+        },
+        "schema": {
+          "const": "factory-runner-build-identity/v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "schema_manifest_sha256": {
+          "maxLength": 71,
+          "minLength": 71,
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Schema Manifest Sha256",
+          "type": "string"
+        },
+        "schema_set_digest": {
+          "maxLength": 71,
+          "minLength": 71,
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Schema Set Digest",
+          "type": "string"
+        },
+        "source_commit": {
+          "anyOf": [
+            {
+              "maxLength": 40,
+              "minLength": 40,
+              "pattern": "^[0-9a-f]{40}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Source Commit"
+        },
+        "source_repository": {
+          "const": "ufJmacca/ai-native",
+          "title": "Source Repository",
+          "type": "string"
+        },
+        "source_tag": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Tag"
+        },
+        "version": {
+          "maxLength": 128,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
+          "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "distribution",
+        "version",
+        "source_repository",
+        "source_commit",
+        "schema_set_digest",
+        "schema_manifest_sha256"
+      ],
+      "title": "FactoryRunnerBuildIdentity",
+      "type": "object"
+    },
+    "FixtureCertification": {
+      "additionalProperties": false,
+      "description": "Cross-artifact equivalence proof for one mandatory fixture.",
+      "properties": {
+        "canonical_output_tree_digest": {
+          "maxLength": 71,
+          "minLength": 71,
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Canonical Output Tree Digest",
+          "type": "string"
+        },
+        "expected_outcome": {
+          "enum": [
+            "succeeded",
+            "no_change"
+          ],
+          "title": "Expected Outcome",
+          "type": "string"
+        },
+        "fixture_id": {
+          "enum": [
+            "author-success",
+            "author-no-change",
+            "verify-success"
+          ],
+          "title": "Fixture Id",
+          "type": "string"
+        },
+        "operation": {
+          "enum": [
+            "author",
+            "verify"
+          ],
+          "title": "Operation",
+          "type": "string"
+        },
+        "results": {
+          "items": {
+            "$ref": "#/$defs/ArtifactFixtureResult"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "title": "Results",
+          "type": "array"
+        },
+        "status": {
+          "const": "passed",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fixture_id",
+        "operation",
+        "expected_outcome",
+        "status",
+        "canonical_output_tree_digest",
+        "results"
+      ],
+      "title": "FixtureCertification",
+      "type": "object"
+    }
+  },
+  "$id": "urn:ai-native:factory-runner:certification:v1:compatibility-report",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Complete, passed-only compatibility certificate for one runner build.",
+  "properties": {
+    "artifacts": {
+      "items": {
+        "$ref": "#/$defs/CertifiedArtifact"
+      },
+      "maxItems": 3,
+      "minItems": 3,
+      "title": "Artifacts",
+      "type": "array"
+    },
+    "fixtures": {
+      "items": {
+        "$ref": "#/$defs/FixtureCertification"
+      },
+      "maxItems": 3,
+      "minItems": 3,
+      "title": "Fixtures",
+      "type": "array"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "maxLength": 30,
+      "minLength": 20,
+      "not": {
+        "pattern": "[\\u0000-\\u001f\\u007f]"
+      },
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$",
+      "title": "Generated At",
+      "type": "string"
+    },
+    "protocol": {
+      "const": "factory-runner-protocol/v1",
+      "title": "Protocol",
+      "type": "string"
+    },
+    "report_digest": {
+      "maxLength": 71,
+      "minLength": 71,
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Report Digest",
+      "type": "string"
+    },
+    "schema": {
+      "const": "factory-runner-compatibility-report/v1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "schema_manifest_sha256": {
+      "maxLength": 71,
+      "minLength": 71,
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Schema Manifest Sha256",
+      "type": "string"
+    },
+    "schema_set_digest": {
+      "maxLength": 71,
+      "minLength": 71,
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Schema Set Digest",
+      "type": "string"
+    },
+    "source_commit": {
+      "maxLength": 40,
+      "minLength": 40,
+      "pattern": "^[0-9a-f]{40}$",
+      "title": "Source Commit",
+      "type": "string"
+    },
+    "status": {
+      "const": "passed",
+      "title": "Status",
+      "type": "string"
+    },
+    "suite_version": {
+      "const": "factory-runner-compatibility/v1",
+      "title": "Suite Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema",
+    "protocol",
+    "suite_version",
+    "generated_at",
+    "source_commit",
+    "schema_set_digest",
+    "schema_manifest_sha256",
+    "artifacts",
+    "fixtures",
+    "status",
+    "report_digest"
+  ],
+  "title": "FactoryRunnerCompatibilityReport",
+  "type": "object"
+}
