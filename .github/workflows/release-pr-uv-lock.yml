@@ -1,4 +1,4 @@
-name: Sync Release PR Lockfile
+name: Sync Release PR Generated Files
 
 on:
   pull_request_target:
@@ -9,38 +9,151 @@ on:
       - labeled
 
 permissions:
-  contents: write
+  contents: read
   pull-requests: read
 
 jobs:
-  sync-uv-lock:
+  generate-release-files:
     if: >
       github.event.pull_request.base.ref == 'main' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       contains(join(github.event.pull_request.labels.*.name, ','), 'autorelease: pending')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      artifact_name: ${{ steps.patch.outputs.artifact_name }}
+      changed: ${{ steps.patch.outputs.changed }}
     steps:
-      - name: Check out release PR branch
-        uses: actions/checkout@v4
+      - name: Check out release PR
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v7.1.5
+        uses: astral-sh/setup-uv@ed21f2f24f8dd64503750218de024bcf64c7250a
+        with:
+          version: "0.8.15"
+          enable-cache: false
 
-      - name: Regenerate root uv.lock
-        run: uv lock
-
-      - name: Commit updated lockfile
+      - name: Regenerate release-bound files without write credentials
         run: |
-          if git diff --quiet -- uv.lock; then
-            echo "uv.lock is already up to date."
+          set -euo pipefail
+          uv lock
+          uv run --locked python scripts/generate_factory_runner_goldens.py --write
+
+      - name: Build restricted generated-file patch
+        id: patch
+        env:
+          ARTIFACT_NAME: release-generated-${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git add --intent-to-add -- tests/fixtures/factory_runner/runtime-golden/
+          mapfile -t changed < <(git diff --name-only)
+          if [[ "${#changed[@]}" -eq 0 ]]; then
+            echo "changed=false" >>"${GITHUB_OUTPUT}"
             exit 0
           fi
 
+          for path in "${changed[@]}"; do
+            case "${path}" in
+              uv.lock|tests/fixtures/factory_runner/runtime-golden/*)
+                ;;
+              *)
+                echo "release generation changed a forbidden path: ${path}" >&2
+                exit 1
+                ;;
+            esac
+          done
+
+          git diff --check
+          patch="${RUNNER_TEMP}/release-generated.patch"
+          git diff --binary --full-index -- \
+            uv.lock tests/fixtures/factory_runner/runtime-golden/ >"${patch}"
+          test -s "${patch}"
+          echo "artifact_name=${ARTIFACT_NAME}" >>"${GITHUB_OUTPUT}"
+          echo "changed=true" >>"${GITHUB_OUTPUT}"
+
+      - name: Upload patch
+        if: steps.patch.outputs.changed == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ steps.patch.outputs.artifact_name }}
+          path: ${{ runner.temp }}/release-generated.patch
+          if-no-files-found: error
+          retention-days: 1
+
+  sync-uv-lock:
+    needs: generate-release-files
+    if: always() && needs.generate-release-files.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Generated files are already current
+        if: needs.generate-release-files.outputs.changed != 'true'
+        run: echo "Release-bound generated files are already current."
+
+      - name: Check out exact release PR head for publication
+        if: needs.generate-release-files.outputs.changed == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+
+      - name: Download patch
+        if: needs.generate-release-files.outputs.changed == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ needs.generate-release-files.outputs.artifact_name }}
+          path: ${{ runner.temp }}/release-generated
+
+      - name: Validate and apply restricted patch
+        if: needs.generate-release-files.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          patch="${RUNNER_TEMP}/release-generated/release-generated.patch"
+          test -f "${patch}"
+          test ! -L "${patch}"
+          test "$(wc -c <"${patch}")" -le 67108864
+
+          git apply --check "${patch}"
+          git apply --index "${patch}"
+          mapfile -t staged < <(git diff --cached --name-only)
+          test "${#staged[@]}" -gt 0
+          for path in "${staged[@]}"; do
+            case "${path}" in
+              uv.lock|tests/fixtures/factory_runner/runtime-golden/*)
+                ;;
+              *)
+                echo "generated patch staged a forbidden path: ${path}" >&2
+                exit 1
+                ;;
+            esac
+          done
+          while read -r mode _stage _digest path; do
+            test "${mode}" = "100644" || {
+              echo "generated patch staged an unsafe mode for ${path}" >&2
+              exit 1
+            }
+          done < <(git ls-files --stage -- "${staged[@]}")
+          git diff --cached --check
+          test -z "$(git diff --name-only)"
+
+      - name: Commit generated release files
+        if: needs.generate-release-files.outputs.changed == 'true'
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          RELEASE_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add uv.lock
-          git commit -m "chore: sync uv.lock for release"
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          git commit -m "chore: sync generated files for release"
+          git push \
+            --force-with-lease="refs/heads/${RELEASE_BRANCH}:${EXPECTED_HEAD}" \
+            origin "HEAD:refs/heads/${RELEASE_BRANCH}"

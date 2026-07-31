@@ -1,0 +1,333 @@
+{
+  "$defs": {
+    "ReleaseCompatibility": {
+      "additionalProperties": false,
+      "properties": {
+        "report_sha256": {
+          "maxLength": 71,
+          "minLength": 71,
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Report Sha256",
+          "type": "string"
+        },
+        "report_url": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Report Url",
+          "type": "string"
+        },
+        "status": {
+          "const": "passed",
+          "title": "Status",
+          "type": "string"
+        },
+        "suite_version": {
+          "const": "factory-runner-compatibility/v1",
+          "title": "Suite Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "suite_version",
+        "status",
+        "report_url",
+        "report_sha256"
+      ],
+      "title": "ReleaseCompatibility",
+      "type": "object"
+    },
+    "ReleaseContracts": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_manifest_sha256": {
+          "maxLength": 71,
+          "minLength": 71,
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Schema Manifest Sha256",
+          "type": "string"
+        },
+        "schema_set_digest": {
+          "maxLength": 71,
+          "minLength": 71,
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Schema Set Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_set_digest",
+        "schema_manifest_sha256"
+      ],
+      "title": "ReleaseContracts",
+      "type": "object"
+    },
+    "ReleaseOciImage": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "maxLength": 71,
+          "minLength": 71,
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "pinned_reference": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "title": "Pinned Reference",
+          "type": "string"
+        },
+        "platforms": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "title": "Platforms",
+          "type": "array"
+        },
+        "repository": {
+          "const": "ghcr.io/ufjmacca/ai-native-factory-runner",
+          "title": "Repository",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository",
+        "digest",
+        "pinned_reference",
+        "platforms"
+      ],
+      "title": "ReleaseOciImage",
+      "type": "object"
+    },
+    "ReleaseSource": {
+      "additionalProperties": false,
+      "properties": {
+        "git_commit_sha": {
+          "maxLength": 40,
+          "minLength": 40,
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Git Commit Sha",
+          "type": "string"
+        },
+        "git_tag": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Git Tag",
+          "type": "string"
+        },
+        "repository": {
+          "const": "ufJmacca/ai-native",
+          "title": "Repository",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository",
+        "git_commit_sha",
+        "git_tag"
+      ],
+      "title": "ReleaseSource",
+      "type": "object"
+    },
+    "ReleaseSupplyChain": {
+      "additionalProperties": false,
+      "properties": {
+        "provenance_sha256": {
+          "maxLength": 71,
+          "minLength": 71,
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Provenance Sha256",
+          "type": "string"
+        },
+        "provenance_url": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Provenance Url",
+          "type": "string"
+        },
+        "sbom_sha256": {
+          "maxLength": 71,
+          "minLength": 71,
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Sbom Sha256",
+          "type": "string"
+        },
+        "sbom_url": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Sbom Url",
+          "type": "string"
+        },
+        "signature_reference": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Signature Reference",
+          "type": "string"
+        },
+        "vulnerability_scan": {
+          "$ref": "#/$defs/VulnerabilityScan"
+        }
+      },
+      "required": [
+        "sbom_url",
+        "sbom_sha256",
+        "vulnerability_scan",
+        "provenance_url",
+        "provenance_sha256",
+        "signature_reference"
+      ],
+      "title": "ReleaseSupplyChain",
+      "type": "object"
+    },
+    "ReleaseWheel": {
+      "additionalProperties": false,
+      "properties": {
+        "distribution": {
+          "const": "ai-native-base",
+          "title": "Distribution",
+          "type": "string"
+        },
+        "download_url": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Download Url",
+          "type": "string"
+        },
+        "filename": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Filename",
+          "type": "string"
+        },
+        "sha256": {
+          "maxLength": 71,
+          "minLength": 71,
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "version": {
+          "maxLength": 128,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
+          "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "distribution",
+        "version",
+        "filename",
+        "sha256",
+        "download_url"
+      ],
+      "title": "ReleaseWheel",
+      "type": "object"
+    },
+    "VulnerabilityScan": {
+      "additionalProperties": false,
+      "properties": {
+        "policy": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Policy",
+          "type": "string"
+        },
+        "report_sha256": {
+          "maxLength": 71,
+          "minLength": 71,
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Report Sha256",
+          "type": "string"
+        },
+        "report_url": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Report Url",
+          "type": "string"
+        },
+        "scanner": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Scanner",
+          "type": "string"
+        },
+        "status": {
+          "const": "passed",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scanner",
+        "policy",
+        "status",
+        "report_url",
+        "report_sha256"
+      ],
+      "title": "VulnerabilityScan",
+      "type": "object"
+    }
+  },
+  "$id": "urn:ai-native:factory-runner:certification:v1:release-receipt",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "compatibility": {
+      "$ref": "#/$defs/ReleaseCompatibility"
+    },
+    "contracts": {
+      "$ref": "#/$defs/ReleaseContracts"
+    },
+    "oci_image": {
+      "$ref": "#/$defs/ReleaseOciImage"
+    },
+    "protocol": {
+      "const": "factory-runner-protocol/v1",
+      "title": "Protocol",
+      "type": "string"
+    },
+    "receipt_schema": {
+      "const": "factory-runner-release-receipt/v1",
+      "title": "Receipt Schema",
+      "type": "string"
+    },
+    "released_at": {
+      "format": "date-time",
+      "maxLength": 30,
+      "minLength": 20,
+      "not": {
+        "pattern": "[\\u0000-\\u001f\\u007f]"
+      },
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$",
+      "title": "Released At",
+      "type": "string"
+    },
+    "source": {
+      "$ref": "#/$defs/ReleaseSource"
+    },
+    "supply_chain": {
+      "$ref": "#/$defs/ReleaseSupplyChain"
+    },
+    "wheel": {
+      "$ref": "#/$defs/ReleaseWheel"
+    }
+  },
+  "required": [
+    "receipt_schema",
+    "protocol",
+    "released_at",
+    "source",
+    "wheel",
+    "oci_image",
+    "contracts",
+    "compatibility",
+    "supply_chain"
+  ],
+  "title": "FactoryRunnerReleaseReceipt",
+  "type": "object"
+}

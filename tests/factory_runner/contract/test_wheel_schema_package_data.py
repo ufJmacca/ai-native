@@ -6,7 +6,6 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-import sysconfig
 
 from tests.factory_runner.contract._schema_support import (
     CONTRACT_CASES,
@@ -41,30 +40,11 @@ def test_built_wheel_exposes_exact_schema_package_data_outside_checkout(
     scripts = environment_root / ("Scripts" if os.name == "nt" else "bin")
     isolated_python = scripts / ("python.exe" if os.name == "nt" else "python")
 
-    site_query = subprocess.run(
-        [
-            str(isolated_python),
-            "-c",
-            "import sysconfig; print(sysconfig.get_paths()['purelib'])",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert site_query.returncode == 0, site_query.stderr
-    isolated_site = Path(site_query.stdout.strip())
-    dependency_site = Path(sysconfig.get_paths()["purelib"])
-    (isolated_site / "an01-test-dependencies.pth").write_text(
-        f"{dependency_site}\n",
-        encoding="utf-8",
-    )
-
     installed = subprocess.run(
         [
             "uv",
             "pip",
             "install",
-            "--no-deps",
             "--python",
             str(isolated_python),
             str(wheels[0]),

@@ -25,10 +25,14 @@ binary, and executable-mode changes. All durable output passes path, size, and
 secret policy before the schema-valid protocol manifest, RunResult, and
 last-written completion marker are published.
 
-AN-04 owns immutable release artifacts and compatibility certification. Each
-phase starts only after automation verifies its prerequisite merge as the
-exact default-branch HEAD; protected auto-merge remains gated by required
-checks and machine-verifiable phase evidence.
+AN-04 packages the exact wheel once, builds the non-root runner image from that
+wheel, certifies source/wheel/image equivalence, and publishes a signed,
+receipt-backed release. Release Please remains the semantic-version authority;
+the release workflow fails closed in draft state until every artifact,
+security, provenance, and clean-download gate passes. Each phase starts only
+after automation verifies its prerequisite merge as the exact default-branch
+HEAD; protected auto-merge remains gated by required checks and
+machine-verifiable phase evidence.
 
 The complete deterministic root-package test command used by CI is:
 
@@ -52,6 +56,11 @@ resources, and the active non-interactive factory CLI surface.
 Regenerate or check the deterministic terminal goldens with
 `make factory-goldens` or `make factory-goldens-check`.
 
+Regenerate or check the AN-04 certification schemas with
+`make factory-certification-schemas` or
+`make factory-certification-schemas-check`. Run the complete release-focused
+suite with `make factory-release-tests`.
+
 Protocol resources:
 
 - [Human-readable protocol v1](protocol-v1.md)
@@ -66,7 +75,9 @@ Boundary records:
 - [Existing-module inventory](module-inventory.md)
 - [AN-02 attempt-scoped model-gateway contract](gateway-contract.md)
 - [Runner security boundary and initial threat analysis](security-boundary.md)
+- [Release and independent verification](releasing.md)
 - [AN-00 test evidence](evidence/AN-00.md)
 - [AN-01 contract evidence](evidence/AN-01.md)
 - [AN-02 runner evidence](evidence/AN-02.md)
 - [AN-03 output and recovery evidence](evidence/AN-03.md)
+- [AN-04 release evidence](evidence/AN-04.md)

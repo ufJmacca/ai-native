@@ -9,12 +9,11 @@ import re
 import time
 from typing import Literal, cast
 
-from ai_native import __version__
 from ai_native.factory_runner.admission import ValidatedInputs
+from ai_native.factory_runner.build_identity import load_build_identity
 from ai_native.factory_runner.contracts.common import (
     ArtifactReference,
     ENVIRONMENT_KEY_PATTERN,
-    RunnerBuildIdentity,
 )
 from ai_native.factory_runner.contracts.verification_evidence import (
     EvidenceItem,
@@ -629,11 +628,7 @@ def finalize_authoring_evidence(
         created_at=utc_timestamp(),
         identity=inputs.run_spec.identity,
         repository=inputs.run_spec.repository,
-        runner=RunnerBuildIdentity(
-            version=__version__,
-            image=None,
-            source_commit=None,
-        ),
+        runner=load_build_identity().runner_identity(),
         context_digest=inputs.context_digest,
         items=tuple(items),
         advisory_observations=advisory_observations,
@@ -724,11 +719,7 @@ def finalize_verification_evidence(
         "environment_kind": (
             "clean_verification" if clean_verification else "authoring"
         ),
-        "runner": {
-            "version": __version__,
-            "image": None,
-            "source_commit": None,
-        },
+        "runner": load_build_identity().runner_identity().model_dump(mode="json"),
         "context_digest": inputs.context_digest,
         "change_set_digest": change_set_digest,
         "items": [item.model_dump(mode="json") for item in phase_outcome.items],

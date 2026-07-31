@@ -19,7 +19,7 @@ UV_RUN = $(RUNNER) uv run
 UV_SYNC = $(RUNNER) uv sync
 PLAYWRIGHT_INSTALL = $(RUNNER) uv run python -m playwright install chromium
 
-.PHONY: help bootstrap browsers doctor factory-schemas factory-schemas-check factory-goldens factory-goldens-check test-contracts test lint require-target-dir run plan architect prd slice loop verify commit pr
+.PHONY: help bootstrap browsers doctor factory-schemas factory-schemas-check factory-certification-schemas factory-certification-schemas-check factory-goldens factory-goldens-check factory-release-tests test-contracts test lint require-target-dir run plan architect prd slice loop verify commit pr
 
 help:
 	@printf "Targets:\n"
@@ -28,8 +28,11 @@ help:
 	@printf "  make doctor             Check runtime and auth mounts in the current runtime\n"
 	@printf "  make factory-schemas    Regenerate factory-runner-protocol/v1 JSON Schemas\n"
 	@printf "  make factory-schemas-check  Fail on checked-in factory schema drift\n"
+	@printf "  make factory-certification-schemas  Regenerate AN-04 identity, compatibility, and receipt schemas\n"
+	@printf "  make factory-certification-schemas-check  Fail on checked-in AN-04 certification schema drift\n"
 	@printf "  make factory-goldens    Regenerate the real-command AN-03 runtime golden corpus\n"
 	@printf "  make factory-goldens-check  Fail on checked-in runtime golden corpus drift\n"
+	@printf "  make factory-release-tests  Run the AN-04 packaging, compatibility, and receipt suite\n"
 	@printf "  make test-contracts     Run the factory runner contract suite\n"
 	@printf "  make plan SPEC=... TARGET_DIR=/path/to/repo      Run intake, recon, and planning stages\n"
 	@printf "  make architect SPEC=... TARGET_DIR=/path/to/repo Run architecture stage and critique\n"
@@ -97,11 +100,20 @@ factory-schemas:
 factory-schemas-check:
 	$(UV_RUN) python scripts/generate_factory_runner_schemas.py --check
 
+factory-certification-schemas:
+	$(UV_RUN) python scripts/generate_factory_runner_certification_schemas.py --write
+
+factory-certification-schemas-check:
+	$(UV_RUN) python scripts/generate_factory_runner_certification_schemas.py --check
+
 factory-goldens:
 	$(UV_RUN) python scripts/generate_factory_runner_goldens.py --write
 
 factory-goldens-check:
 	$(UV_RUN) python scripts/generate_factory_runner_goldens.py --check
+
+factory-release-tests:
+	$(UV_RUN) pytest tests/factory_runner/release
 
 test-contracts:
 	$(UV_RUN) pytest tests/factory_runner/contract
