@@ -7,7 +7,11 @@ import pytest
 
 from ai_native.factory_runner.canonical import sha256_digest
 from ai_native.factory_runner.contracts.common import ArtifactReference
-from ai_native.factory_runner.outputs import OutputWriter, validate_output_root
+from ai_native.factory_runner.outputs import (
+    OutputLimitError,
+    OutputWriter,
+    validate_output_root,
+)
 from ai_native.factory_runner.redaction import (
     SecretDetectedError,
     SecretPolicy,
@@ -102,9 +106,7 @@ def test_writer_rejects_unverified_external_artifacts_without_recording(
         content,
     )
     if mutation == "digest":
-        reference = reference.model_copy(
-            update={"digest": sha256_digest(b"different")}
-        )
+        reference = reference.model_copy(update={"digest": sha256_digest(b"different")})
     elif mutation == "size":
         reference = reference.model_copy(update={"byte_size": len(content) + 1})
     else:
@@ -153,3 +155,74 @@ def test_writer_applies_secret_and_total_limits_to_external_artifacts(
             clean_output,
             max_total_bytes=3,
         ).register_existing_artifact(clean_reference)
+
+
+def test_writer_reserves_capacity_for_terminal_finalization(
+    tmp_path: Path,
+) -> None:
+    output = validate_output_root(tmp_path / "output")
+    writer = OutputWriter(
+        output,
+        max_artifact_bytes=10,
+        max_total_bytes=10,
+        finalization_reserve_bytes=4,
+    )
+    writer.write_bytes("producer.bin", b"123456")
+
+    with pytest.raises(OutputLimitError, match="total"):
+        writer.write_bytes("overflow.bin", b"x")
+
+    writer.begin_finalization()
+    writer.write_bytes("terminal.bin", b"7890", record=False)
+    assert sum(path.stat().st_size for path in output.iterdir()) == 10
+
+
+def test_staged_bytes_count_against_the_total_output_budget(
+    tmp_path: Path,
+) -> None:
+    output = validate_output_root(tmp_path / "output")
+    writer = OutputWriter(output, max_total_bytes=6)
+    staged = writer.begin_staged_artifact("events.ndjson")
+    staged.append(b"1234")
+
+    with pytest.raises(OutputLimitError, match="total"):
+        writer.write_bytes("too-large.bin", b"abc")
+
+    writer.write_bytes("fits.bin", b"ab")
+    staged.abort()
+    writer.write_bytes("released.bin", b"cdef")
+
+
+def test_external_bundle_is_preflighted_as_one_total(
+    tmp_path: Path,
+) -> None:
+    output = validate_output_root(tmp_path / "output")
+    writer = OutputWriter(output, max_total_bytes=5)
+    references = (
+        _external_reference("checkpoints/1/object-a", b"123"),
+        _external_reference("checkpoints/1/object-b", b"456"),
+    )
+
+    with pytest.raises(OutputLimitError, match="total"):
+        writer.preflight_external_artifacts(references)
+
+    assert tuple(output.iterdir()) == ()
+
+
+@pytest.mark.parametrize(
+    ("total", "reserve"),
+    ((None, 1), (3, 4), (3, -1)),
+)
+def test_finalization_reserve_must_fit_the_total_limit(
+    tmp_path: Path,
+    total: int | None,
+    reserve: int,
+) -> None:
+    output = validate_output_root(tmp_path / f"output-{total}-{reserve}")
+
+    with pytest.raises(ValueError, match="reserve"):
+        OutputWriter(
+            output,
+            max_total_bytes=total,
+            finalization_reserve_bytes=reserve,
+        )

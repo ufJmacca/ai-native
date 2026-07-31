@@ -34,6 +34,7 @@ from ai_native.factory_runner.contracts.terminal_output import (
     CompletionManifest,
     ProtocolManifest,
 )
+from ai_native.factory_runner.process_policy import FactoryPolicyViolation
 from ai_native.factory_runner.protocol import contract_document_digest
 from ai_native.factory_runner.redaction import SecretPolicy, SecretScanner
 
@@ -41,8 +42,12 @@ from ai_native.factory_runner.redaction import SecretPolicy, SecretScanner
 JSON_MEDIA_TYPE = "application/json"
 OCTET_STREAM_MEDIA_TYPE = "application/octet-stream"
 EMPTY_DIGEST = sha256_digest(b"")
-_MAX_OUTPUT_SNAPSHOT_BYTES = 16 * 1024 * 1024
+_MAX_OUTPUT_SNAPSHOT_BYTES = 64 * 1024 * 1024
 _MAX_OUTPUT_SNAPSHOT_ENTRIES = 20_000
+
+
+class OutputLimitError(FactoryPolicyViolation):
+    """A producer attempted to exceed its admitted durable output budget."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -315,6 +320,7 @@ class OutputWriter:
         secret_scanner: SecretScanner | None = None,
         max_artifact_bytes: int | None = None,
         max_total_bytes: int | None = None,
+        finalization_reserve_bytes: int = 0,
     ):
         for name, value in (
             ("max_artifact_bytes", max_artifact_bytes),
@@ -324,6 +330,19 @@ class OutputWriter:
                 isinstance(value, bool) or not isinstance(value, int) or value < 0
             ):
                 raise ValueError(f"{name} must be a non-negative integer or null")
+        if (
+            isinstance(finalization_reserve_bytes, bool)
+            or not isinstance(finalization_reserve_bytes, int)
+            or finalization_reserve_bytes < 0
+            or (max_total_bytes is None and finalization_reserve_bytes != 0)
+            or (
+                max_total_bytes is not None
+                and finalization_reserve_bytes > max_total_bytes
+            )
+        ):
+            raise ValueError(
+                "finalization_reserve_bytes must fit within the total limit"
+            )
         if secret_scanner is not None and not isinstance(
             secret_scanner,
             SecretScanner,
@@ -334,8 +353,15 @@ class OutputWriter:
         self._manifest: list[ArtifactReference] = []
         self._secret_scanner = secret_scanner or SecretScanner(SecretPolicy())
         self._max_artifact_bytes = max_artifact_bytes
-        self._max_total_bytes = max_total_bytes
+        self._hard_max_total_bytes = max_total_bytes
+        self._max_total_bytes = (
+            max_total_bytes - finalization_reserve_bytes
+            if max_total_bytes is not None
+            else None
+        )
         self._total_bytes = 0
+        self._staged_total_bytes = 0
+        self._finalizing = False
         self._sealed = False
         self._protocol_manifest_reference: ArtifactReference | None = None
         self._write_lock = threading.RLock()
@@ -357,6 +383,70 @@ class OutputWriter:
     def _ensure_writable(self) -> None:
         if self._sealed:
             raise RuntimeError("output writer is finalized by completion.json")
+
+    def _require_capacity(
+        self,
+        byte_size: int,
+        *,
+        artifact_size: int | None = None,
+    ) -> None:
+        selected_artifact_size = byte_size if artifact_size is None else artifact_size
+        if (
+            self._max_artifact_bytes is not None
+            and selected_artifact_size > self._max_artifact_bytes
+        ):
+            raise OutputLimitError("artifact size exceeds the artifact limit")
+        if (
+            self._max_total_bytes is not None
+            and byte_size
+            > self._max_total_bytes - self._total_bytes - self._staged_total_bytes
+        ):
+            raise OutputLimitError("total output size exceeds the total limit")
+
+    def begin_finalization(self) -> None:
+        """Release the terminal reserve exactly when no producer work remains."""
+
+        with self._write_lock:
+            self._ensure_writable()
+            if self._finalizing:
+                return
+            self._max_total_bytes = self._hard_max_total_bytes
+            self._finalizing = True
+
+    def preflight_external_artifacts(
+        self,
+        references: Sequence[ArtifactReference],
+    ) -> tuple[ArtifactReference, ...]:
+        """Check a complete local atomic bundle before it touches the output."""
+
+        if isinstance(references, str | bytes | bytearray):
+            raise TypeError("external artifact references must be a sequence")
+        try:
+            validated = tuple(
+                ArtifactReference.model_validate(reference.model_dump(mode="json"))
+                for reference in references
+            )
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise ValueError("external artifact reference is invalid") from exc
+        paths = tuple(reference.path for reference in validated)
+        with self._write_lock:
+            self._ensure_writable()
+            if len(paths) != len(set(paths)) or any(
+                reference.path == recorded.path
+                for reference in validated
+                for recorded in self._manifest
+            ):
+                raise ValueError("external artifact path is already recorded")
+            for reference in validated:
+                self._require_capacity(
+                    0,
+                    artifact_size=reference.byte_size,
+                )
+            self._require_capacity(
+                sum(reference.byte_size for reference in validated),
+                artifact_size=0,
+            )
+        return validated
 
     @contextmanager
     def _parent_directory(
@@ -560,16 +650,10 @@ class OutputWriter:
             if not isinstance(content, bytes):
                 raise TypeError("staged artifact content must be bytes")
             resulting_size = staged._byte_size + len(content)
-            if (
-                self._max_artifact_bytes is not None
-                and resulting_size > self._max_artifact_bytes
-            ):
-                raise ValueError("artifact size exceeds the artifact limit")
-            if (
-                self._max_total_bytes is not None
-                and resulting_size > self._max_total_bytes - self._total_bytes
-            ):
-                raise ValueError("total output size exceeds the total limit")
+            self._require_capacity(
+                len(content),
+                artifact_size=resulting_size,
+            )
             self._secret_scanner.require_clean_chunks((content,))
 
             descriptor, before = self._open_staging_file(
@@ -598,6 +682,7 @@ class OutputWriter:
 
             staged._digest.update(content)
             staged._byte_size = resulting_size
+            self._staged_total_bytes += len(content)
 
     def _finalize_staged_artifact(
         self,
@@ -608,16 +693,8 @@ class OutputWriter:
             self._require_staged_artifact(staged)
             if any(item.path == staged._relative_path for item in self._manifest):
                 raise ValueError("artifact path is already recorded")
-            if (
-                self._max_artifact_bytes is not None
-                and staged._byte_size > self._max_artifact_bytes
-            ):
-                raise ValueError("artifact size exceeds the artifact limit")
-            if (
-                self._max_total_bytes is not None
-                and staged._byte_size > self._max_total_bytes - self._total_bytes
-            ):
-                raise ValueError("total output size exceeds the total limit")
+            if staged._byte_size > self._staged_total_bytes:
+                raise RuntimeError("staged output accounting is inconsistent")
 
             descriptor, before = self._open_staging_file(staged, os.O_RDONLY)
             digest = hashlib.sha256()
@@ -681,6 +758,7 @@ class OutputWriter:
                 digest=f"sha256:{expected_digest}",
             )
             self._manifest.append(reference)
+            self._staged_total_bytes -= staged._byte_size
             self._total_bytes += staged._byte_size
             return reference
 
@@ -699,6 +777,9 @@ class OutputWriter:
                     "staging artifact was replaced by a directory"
                 ) from exc
             os.fsync(staged._parent_fd)
+            if staged._byte_size > self._staged_total_bytes:
+                raise RuntimeError("staged output accounting is inconsistent")
+            self._staged_total_bytes -= staged._byte_size
 
     def write_bytes(
         self,
@@ -713,18 +794,9 @@ class OutputWriter:
             if not isinstance(content, bytes):
                 raise TypeError("artifact content must be bytes")
             content_size = len(content)
-            if (
-                self._max_artifact_bytes is not None
-                and content_size > self._max_artifact_bytes
-            ):
-                raise ValueError("artifact size exceeds the artifact limit")
+            self._require_capacity(content_size)
             if self._secret_scanner is not None:
                 self._secret_scanner.require_clean_chunks((content,))
-            if (
-                self._max_total_bytes is not None
-                and content_size > self._max_total_bytes - self._total_bytes
-            ):
-                raise ValueError("total output size exceeds the total limit")
             with self._parent_directory(relative_path) as (parent_fd, target_name):
                 try:
                     metadata = os.stat(
@@ -800,16 +872,7 @@ class OutputWriter:
             self._ensure_writable()
             if any(item.path == validated.path for item in self._manifest):
                 raise ValueError("artifact path is already recorded")
-            if (
-                self._max_artifact_bytes is not None
-                and validated.byte_size > self._max_artifact_bytes
-            ):
-                raise ValueError("artifact size exceeds the artifact limit")
-            if (
-                self._max_total_bytes is not None
-                and validated.byte_size > self._max_total_bytes - self._total_bytes
-            ):
-                raise ValueError("total output size exceeds the total limit")
+            self._require_capacity(validated.byte_size)
 
             with self._existing_parent_directory(validated.path) as (
                 parent_fd,
@@ -1081,6 +1144,7 @@ __all__ = [
     "EMPTY_DIGEST",
     "JSON_MEDIA_TYPE",
     "OCTET_STREAM_MEDIA_TYPE",
+    "OutputLimitError",
     "OutputWriter",
     "OutputTreeSnapshot",
     "StagedArtifact",
