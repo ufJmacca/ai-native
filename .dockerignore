@@ -1,0 +1,8 @@
+**
+!dist/
+!dist/*.whl
+!images/
+!images/factory-runner/
+!images/factory-runner/Dockerfile
+!pyproject.toml
+!uv.lock
