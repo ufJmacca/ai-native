@@ -29,13 +29,13 @@ def test_required_golden_examples_and_invalid_manifest_exist() -> None:
     assert not missing, "missing required AN-01 fixtures:\n" + "\n".join(missing)
 
 
-def test_golden_directory_contains_exactly_fourteen_examples() -> None:
+def test_golden_directory_contains_exactly_eighteen_examples() -> None:
     if not GOLDEN_DIRECTORY.is_dir():
         pytest.skip("blocked by intentional fixture-inventory RED")
     actual = tuple(
         sorted(path.name for path in GOLDEN_DIRECTORY.iterdir() if path.is_file())
     )
-    assert len(EXPECTED_GOLDEN_FILENAMES) == 14
+    assert len(EXPECTED_GOLDEN_FILENAMES) == 18
     assert actual == EXPECTED_GOLDEN_FILENAMES
 
 
@@ -57,7 +57,12 @@ def test_golden_examples_validate_with_pydantic_and_jsonschema(
 
     model = getattr(protocol_api(), case.model_name)
     model.model_validate(payload)
-    if case.schema_name not in {"run-spec/v1", "runner-event/v1"}:
+    if case.schema_name not in {
+        "completion/v1",
+        "protocol-manifest/v1",
+        "run-spec/v1",
+        "runner-event/v1",
+    }:
         verify_contract_digest(payload)
     schema = load_contract_schema(case.schema_name)
     validator = Draft202012Validator(

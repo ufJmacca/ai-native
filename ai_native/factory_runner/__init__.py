@@ -22,9 +22,11 @@ _PROTOCOL_EXPORTS = frozenset(
     {
         "ChangeSet",
         "Checkpoint",
+        "CompletionManifest",
         "ContextBundle",
         "ContractErrorCode",
         "ContractValidationError",
+        "ProtocolManifest",
         "RunResult",
         "RunSpec",
         "RunnerEvent",

@@ -12,9 +12,19 @@
       "validator": "enum"
     },
     {
+      "path": "completion.invalid-run-result-path.json",
+      "schema": "completion/v1",
+      "validator": "const"
+    },
+    {
       "path": "context-bundle.malformed-digest.json",
       "schema": "context-bundle/v1",
       "validator": "pattern"
+    },
+    {
+      "path": "protocol-manifest.invalid-event-path.json",
+      "schema": "protocol-manifest/v1",
+      "validator": "const"
     },
     {
       "path": "run-result.unknown-outcome.json",
@@ -38,4 +48,3 @@
     }
   ]
 }
-

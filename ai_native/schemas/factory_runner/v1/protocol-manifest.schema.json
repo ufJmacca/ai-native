@@ -1,0 +1,162 @@
+{
+  "$defs": {
+    "ArtifactReference": {
+      "additionalProperties": false,
+      "properties": {
+        "byte_size": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Byte Size",
+          "type": "integer"
+        },
+        "digest": {
+          "maxLength": 71,
+          "minLength": 71,
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "media_type": {
+          "maxLength": 256,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
+          "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$",
+          "title": "Media Type",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          },
+          "pattern": "^(?!/)(?!.*//)(?!.*\\\\)(?!.*\\u0000)(?!.*(?:^|/)\\.\\.?($|/))(?!.*(?:^|/)\\.git($|/))(?!.*[?*\\[])(?!.*\\/$).+$",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "media_type",
+        "byte_size",
+        "digest"
+      ],
+      "title": "ArtifactReference",
+      "type": "object"
+    },
+    "EventStreamReference": {
+      "additionalProperties": false,
+      "properties": {
+        "byte_size": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Byte Size",
+          "type": "integer"
+        },
+        "digest": {
+          "maxLength": 71,
+          "minLength": 71,
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "media_type": {
+          "const": "application/x-ndjson",
+          "title": "Media Type",
+          "type": "string"
+        },
+        "path": {
+          "const": "events.ndjson",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "media_type",
+        "byte_size",
+        "digest"
+      ],
+      "title": "EventStreamReference",
+      "type": "object"
+    }
+  },
+  "$id": "urn:ai-native:factory-runner:v1:protocol-manifest",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Acyclic content-addressed inventory published before terminal output.",
+  "properties": {
+    "artifacts": {
+      "contains": {
+        "properties": {
+          "media_type": {
+            "const": "application/x-ndjson"
+          },
+          "path": {
+            "const": "events.ndjson"
+          }
+        },
+        "required": [
+          "path",
+          "media_type"
+        ],
+        "type": "object"
+      },
+      "items": {
+        "$ref": "#/$defs/ArtifactReference"
+      },
+      "maxContains": 1,
+      "maxItems": 20000,
+      "minContains": 1,
+      "minItems": 1,
+      "not": {
+        "contains": {
+          "properties": {
+            "path": {
+              "enum": [
+                "completion.json",
+                "protocol-manifest.json",
+                "result/run-result.json"
+              ]
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "type": "object"
+        }
+      },
+      "title": "Artifacts",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "event_stream": {
+      "$ref": "#/$defs/EventStreamReference"
+    },
+    "protocol": {
+      "const": "factory-runner-protocol/v1",
+      "title": "Protocol",
+      "type": "string"
+    },
+    "schema": {
+      "const": "protocol-manifest/v1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "protocol",
+    "schema",
+    "schema_version",
+    "event_stream",
+    "artifacts"
+  ],
+  "title": "ProtocolManifest",
+  "type": "object"
+}

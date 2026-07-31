@@ -1,0 +1,155 @@
+{
+  "$defs": {
+    "ProtocolManifestReference": {
+      "additionalProperties": false,
+      "properties": {
+        "byte_size": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Byte Size",
+          "type": "integer"
+        },
+        "digest": {
+          "maxLength": 71,
+          "minLength": 71,
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "media_type": {
+          "const": "application/json",
+          "title": "Media Type",
+          "type": "string"
+        },
+        "path": {
+          "const": "protocol-manifest.json",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "media_type",
+        "byte_size",
+        "digest"
+      ],
+      "title": "ProtocolManifestReference",
+      "type": "object"
+    },
+    "RunResultReference": {
+      "additionalProperties": false,
+      "properties": {
+        "byte_size": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Byte Size",
+          "type": "integer"
+        },
+        "digest": {
+          "maxLength": 71,
+          "minLength": 71,
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "media_type": {
+          "const": "application/json",
+          "title": "Media Type",
+          "type": "string"
+        },
+        "path": {
+          "const": "result/run-result.json",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "media_type",
+        "byte_size",
+        "digest"
+      ],
+      "title": "RunResultReference",
+      "type": "object"
+    }
+  },
+  "$id": "urn:ai-native:factory-runner:v1:completion",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Last-write marker binding one result to its immutable output manifest.",
+  "properties": {
+    "completed_at": {
+      "format": "date-time",
+      "maxLength": 30,
+      "minLength": 20,
+      "not": {
+        "pattern": "[\\u0000-\\u001f\\u007f]"
+      },
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$",
+      "title": "Completed At",
+      "type": "string"
+    },
+    "outcome": {
+      "enum": [
+        "succeeded",
+        "no_change",
+        "blocked",
+        "failed",
+        "cancelled",
+        "timed_out",
+        "invalid_input",
+        "checkpoint_incompatible",
+        "policy_denied"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "output_manifest_digest": {
+      "maxLength": 71,
+      "minLength": 71,
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Output Manifest Digest",
+      "type": "string"
+    },
+    "protocol": {
+      "const": "factory-runner-protocol/v1",
+      "title": "Protocol",
+      "type": "string"
+    },
+    "protocol_manifest": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ProtocolManifestReference"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "run_result": {
+      "$ref": "#/$defs/RunResultReference"
+    },
+    "schema": {
+      "const": "completion/v1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "protocol",
+    "schema",
+    "schema_version",
+    "completed_at",
+    "outcome",
+    "output_manifest_digest",
+    "protocol_manifest",
+    "run_result"
+  ],
+  "title": "CompletionManifest",
+  "type": "object"
+}

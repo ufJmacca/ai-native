@@ -7,7 +7,9 @@ from pydantic import BaseModel
 from ai_native.factory_runner.contracts import (
     ChangeSet,
     Checkpoint,
+    CompletionManifest,
     ContextBundle,
+    ProtocolManifest,
     RunnerEvent,
     RunResult,
     RunSpec,
@@ -40,10 +42,22 @@ CONTRACT_SCHEMAS = (
         model=Checkpoint,
     ),
     ContractSchema(
+        schema="completion/v1",
+        filename="completion.schema.json",
+        schema_id="urn:ai-native:factory-runner:v1:completion",
+        model=CompletionManifest,
+    ),
+    ContractSchema(
         schema="context-bundle/v1",
         filename="context-bundle.schema.json",
         schema_id="urn:ai-native:factory-runner:v1:context-bundle",
         model=ContextBundle,
+    ),
+    ContractSchema(
+        schema="protocol-manifest/v1",
+        filename="protocol-manifest.schema.json",
+        schema_id="urn:ai-native:factory-runner:v1:protocol-manifest",
+        model=ProtocolManifest,
     ),
     ContractSchema(
         schema="run-result/v1",

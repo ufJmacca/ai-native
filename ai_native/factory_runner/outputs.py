@@ -30,6 +30,10 @@ from ai_native.factory_runner.contracts.common import (
     RunnerBuildIdentity,
 )
 from ai_native.factory_runner.contracts.run_result import RunOutcome, RunResult
+from ai_native.factory_runner.contracts.terminal_output import (
+    CompletionManifest,
+    ProtocolManifest,
+)
 from ai_native.factory_runner.protocol import contract_document_digest
 from ai_native.factory_runner.redaction import SecretPolicy, SecretScanner
 
@@ -921,13 +925,18 @@ class OutputWriter:
             artifacts = tuple(sorted(self._manifest, key=lambda item: item.path))
             payload = {
                 "protocol": "factory-runner-protocol/v1",
+                "schema": "protocol-manifest/v1",
                 "schema_version": 1,
                 "event_stream": event_stream.model_dump(mode="json"),
                 "artifacts": [
                     reference.model_dump(mode="json") for reference in artifacts
                 ],
             }
-            reference = self.write_json("protocol-manifest.json", payload)
+            manifest = ProtocolManifest.model_validate(payload)
+            reference = self.write_json(
+                "protocol-manifest.json",
+                manifest.model_dump(mode="json"),
+            )
             self._protocol_manifest_reference = reference
             return reference
 
@@ -1035,17 +1044,26 @@ class OutputWriter:
             )
         completion = {
             "protocol": "factory-runner-protocol/v1",
+            "schema": "completion/v1",
             "schema_version": 1,
             "completed_at": result.finished_at,
             "outcome": result.outcome,
             "output_manifest_digest": result.output_manifest_digest,
+            "protocol_manifest": (
+                manifest_reference.model_dump(mode="json")
+                if manifest_reference is not None
+                else None
+            ),
             "run_result": result_reference.model_dump(mode="json"),
         }
-        if manifest_reference is not None:
-            completion["protocol_manifest"] = manifest_reference.model_dump(mode="json")
+        validated_completion = CompletionManifest.model_validate(completion)
         with self._write_lock:
             self._ensure_writable()
-            self.write_json("completion.json", completion, record=False)
+            self.write_json(
+                "completion.json",
+                validated_completion.model_dump(mode="json"),
+                record=False,
+            )
             self._sealed = True
 
 

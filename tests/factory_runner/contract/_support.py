@@ -25,7 +25,9 @@ MODEL_NAMES = (
     "Checkpoint",
     "VerificationEvidence",
     "ChangeSet",
+    "ProtocolManifest",
     "RunResult",
+    "CompletionManifest",
     "RunnerEvent",
 )
 
@@ -122,11 +124,14 @@ def document_envelope(schema: str) -> dict[str, Any]:
 def artifact_ref(
     path: str = "objects/" + ("a" * 64),
     digest: str = DIGEST_A,
+    *,
+    media_type: str = "application/octet-stream",
+    byte_size: int = 3,
 ) -> dict[str, Any]:
     return {
         "path": path,
-        "media_type": "application/octet-stream",
-        "byte_size": 3,
+        "media_type": media_type,
+        "byte_size": byte_size,
         "digest": digest,
     }
 
@@ -472,6 +477,52 @@ def run_result(
     return payload
 
 
+def protocol_manifest() -> dict[str, Any]:
+    event_stream = artifact_ref(
+        "events.ndjson",
+        DIGEST_A,
+        media_type="application/x-ndjson",
+    )
+    return {
+        "protocol": PROTOCOL,
+        "schema": "protocol-manifest/v1",
+        "schema_version": 1,
+        "event_stream": event_stream,
+        "artifacts": sorted(
+            (
+                event_stream,
+                artifact_ref(
+                    "evidence/verification-evidence.json",
+                    DIGEST_B,
+                    media_type="application/json",
+                ),
+            ),
+            key=lambda reference: reference["path"],
+        ),
+    }
+
+
+def completion_manifest() -> dict[str, Any]:
+    return {
+        "protocol": PROTOCOL,
+        "schema": "completion/v1",
+        "schema_version": 1,
+        "completed_at": FINISHED_AT,
+        "outcome": "succeeded",
+        "output_manifest_digest": DIGEST_A,
+        "protocol_manifest": artifact_ref(
+            "protocol-manifest.json",
+            DIGEST_A,
+            media_type="application/json",
+        ),
+        "run_result": artifact_ref(
+            "result/run-result.json",
+            DIGEST_B,
+            media_type="application/json",
+        ),
+    }
+
+
 def runner_event(event_type: str = "StageCompleted") -> dict[str, Any]:
     return {
         "protocol": PROTOCOL,
@@ -495,6 +546,8 @@ BUILDERS: dict[str, Callable[[], dict[str, Any]]] = {
     "Checkpoint": checkpoint,
     "VerificationEvidence": verification_evidence,
     "ChangeSet": change_set,
+    "ProtocolManifest": protocol_manifest,
     "RunResult": run_result,
+    "CompletionManifest": completion_manifest,
     "RunnerEvent": runner_event,
 }
