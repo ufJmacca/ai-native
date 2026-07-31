@@ -407,6 +407,26 @@ def _make_oci_fixture_writable(root: Path) -> None:
                 "compatibility fixture contains a non-regular filesystem entry"
             )
     root.chmod(0o777)
+    for git_marker in root.rglob(".git"):
+        metadata = git_marker.lstat()
+        if stat.S_ISREG(metadata.st_mode):
+            git_marker.chmod(0o444)
+            continue
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise CompatibilityExecutionError(
+                "compatibility fixture contains an unsafe Git marker"
+            )
+        for path in sorted(git_marker.rglob("*"), reverse=True):
+            metadata = path.lstat()
+            if stat.S_ISDIR(metadata.st_mode):
+                path.chmod(0o555)
+            elif stat.S_ISREG(metadata.st_mode):
+                path.chmod(0o444)
+            else:
+                raise CompatibilityExecutionError(
+                    "compatibility fixture contains unsafe Git metadata"
+                )
+        git_marker.chmod(0o555)
 
 
 class CompatibilityRunner:

@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
+import stat
+import subprocess
+import sys
 from typing import Mapping, Sequence
 
 import pytest
@@ -28,9 +32,12 @@ from scripts.run_factory_runner_compatibility import (
     CompatibilityInvocation,
     CompatibilityRunner,
     CertificationInputs,
+    _make_oci_fixture_writable,
     _resolve_inputs,
 )
 from tests.factory_runner.contract._support import run_result
+from tests.factory_runner.integration._fake_agent import AUTHORED_APP
+from tests.factory_runner.integration._support import FAKE_AGENT
 
 
 SOURCE_COMMIT = "a" * 40
@@ -257,6 +264,66 @@ def _inputs(
     if local_runtime_image is not None:
         values["oci_runtime_image"] = local_runtime_image
     return CertificationInputs(**values)
+
+
+def test_oci_fixture_keeps_git_security_metadata_read_only(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "invocation"
+    git_dir = root / "workspace" / ".git"
+    git_dir.mkdir(parents=True)
+    index = git_dir / "index"
+    index.write_bytes(b"fixture-index")
+    authored_file = root / "workspace" / "app.py"
+    authored_file.write_text("greeting = 'before'\n", encoding="utf-8")
+
+    _make_oci_fixture_writable(root)
+
+    assert root.stat().st_mode & 0o002
+    assert authored_file.stat().st_mode & 0o002
+    assert git_dir.stat().st_mode & 0o222 == 0
+    assert index.stat().st_mode & 0o222 == 0
+
+
+def test_compatibility_agent_replaces_foreign_writable_file_with_supported_mode(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "app.py"
+    target.write_text("greeting = 'before'\n", encoding="utf-8")
+    target.chmod(0o666)
+    original_inode = target.stat().st_ino
+    prompt = tmp_path / "prompt.md"
+    prompt.write_text("Implement the deterministic fixture.\n", encoding="utf-8")
+    output = tmp_path / "response.md"
+    environment = {
+        **os.environ,
+        "AINATIVE_OUTPUT_FILE": str(output),
+        "AINATIVE_PROMPT_FILE": str(prompt),
+    }
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(FAKE_AGENT),
+            "--mode",
+            "author",
+            "--marker",
+            str(tmp_path / "agent-calls.log"),
+        ],
+        cwd=workspace,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert target.read_text(encoding="utf-8") == AUTHORED_APP
+    assert stat.S_IMODE(target.stat().st_mode) == 0o644
+    assert target.stat().st_ino != original_inode
+    assert not (workspace / ".app.py.factory-agent.tmp").exists()
 
 
 def test_runner_executes_every_mandatory_fixture_against_exact_artifacts(

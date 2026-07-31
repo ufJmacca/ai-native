@@ -178,7 +178,11 @@ def main() -> int:
         "author-pause-verify",
         "mutate-git-config",
     }:
-        (workspace / "app.py").write_text(AUTHORED_APP, encoding="utf-8")
+        target = workspace / "app.py"
+        temporary = workspace / ".app.py.factory-agent.tmp"
+        temporary.write_text(AUTHORED_APP, encoding="utf-8")
+        temporary.chmod(0o644)
+        temporary.replace(target)
     elif args.mode == "author-add":
         (workspace / "added.txt").write_text("factory addition\n", encoding="utf-8")
     elif args.mode == "author-delete":
