@@ -60,11 +60,7 @@ def _write_state_fixture(
         )
         + "\n"
     ).encode()
-    spec = (
-        f"workspace={workspace}\n"
-        f"run={run_dir}\n"
-        f"private={private_root}\n"
-    ).encode()
+    spec = (f"workspace={workspace}\nrun={run_dir}\nprivate={private_root}\n").encode()
     nested = run_dir / "nested"
     nested.mkdir(mode=0o700)
     empty = run_dir / "empty"
@@ -116,8 +112,7 @@ def test_snapshot_is_deterministic_tokenised_and_checkpoint_addressable(
         "nested",
     ]
     assert all(
-        not Path(entry["path"]).is_absolute()
-        and ".." not in Path(entry["path"]).parts
+        not Path(entry["path"]).is_absolute() and ".." not in Path(entry["path"]).parts
         for entry in first.descriptor["files"]
     )
     object_bytes = b"\n".join(item.content for item in first.objects)
@@ -155,10 +150,7 @@ def test_snapshot_is_deterministic_tokenised_and_checkpoint_addressable(
     assert private_digests.issubset(set(bundle.checkpoint.object_digests))
     assert all(
         reference.path
-        == (
-            "checkpoints/2/objects/"
-            + reference.digest.removeprefix("sha256:")
-        )
+        == ("checkpoints/2/objects/" + reference.digest.removeprefix("sha256:"))
         for reference in bundle.checkpoint.artifact_manifest
     )
 
@@ -174,9 +166,7 @@ def test_restore_rebinds_tokens_beneath_a_fresh_private_root(
         workspace_root=old_workspace,
     )
     objects = {
-        f"checkpoints/4/objects/{item.digest.removeprefix('sha256:')}": (
-            item.content
-        )
+        f"checkpoints/4/objects/{item.digest.removeprefix('sha256:')}": (item.content)
         for item in snapshot.objects
     }
     new_private = tmp_path / "new" / "private"
@@ -195,8 +185,7 @@ def test_restore_rebinds_tokens_beneath_a_fresh_private_root(
 
     assert restored == new_run.resolve()
     assert sorted(
-        path.relative_to(new_run).as_posix()
-        for path in new_run.rglob("*")
+        path.relative_to(new_run).as_posix() for path in new_run.rglob("*")
     ) == ["empty", "nested", "nested/spec.md", "state.json"]
     assert stat.S_IMODE((new_run / "state.json").stat().st_mode) == 0o600
     assert stat.S_IMODE((new_run / "nested/spec.md").stat().st_mode) == 0o644
@@ -275,6 +264,40 @@ def test_snapshot_rejects_secret_or_size_overrun_without_echoing_content(
         )
 
 
+def test_snapshot_rejects_unsafe_private_root_mode(
+    tmp_path: Path,
+) -> None:
+    private_root, run_dir, workspace = _roots(tmp_path)
+    private_root.chmod(0o777)
+
+    with pytest.raises(PrivateStateError, match="mode|unsafe"):
+        snapshot_private_run_directory(
+            run_dir,
+            private_root=private_root,
+            workspace_root=workspace,
+        )
+
+
+def test_snapshot_bounds_directory_only_state(
+    tmp_path: Path,
+) -> None:
+    private_root, run_dir, workspace = _roots(tmp_path)
+    for name in ("one", "two", "three"):
+        (run_dir / name).mkdir(mode=0o700)
+
+    with pytest.raises(PrivateStateError, match="count|limit"):
+        snapshot_private_run_directory(
+            run_dir,
+            private_root=private_root,
+            workspace_root=workspace,
+            limits=PrivateStateLimits(
+                max_files=2,
+                max_file_bytes=8,
+                max_total_bytes=8,
+            ),
+        )
+
+
 @pytest.mark.parametrize("damage", ["traversal", "digest", "unresolved-token"])
 def test_restore_rejects_untrusted_state_before_mutating_destination(
     tmp_path: Path,
@@ -298,10 +321,17 @@ def test_restore_rejects_untrusted_state_before_mutating_destination(
         first = next(iter(objects))
         objects[first] = b"x" * len(objects[first])
     else:
-        first = next(iter(objects))
-        objects[first] += b"@{FACTORY_UNKNOWN_ROOT}@"
-        descriptor["files"][0]["digest"] = sha256_digest(objects[first])
-        descriptor["files"][0]["byte_size"] = len(objects[first])
+        entry = descriptor["files"][0]
+        first = next(
+            path
+            for path, content in objects.items()
+            if sha256_digest(content) == entry["object_digest"]
+        )
+        suffix = b"@{FACTORY_UNKNOWN_ROOT}@"
+        objects[first] += suffix
+        entry["object_digest"] = sha256_digest(objects[first])
+        entry["byte_size"] = len(objects[first])
+        descriptor["total_bytes"] += len(suffix)
     new_private = tmp_path / "new" / "private"
     new_private.mkdir(mode=0o700, parents=True)
     new_workspace = tmp_path / "new" / "workspace"

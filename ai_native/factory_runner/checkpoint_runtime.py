@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import re
 from types import MappingProxyType
 from typing import Any
@@ -27,6 +27,7 @@ from ai_native.factory_runner.redaction import SecretPolicy, SecretScanner
 
 
 _MAX_CHECKPOINT_OBJECT_BYTES = 16 * 1024 * 1024
+_MAX_CHECKPOINT_TOTAL_OBJECT_BYTES = 64 * 1024 * 1024
 _ABSOLUTE_POSIX_PATH = re.compile(r"(?<![A-Za-z0-9])/(?:[^/\s]+/)*[^/\s]+")
 _ABSOLUTE_WINDOWS_PATH = re.compile(r"(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\)")
 _HOME_RELATIVE_PATH = re.compile(r"(?<![A-Za-z0-9])~/")
@@ -54,6 +55,37 @@ _CREDENTIAL_KEY_MARKERS = frozenset(
 
 class CheckpointRuntimeError(FactoryPolicyViolation):
     """A safe-boundary checkpoint cannot be represented without policy loss."""
+
+
+@dataclass(frozen=True, slots=True)
+class CheckpointStateObject:
+    """Detached caller state whose durable path is derived only from its bytes."""
+
+    content: bytes = field(repr=False)
+    media_type: str = "application/octet-stream"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.content, bytes):
+            raise TypeError("checkpoint state object content must be bytes")
+        if len(self.content) > _MAX_CHECKPOINT_OBJECT_BYTES:
+            raise ValueError("checkpoint state object exceeds its size limit")
+        try:
+            ArtifactReference(
+                path="checkpoint-state-object",
+                media_type=self.media_type,
+                byte_size=len(self.content),
+                digest=sha256_digest(self.content),
+            )
+        except ValueError as exc:
+            raise ValueError("checkpoint state object media type is invalid") from exc
+
+    @property
+    def byte_size(self) -> int:
+        return len(self.content)
+
+    @property
+    def digest(self) -> str:
+        return sha256_digest(self.content)
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,6 +257,7 @@ def build_checkpoint_bundle(
     workflow_state: Mapping[str, Any],
     consumed: ResourceBudget,
     workspace_patch: bytes | None = None,
+    state_objects: Sequence[CheckpointStateObject] = (),
     evidence_refs: Sequence[ArtifactReference] = (),
     decisions: Sequence[str] = (),
     assumptions: Sequence[str] = (),
@@ -257,6 +290,14 @@ def build_checkpoint_bundle(
         and len(workspace_patch) > _MAX_CHECKPOINT_OBJECT_BYTES
     ):
         raise CheckpointRuntimeError("checkpoint workspace patch exceeds its limit")
+    if isinstance(state_objects, str | bytes | bytearray):
+        raise TypeError("state_objects must be an ordered sequence")
+    durable_state_objects = tuple(state_objects)
+    if any(
+        not isinstance(state_object, CheckpointStateObject)
+        for state_object in durable_state_objects
+    ):
+        raise TypeError("state_objects entries must be CheckpointStateObject instances")
     scanner = secret_scanner or SecretScanner(SecretPolicy())
     if not isinstance(scanner, SecretScanner):
         raise TypeError("secret_scanner must be a SecretScanner or null")
@@ -318,6 +359,12 @@ def build_checkpoint_bundle(
         if workspace_patch is not None
         else None
     )
+    for state_object in durable_state_objects:
+        add_object(state_object.content, state_object.media_type)
+    if sum(len(content) for content in object_payloads.values()) > (
+        _MAX_CHECKPOINT_TOTAL_OBJECT_BYTES
+    ):
+        raise CheckpointRuntimeError("checkpoint objects exceed their total size limit")
     manifest = tuple(references[path] for path in sorted(references))
     object_digests = tuple(reference.digest for reference in manifest)
 
@@ -408,6 +455,7 @@ def write_checkpoint_boundary(
     workflow_state: Mapping[str, Any],
     consumed: ResourceBudget,
     workspace_patch: bytes | None = None,
+    state_objects: Sequence[CheckpointStateObject] = (),
     evidence_refs: Sequence[ArtifactReference] = (),
     decisions: Sequence[str] = (),
     assumptions: Sequence[str] = (),
@@ -429,6 +477,7 @@ def write_checkpoint_boundary(
         workflow_state=workflow_state,
         consumed=consumed,
         workspace_patch=workspace_patch,
+        state_objects=state_objects,
         evidence_refs=evidence_refs,
         decisions=decisions,
         assumptions=assumptions,
@@ -451,6 +500,7 @@ def write_checkpoint_boundary(
 __all__ = [
     "CheckpointBundle",
     "CheckpointRuntimeError",
+    "CheckpointStateObject",
     "WrittenCheckpoint",
     "build_checkpoint_bundle",
     "write_checkpoint_boundary",
