@@ -34,13 +34,14 @@ def _inputs(
     output_dir: Path,
     *,
     operation: str = "author",
+    commands: tuple[tuple[str, ...], ...] = (COMMAND, SECOND_COMMAND),
 ) -> Any:
     return SimpleNamespace(
         output_dir=output_dir,
         run_spec=SimpleNamespace(
             operation=operation,
             policy=SimpleNamespace(
-                allowed_commands=(COMMAND, SECOND_COMMAND),
+                allowed_commands=commands,
                 allowed_environment_keys=("PATH",),
             ),
         ),
@@ -170,19 +171,93 @@ def test_phase_snapshot_captures_exact_refs_reports_and_deduplicated_objects(
 
     assert PHASE_EVIDENCE_WORKFLOW_KEY == "phase_evidence"
     assert snapshot.descriptor["schema"] == "phase-evidence-state/v1"
-    assert [outcome["phase"] for outcome in snapshot.descriptor["outcomes"]] == [
-        "red",
-        "green",
-    ]
+    outcome_state = snapshot.descriptor["outcome_state"]
+    assert set(outcome_state) == {"byte_size", "object_digest"}
+    outcome_object = next(
+        item
+        for item in snapshot.objects
+        if item.digest == outcome_state["object_digest"]
+    )
+    assert outcome_object.byte_size == outcome_state["byte_size"]
+    assert [
+        outcome["phase"]
+        for outcome in json.loads(outcome_object.content)["outcomes"]
+    ] == ["red", "green"]
     assert [
         artifact["path"] for artifact in snapshot.descriptor["artifacts"]
     ] == sorted(content)
     assert {artifact["digest"] for artifact in snapshot.descriptor["artifacts"]} == {
         sha256_digest(payload) for payload in content.values()
     }
-    assert {item.content for item in snapshot.objects} == set(content.values())
-    assert len(snapshot.objects) < len(content)
+    assert set(content.values()).issubset(
+        {item.content for item in snapshot.objects}
+    )
+    assert len(snapshot.objects) <= len(content)
     assert all(item.digest == sha256_digest(item.content) for item in snapshot.objects)
+
+
+def test_absolute_admitted_argv_is_detached_from_portable_workflow_state(
+    tmp_path: Path,
+) -> None:
+    absolute_command = (
+        "/workspace/.venv/bin/python",
+        "-m",
+        "pytest",
+    )
+    source = tmp_path / "source"
+    source.mkdir()
+    writer = OutputWriter(source)
+    inputs = _inputs(source, commands=(absolute_command,))
+    stdout = _reference(
+        writer,
+        "evidence/objects/red-command-001.stdout",
+        b"",
+    )
+    stderr = _reference(
+        writer,
+        "evidence/objects/red-command-001.stderr",
+        b"AssertionError\n",
+    )
+    outcome = PhaseExecutionOutcome(
+        phase="red",
+        passed=True,
+        cancelled=False,
+        timed_out=False,
+        items=(
+            _item(
+                phase="red",
+                command=absolute_command,
+                stdout=stdout,
+                stderr=stderr,
+            ),
+        ),
+    )
+
+    snapshot = snapshot_phase_evidence(
+        inputs,
+        writer=writer,
+        phase_outcomes=(outcome,),
+    )
+
+    descriptor_bytes = canonical_json_bytes(snapshot.descriptor)
+    assert absolute_command[0].encode() not in descriptor_bytes
+    outcome_state = snapshot.descriptor["outcome_state"]
+    outcome_object = next(
+        item
+        for item in snapshot.objects
+        if item.digest == outcome_state["object_digest"]
+    )
+    assert absolute_command[0].encode() in outcome_object.content
+
+    destination = tmp_path / "destination"
+    destination.mkdir()
+    restored = restore_phase_evidence(
+        _inputs(destination, commands=(absolute_command,)),
+        writer=OutputWriter(destination),
+        descriptor=snapshot.descriptor,
+        objects=_object_mapping(snapshot),
+    )
+    assert restored[0].items[0].command == absolute_command
 
 
 def test_phase_restore_recreates_exact_outcomes_and_writer_artifacts(
