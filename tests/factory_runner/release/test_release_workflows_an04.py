@@ -15,6 +15,9 @@ RELEASE_PLEASE_WORKFLOW = (
 FACTORY_RELEASE_WORKFLOW = (
     REPOSITORY_ROOT / ".github" / "workflows" / "factory-runner-release.yml"
 )
+RELEASE_PR_SYNC_WORKFLOW = (
+    REPOSITORY_ROOT / ".github" / "workflows" / "release-pr-uv-lock.yml"
+)
 WORKFLOW_DIRECTORY = REPOSITORY_ROOT / ".github" / "workflows"
 
 
@@ -59,6 +62,66 @@ def test_release_please_creates_a_draft_and_arms_protected_auto_merge() -> None:
         "attestations": "write",
         "artifact-metadata": "write",
     }
+
+
+def test_release_pr_generation_is_automatic_and_write_token_isolated() -> None:
+    workflow = _workflow(RELEASE_PR_SYNC_WORKFLOW)
+    assert workflow["permissions"] == {
+        "contents": "read",
+        "pull-requests": "read",
+    }
+
+    generator = workflow["jobs"]["generate-release-files"]
+    assert generator["permissions"]["contents"] == "read"
+    assert "RELEASE_PLEASE_TOKEN" not in json.dumps(generator)
+    checkout = next(
+        step for step in generator["steps"] if step.get("name") == "Check out release PR"
+    )
+    assert checkout["with"]["ref"] == (
+        "${{ github.event.pull_request.head.sha }}"
+    )
+    assert checkout["with"]["persist-credentials"] == "false"
+    generator_commands = "\n".join(
+        step.get("run", "") for step in generator["steps"]
+    )
+    assert "uv lock" in generator_commands
+    assert (
+        "scripts/generate_factory_runner_goldens.py --write"
+        in generator_commands
+    )
+    assert "uv.lock" in generator_commands
+    assert "tests/fixtures/factory_runner/runtime-golden/" in generator_commands
+    upload = next(
+        step for step in generator["steps"] if step.get("name") == "Upload patch"
+    )
+    assert upload["uses"] == (
+        "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+    )
+
+    publisher = workflow["jobs"]["sync-uv-lock"]
+    assert publisher["needs"] == "generate-release-files"
+    assert publisher["permissions"] == {
+        "contents": "write",
+        "pull-requests": "read",
+    }
+    publisher_rendered = json.dumps(publisher)
+    assert "RELEASE_PLEASE_TOKEN" in publisher_rendered
+    assert "uv run" not in publisher_rendered
+    assert "python " not in publisher_rendered
+    download = next(
+        step for step in publisher["steps"] if step.get("name") == "Download patch"
+    )
+    assert download["uses"] == (
+        "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
+    )
+    publisher_commands = "\n".join(
+        step.get("run", "") for step in publisher["steps"]
+    )
+    assert "git apply --check" in publisher_commands
+    assert "git apply --index" in publisher_commands
+    assert "uv.lock" in publisher_commands
+    assert "tests/fixtures/factory_runner/runtime-golden/" in publisher_commands
+    assert "--force-with-lease" in publisher_commands
 
 
 def test_release_workflow_is_automatic_atomic_and_uses_immutable_actions() -> None:
