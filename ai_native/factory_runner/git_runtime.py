@@ -29,7 +29,12 @@ class FactoryGitRuntime:
     process_runner: FactoryProcessRunner
     deadline: Deadline
 
-    def run(self, *arguments: str) -> bytes:
+    def _run(
+        self,
+        arguments: tuple[str, ...],
+        *,
+        accepted_returncodes: frozenset[int],
+    ) -> bytes:
         command = resolve_trusted_command(
             ("git", *arguments),
             environment=self.environment,
@@ -47,12 +52,20 @@ class FactoryGitRuntime:
             raise FactoryGitTimedOut("runner-owned Git inspection timed out")
         if (
             result.termination_reason != "exited"
-            or result.returncode != 0
+            or result.returncode not in accepted_returncodes
             or result.stdout_truncated
             or result.stderr_truncated
         ):
             raise FactoryGitError("runner-owned Git inspection failed")
         return result.stdout_bytes
+
+    def run(self, *arguments: str) -> bytes:
+        return self._run(tuple(arguments), accepted_returncodes=frozenset({0}))
+
+    def run_diff(self, *arguments: str) -> bytes:
+        """Run Git diff plumbing, where exit one means differences were found."""
+
+        return self._run(tuple(arguments), accepted_returncodes=frozenset({0, 1}))
 
 
 __all__ = [

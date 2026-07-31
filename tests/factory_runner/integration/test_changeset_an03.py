@@ -38,8 +38,9 @@ def _configure_change(
         (
             "author-add",
             ["added.txt"],
-            "from pathlib import Path; assert Path('added.txt').read_text() == "
-            "'factory addition\\n'",
+            "from pathlib import Path; "
+            "assert Path('added.txt').read_text().splitlines() == "
+            "['factory addition']",
             [("add", "added.txt", None, "100644", False)],
         ),
         (

@@ -7,14 +7,16 @@ import hashlib
 import os
 from pathlib import Path
 import stat
-from typing import Any
+from typing import Any, cast
 
 from ai_native import __version__
 from ai_native.factory_runner.admission import ValidatedInputs
 from ai_native.factory_runner.canonical import sha256_digest
 from ai_native.factory_runner.contracts.change_set import (
+    ChangeOperation,
     ChangeSet,
     ChangedFile,
+    RegularFileMode,
     changed_file_manifest_digest,
 )
 from ai_native.factory_runner.contracts.common import ArtifactReference
@@ -32,6 +34,8 @@ class ChangePolicyError(RuntimeError):
 
 _MAX_SECURITY_METADATA_BYTES = 16 * 1024 * 1024
 _MAX_SECURITY_METADATA_ENTRIES = 20_000
+_MAX_CHANGED_FILE_BYTES = 16 * 1024 * 1024
+_MAX_CHANGED_BYTES = 64 * 1024 * 1024
 _COMMON_SECURITY_PATHS = (
     "config",
     "hooks",
@@ -235,6 +239,7 @@ def _status_entries(
         "--porcelain=v1",
         "-z",
         "--untracked-files=all",
+        "--no-renames",
     )
     records = [record for record in raw.split(b"\0") if record]
     entries: list[tuple[str, str]] = []
@@ -246,16 +251,10 @@ def _status_entries(
         path = decoded[3:]
         if status_code[0] not in {" ", "?"}:
             raise ChangePolicyError("factory authoring may not stage changes")
-        if status_code == "??":
-            raise ChangePolicyError(
-                "AN-02 minimal ChangeSet supports tracked modifications only"
-            )
-        if status_code[1] != "M":
-            raise ChangePolicyError(
-                "AN-02 minimal ChangeSet supports tracked modifications only"
-            )
+        if status_code not in {" M", " D", "??"}:
+            raise ChangePolicyError("unsupported repository status")
         entries.append((status_code, path))
-    return entries
+    return sorted(entries, key=lambda item: item[1].encode("utf-8"))
 
 
 def validate_author_boundary(
@@ -296,6 +295,14 @@ def _restore_tracked_file(
         parent /= part
         try:
             metadata = parent.lstat()
+        except FileNotFoundError:
+            try:
+                parent.mkdir(mode=0o700)
+                metadata = parent.lstat()
+            except OSError as exc:
+                raise ChangePolicyError(
+                    "changed path parent is unavailable"
+                ) from exc
         except OSError as exc:
             raise ChangePolicyError("changed path parent is unavailable") from exc
         if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
@@ -304,18 +311,22 @@ def _restore_tracked_file(
     target = parent / relative.name
     try:
         metadata = target.lstat()
+    except FileNotFoundError:
+        metadata = None
     except OSError as exc:
         raise ChangePolicyError("changed file is unavailable for restore") from exc
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+    if metadata is not None and (
+        stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode)
+    ):
         raise ChangePolicyError("changed file is unsafe to restore")
 
-    flags = os.O_WRONLY | os.O_TRUNC
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
     if hasattr(os, "O_CLOEXEC"):
         flags |= os.O_CLOEXEC
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     try:
-        descriptor = os.open(target, flags)
+        descriptor = os.open(target, flags, 0o600)
     except OSError as exc:
         raise ChangePolicyError("changed file could not be restored") from exc
     try:
@@ -335,6 +346,31 @@ def _restore_tracked_file(
         os.close(descriptor)
 
 
+def _remove_untracked_file(workspace: Path, path: str) -> None:
+    relative = Path(path)
+    if (
+        relative.is_absolute()
+        or not relative.parts
+        or any(part in {"", ".", ".."} for part in relative.parts)
+    ):
+        raise ChangePolicyError("untracked path is unsafe to restore")
+    target = workspace / relative
+    try:
+        metadata = target.lstat()
+    except OSError as exc:
+        raise ChangePolicyError("untracked path is unavailable for restore") from exc
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        raise ChangePolicyError("untracked path is unsafe to restore")
+    target.unlink()
+    parent = target.parent
+    while parent != workspace:
+        try:
+            parent.rmdir()
+        except OSError:
+            break
+        parent = parent.parent
+
+
 def restore_clean_author_workspace(
     inputs: ValidatedInputs,
     *,
@@ -346,13 +382,16 @@ def restore_clean_author_workspace(
     if capture_repository_security_snapshot(git_runtime) != security_snapshot:
         raise ChangePolicyError("unsafe Git metadata change prevents workspace restore")
     entries = _status_entries(git_runtime)
-    for _status, path in entries:
-        _restore_tracked_file(
-            workspace=inputs.workspace,
-            path=path,
-            content=_git(git_runtime, "show", f"HEAD:{path}"),
-            mode=_previous_mode(git_runtime, path),
-        )
+    for status_code, path in entries:
+        if status_code == "??":
+            _remove_untracked_file(inputs.workspace, path)
+        else:
+            _restore_tracked_file(
+                workspace=inputs.workspace,
+                path=path,
+                content=_git(git_runtime, "show", f"HEAD:{path}"),
+                mode=_previous_mode(git_runtime, path),
+            )
     validate_author_boundary(
         inputs,
         git_runtime=git_runtime,
@@ -362,24 +401,260 @@ def restore_clean_author_workspace(
         raise ChangePolicyError("author workspace restore was incomplete")
 
 
-def _file_mode(path: Path) -> str:
-    metadata = path.lstat()
-    if not stat.S_ISREG(metadata.st_mode):
-        raise ChangePolicyError("changed paths must be regular files")
-    return "100755" if metadata.st_mode & stat.S_IXUSR else "100644"
-
-
 def _previous_mode(
     git_runtime: FactoryGitRuntime,
     path: str,
-) -> str:
+) -> RegularFileMode:
     raw = _git(git_runtime, "ls-tree", "-z", "HEAD", "--", path)
     if not raw:
         raise ChangePolicyError("changed path is not present at the declared base")
     mode = raw.split(b" ", 1)[0].decode("ascii")
     if mode not in {"100644", "100755"}:
         raise ChangePolicyError("unsupported base file mode")
-    return mode
+    return cast(RegularFileMode, mode)
+
+
+@dataclass(frozen=True, slots=True)
+class _FileState:
+    path: str
+    content: bytes
+    mode: RegularFileMode
+
+    @property
+    def digest(self) -> str:
+        return sha256_digest(self.content)
+
+    @property
+    def binary(self) -> bool:
+        return b"\0" in self.content
+
+
+def _read_resulting_file(workspace: Path, path: str) -> _FileState:
+    relative = Path(path)
+    if (
+        relative.is_absolute()
+        or not relative.parts
+        or any(part in {"", ".", ".."} for part in relative.parts)
+    ):
+        raise ChangePolicyError("changed path is not normalised")
+    current = workspace
+    for part in relative.parts[:-1]:
+        current /= part
+        try:
+            metadata = current.lstat()
+        except OSError as exc:
+            raise ChangePolicyError("changed path parent is unavailable") from exc
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            raise ChangePolicyError("changed path parent is unsafe")
+
+    target = workspace / relative
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(target, flags)
+    except OSError as exc:
+        raise ChangePolicyError("changed file is unavailable") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ChangePolicyError("changed paths must be regular files")
+        if metadata.st_size > _MAX_CHANGED_FILE_BYTES:
+            raise ChangePolicyError("changed file exceeds the byte limit")
+        permissions = stat.S_IMODE(metadata.st_mode)
+        if permissions not in {0o644, 0o755}:
+            raise ChangePolicyError("changed path has an unsupported file mode")
+        chunks: list[bytes] = []
+        consumed = 0
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            consumed += len(chunk)
+            if consumed > _MAX_CHANGED_FILE_BYTES:
+                raise ChangePolicyError("changed file exceeds the byte limit")
+            chunks.append(chunk)
+    finally:
+        os.close(descriptor)
+    return _FileState(
+        path=path,
+        content=b"".join(chunks),
+        mode="100755" if permissions == 0o755 else "100644",
+    )
+
+
+def _read_base_file(
+    git_runtime: FactoryGitRuntime,
+    path: str,
+) -> _FileState:
+    content = _git(git_runtime, "show", f"HEAD:{path}")
+    if len(content) > _MAX_CHANGED_FILE_BYTES:
+        raise ChangePolicyError("base file exceeds the byte limit")
+    return _FileState(
+        path=path,
+        content=content,
+        mode=_previous_mode(git_runtime, path),
+    )
+
+
+def _changed_file(
+    *,
+    path: str,
+    operation: ChangeOperation,
+    previous: _FileState | None,
+    resulting: _FileState | None,
+    previous_path: str | None = None,
+) -> ChangedFile:
+    return ChangedFile(
+        path=path,
+        operation=operation,
+        previous_path=previous_path,
+        previous_blob_digest=previous.digest if previous is not None else None,
+        resulting_blob_digest=resulting.digest if resulting is not None else None,
+        previous_mode=previous.mode if previous is not None else None,
+        resulting_mode=resulting.mode if resulting is not None else None,
+        binary=(
+            (previous.binary if previous is not None else False)
+            or (resulting.binary if resulting is not None else False)
+        ),
+        allowed_path_decision="allowed",
+    )
+
+
+def _full_changed_file_manifest(
+    inputs: ValidatedInputs,
+    *,
+    git_runtime: FactoryGitRuntime,
+    entries: list[tuple[str, str]],
+) -> list[ChangedFile]:
+    deleted: dict[str, _FileState] = {}
+    added: dict[str, _FileState] = {}
+    modified: list[ChangedFile] = []
+    total_bytes = 0
+
+    for status_code, path in entries:
+        if not _path_is_allowed(inputs, path):
+            raise ChangePolicyError("repository change is outside allowed paths")
+        if status_code == " D":
+            state = _read_base_file(git_runtime, path)
+            deleted[path] = state
+            total_bytes += len(state.content)
+        elif status_code == "??":
+            state = _read_resulting_file(inputs.workspace, path)
+            added[path] = state
+            total_bytes += len(state.content)
+        else:
+            previous = _read_base_file(git_runtime, path)
+            resulting = _read_resulting_file(inputs.workspace, path)
+            total_bytes += len(previous.content) + len(resulting.content)
+            modified.append(
+                _changed_file(
+                    path=path,
+                    operation="modify",
+                    previous=previous,
+                    resulting=resulting,
+                )
+            )
+        if total_bytes > _MAX_CHANGED_BYTES:
+            raise ChangePolicyError("changed files exceed the aggregate byte limit")
+
+    rename_pairs: list[tuple[str, str]] = []
+    deleted_by_digest: dict[str, list[str]] = {}
+    added_by_digest: dict[str, list[str]] = {}
+    for path, state in deleted.items():
+        deleted_by_digest.setdefault(state.digest, []).append(path)
+    for path, state in added.items():
+        added_by_digest.setdefault(state.digest, []).append(path)
+    for digest in sorted(set(deleted_by_digest).intersection(added_by_digest)):
+        sources = sorted(deleted_by_digest[digest], key=lambda value: value.encode())
+        targets = sorted(added_by_digest[digest], key=lambda value: value.encode())
+        rename_pairs.extend(zip(sources, targets, strict=False))
+
+    changed_files = list(modified)
+    paired_sources = {source for source, _target in rename_pairs}
+    paired_targets = {target for _source, target in rename_pairs}
+    for source, target in rename_pairs:
+        if not _path_is_allowed(inputs, source) or not _path_is_allowed(inputs, target):
+            raise ChangePolicyError("repository rename is outside allowed paths")
+        changed_files.append(
+            _changed_file(
+                path=target,
+                operation="rename",
+                previous=deleted[source],
+                resulting=added[target],
+                previous_path=source,
+            )
+        )
+    for path, previous in deleted.items():
+        if path not in paired_sources:
+            changed_files.append(
+                _changed_file(
+                    path=path,
+                    operation="delete",
+                    previous=previous,
+                    resulting=None,
+                )
+            )
+    for path, resulting in added.items():
+        if path not in paired_targets:
+            changed_files.append(
+                _changed_file(
+                    path=path,
+                    operation="add",
+                    previous=None,
+                    resulting=resulting,
+                )
+            )
+    return sorted(
+        changed_files,
+        key=lambda item: (
+            item.path.encode("utf-8"),
+            (item.previous_path or "").encode("utf-8"),
+        ),
+    )
+
+
+def _deterministic_patch(
+    git_runtime: FactoryGitRuntime,
+    *,
+    entries: list[tuple[str, str]],
+) -> bytes:
+    fragments: list[bytes] = []
+    tracked_patch = _git(
+        git_runtime,
+        "diff",
+        "--binary",
+        "--full-index",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-renames",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        "HEAD",
+        "--",
+    )
+    if tracked_patch:
+        fragments.append(tracked_patch)
+    for status_code, path in entries:
+        if status_code != "??":
+            continue
+        patch = git_runtime.run_diff(
+            "diff",
+            "--no-index",
+            "--binary",
+            "--full-index",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            "--",
+            "/dev/null",
+            path,
+        )
+        if not patch:
+            raise ChangePolicyError("untracked file has no corresponding patch")
+        fragments.append(patch)
+    return b"".join(fragments)
 
 
 def build_change_set(
@@ -395,7 +670,15 @@ def build_change_set(
     evidence_passed = (
         evidence.overall_status == "passed"
         and bool(evidence.items)
-        and all(item.actual_status == "passed" for item in evidence.items)
+        and all(
+            (
+                item.phase == "red"
+                and item.actual_status == "failed"
+                and item.failure_classification == "expected_behavioral_failure"
+            )
+            or (item.phase != "red" and item.actual_status == "passed")
+            for item in evidence.items
+        )
     )
     if not evidence_passed:
         raise ChangePolicyError("ChangeSet requires passing deterministic evidence")
@@ -407,45 +690,12 @@ def build_change_set(
     if not entries:
         return None, None
 
-    changed_files: list[ChangedFile] = []
-    for _status, path in sorted(entries, key=lambda item: item[1]):
-        if not _path_is_allowed(inputs, path):
-            raise ChangePolicyError("repository change is outside allowed paths")
-        current_path = inputs.workspace / path
-        if current_path.is_symlink():
-            raise ChangePolicyError("symbolic links are not supported in AN-02")
-        previous = _git(git_runtime, "show", f"HEAD:{path}")
-        resulting = current_path.read_bytes()
-        changed_files.append(
-            ChangedFile(
-                path=path,
-                operation="modify",
-                previous_path=None,
-                previous_blob_digest=sha256_digest(previous),
-                resulting_blob_digest=sha256_digest(resulting),
-                previous_mode=_previous_mode(
-                    git_runtime,
-                    path,
-                ),
-                resulting_mode=_file_mode(current_path),
-                binary=b"\0" in previous or b"\0" in resulting,
-                allowed_path_decision="allowed",
-            )
-        )
-
-    patch = _git(
-        git_runtime,
-        "diff",
-        "--binary",
-        "--full-index",
-        "--no-color",
-        "--no-ext-diff",
-        "--no-textconv",
-        "--src-prefix=a/",
-        "--dst-prefix=b/",
-        "HEAD",
-        "--",
+    changed_files = _full_changed_file_manifest(
+        inputs,
+        git_runtime=git_runtime,
+        entries=entries,
     )
+    patch = _deterministic_patch(git_runtime, entries=entries)
     if not patch:
         raise ChangePolicyError("changed-file manifest has no corresponding patch")
     patch_reference = writer.write_bytes(
@@ -484,8 +734,7 @@ def build_change_set(
         "outcome_summary": "Prepared an uncommitted factory-authoring change set.",
         "assumptions": [],
         "residual_risks": [
-            "AN-02 deterministic commands are not mapped to individual criteria.",
-            "AN-03 will harden full add/delete/rename and binary patch handling.",
+            "Deterministic commands are not mapped to individual criteria.",
         ],
         "policy_observations": [
             "No commit, push, pull request, or publication operation was performed."
