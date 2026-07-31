@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 import hashlib
 from pathlib import Path
@@ -65,6 +65,14 @@ class FactoryAuthorTimedOut(RuntimeError):
 @dataclass(frozen=True, slots=True)
 class AuthorOutcome:
     completed_stages: tuple[str, ...]
+    agent_turns: int
+    model_tokens: int
+
+
+@dataclass(frozen=True, slots=True)
+class AuthorUsage:
+    agent_turns: int
+    model_tokens: int
 
 
 class _BudgetedGatewayAdapter:
@@ -76,12 +84,31 @@ class _BudgetedGatewayAdapter:
         *,
         max_turns: int,
         max_tokens: int,
+        initial_turns: int = 0,
+        initial_tokens: int = 0,
+        usage_event: Callable[[AuthorUsage], None] | None = None,
     ) -> None:
+        if not 0 <= initial_turns <= max_turns:
+            raise FactoryAuthorError("initial agent turns exceed the attempt budget")
+        if not 0 <= initial_tokens <= max_tokens:
+            raise FactoryAuthorError("initial model tokens exceed the attempt budget")
         self._adapter = adapter
         self._max_turns = max_turns
         self._max_tokens = max_tokens
-        self._turns = 0
-        self._estimated_tokens = 0
+        self._turns = initial_turns
+        self._estimated_tokens = initial_tokens
+        self._usage_event = usage_event
+
+    @property
+    def usage(self) -> AuthorUsage:
+        return AuthorUsage(
+            agent_turns=self._turns,
+            model_tokens=self._estimated_tokens,
+        )
+
+    def _notify_usage(self) -> None:
+        if self._usage_event is not None:
+            self._usage_event(self.usage)
 
     def supports_image_inputs(self) -> bool:
         return self._adapter.supports_image_inputs()
@@ -104,6 +131,7 @@ class _BudgetedGatewayAdapter:
             raise FactoryWorkflowError("factory gateway token budget exhausted")
         self._turns += 1
         self._estimated_tokens += prompt_tokens
+        self._notify_usage()
         result = self._adapter.run(
             prompt,
             cwd,
@@ -111,6 +139,7 @@ class _BudgetedGatewayAdapter:
             image_paths=image_paths,
         )
         self._estimated_tokens += self._token_estimate(result.text)
+        self._notify_usage()
         if self._estimated_tokens > self._max_tokens:
             raise FactoryWorkflowError("factory gateway token budget exhausted")
         return result
@@ -169,7 +198,7 @@ def _factory_config(inputs: ValidatedInputs, private_root: Path) -> AppConfig:
     return config
 
 
-def _private_run_directory(inputs: ValidatedInputs, scratch_root: Path) -> Path:
+def private_run_directory(inputs: ValidatedInputs, scratch_root: Path) -> Path:
     identity = inputs.run_spec.identity
     opaque = f"{identity.run_id}\0{identity.attempt_id}".encode()
     safe_name = hashlib.sha256(opaque).hexdigest()
@@ -279,6 +308,11 @@ def execute_author(
     restore_workspace: Callable[[], None],
     progress: Callable[[str], None],
     stage_event: Callable[[str, str], None] | None = None,
+    usage_event: Callable[[AuthorUsage], None] | None = None,
+    completed_stages: Sequence[str] = (),
+    resume_existing: bool = False,
+    initial_agent_turns: int = 0,
+    initial_model_tokens: int = 0,
 ) -> AuthorOutcome:
     """Run only explicitly admitted reusable stages in canonical order."""
 
@@ -287,20 +321,30 @@ def execute_author(
         environment=child_environment,
         prohibited_roots=(inputs.workspace, inputs.output_dir),
     )
-    private_run_dir = _private_run_directory(inputs, scratch_root)
+    private_run_dir = private_run_directory(inputs, scratch_root)
     gateway_temp_root = scratch_root / "gateway"
     private_run_dir.mkdir(parents=True, exist_ok=True)
     spec_path = private_run_dir / "spec.md"
-    _write_factory_spec(inputs, spec_path)
 
     state_store = StateStore(private_run_dir.parent, registry=None)
-    state = _initial_state(
-        inputs,
-        run_dir=private_run_dir,
-        spec_path=spec_path,
-    )
-    state_store.save(state)
-    _materialise_context_report(inputs, private_run_dir)
+    if resume_existing:
+        try:
+            state = state_store.load(private_run_dir)
+        except (OSError, ValueError) as exc:
+            raise FactoryAuthorError(
+                "portable author state could not be restored"
+            ) from exc
+        state.metadata["attempt_id"] = inputs.run_spec.identity.attempt_id
+        state_store.save(state)
+    else:
+        _write_factory_spec(inputs, spec_path)
+        state = _initial_state(
+            inputs,
+            run_dir=private_run_dir,
+            spec_path=spec_path,
+        )
+        state_store.save(state)
+        _materialise_context_report(inputs, private_run_dir)
     config = _factory_config(inputs, private_run_dir.parent)
     adapter = _BudgetedGatewayAdapter(
         FactoryGatewayAdapter(
@@ -330,6 +374,9 @@ def execute_author(
         ),
         max_turns=inputs.run_spec.policy.max_agent_turns,
         max_tokens=inputs.run_spec.policy.max_model_tokens,
+        initial_turns=initial_agent_turns,
+        initial_tokens=initial_model_tokens,
+        usage_event=usage_event,
     )
     context = ExecutionContext(
         config=config,
@@ -348,9 +395,13 @@ def execute_author(
     )
 
     requested = set(inputs.run_spec.policy.allowed_stages)
-    completed: list[str] = []
+    completed = list(completed_stages)
+    if len(set(completed)) != len(completed) or not set(completed).issubset(
+        requested
+    ):
+        raise FactoryAuthorError("resumed author stages exceed admitted authority")
     for stage in LEGACY_ORDERED_STAGES:
-        if stage not in requested:
+        if stage not in requested or stage in completed:
             continue
         handler = _FACTORY_STAGE_HANDLERS.get(stage)
         if handler is None:
@@ -394,14 +445,20 @@ def execute_author(
         progress(f"[factory] {stage}: completed")
         if stage_event is not None:
             stage_event("completed", stage)
-    return AuthorOutcome(completed_stages=tuple(completed))
+    return AuthorOutcome(
+        completed_stages=tuple(completed),
+        agent_turns=adapter.usage.agent_turns,
+        model_tokens=adapter.usage.model_tokens,
+    )
 
 
 __all__ = [
     "AuthorOutcome",
+    "AuthorUsage",
     "FactoryAuthorCancelled",
     "FactoryAuthorError",
     "FactoryAuthorTimedOut",
     "FactoryClarificationRequired",
     "execute_author",
+    "private_run_directory",
 ]

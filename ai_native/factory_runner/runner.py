@@ -14,6 +14,7 @@ from ai_native.factory_runner.admission import (
     validate_workspace,
 )
 from ai_native.factory_runner.author import (
+    AuthorUsage,
     FactoryAuthorCancelled,
     FactoryAuthorError,
     FactoryAuthorTimedOut,
@@ -24,6 +25,7 @@ from ai_native.factory_runner.changes import (
     ChangePolicyError,
     build_change_set,
     capture_repository_security_snapshot,
+    capture_workspace_patch,
     restore_clean_author_workspace,
     validate_author_boundary,
 )
@@ -31,6 +33,7 @@ from ai_native.factory_runner.contracts.run_spec import RunSpec
 from ai_native.factory_runner.contracts.common import ArtifactReference
 from ai_native.factory_runner.contracts.runner_event import RunnerEvent
 from ai_native.factory_runner.events import EventSink
+from ai_native.factory_runner.evidence import EvidenceSufficiencyError
 from ai_native.factory_runner.git_runtime import (
     FactoryGitCancelled,
     FactoryGitError,
@@ -54,11 +57,21 @@ from ai_native.factory_runner.process_policy import (
     resolve_trusted_command,
 )
 from ai_native.factory_runner.protocol import validate_contract
-from ai_native.factory_runner.verification import execute_verification
+from ai_native.factory_runner.verification import (
+    PhaseCommandCompletion,
+    PhaseCommandStart,
+    PhaseExecutionOutcome,
+    RedAlreadyGreen,
+    execute_declared_phase,
+    execute_verification,
+    finalize_authoring_evidence,
+)
 
 
 Operation = Literal["author", "verify"]
 _GATEWAY_ONLY_ENVIRONMENT_KEYS = ("ATTEMPT_GATEWAY_TOKEN_FILE",)
+_MAX_ARTIFACT_BYTES = 16 * 1024 * 1024
+_MAX_TOTAL_OUTPUT_BYTES = 64 * 1024 * 1024
 
 _EXIT_BY_REASON = {
     "completed": 0,
@@ -236,7 +249,11 @@ def _safe_failure_output(
             return None
     try:
         validated_output = validate_output_root(resolved_output)
-        writer = OutputWriter(validated_output)
+        writer = OutputWriter(
+            validated_output,
+            max_artifact_bytes=_MAX_ARTIFACT_BYTES,
+            max_total_bytes=_MAX_TOTAL_OUTPUT_BYTES,
+        )
     except (OSError, ValueError):
         return None
     return writer
@@ -252,40 +269,47 @@ def _finish(
     started_at: str,
     spec: RunSpec | None,
     completed_stages: Sequence[str] = (),
+    latest_checkpoint: ArtifactReference | None = None,
     change_set: Any | None = None,
     verification_evidence: Any | None = None,
     events: _RunEvents | None = None,
 ) -> int:
-    finished_at = utc_timestamp()
-    event_reference = (
-        events.finalize(outcome=outcome, reason_code=reason_code)
-        if events is not None
-        else writer.write_events_placeholder()
-    )
-    protocol_manifest = writer.write_protocol_manifest(
-        event_stream=event_reference,
-    )
-    result, reference = writer.write_run_result(
-        operation=operation,
-        outcome=outcome,  # type: ignore[arg-type]
-        reason_code=reason_code,
-        message=sanitised_message(message, "Factory runner stopped."),
-        started_at=started_at,
-        finished_at=finished_at,
-        identity=spec.identity if spec is not None else None,
-        repository=spec.repository if spec is not None else None,
-        completed_stages=completed_stages,
-        change_set=change_set,
-        verification_evidence=verification_evidence,
-        event_stream_digest=event_reference.digest,
-        protocol_manifest=protocol_manifest,
-    )
-    writer.write_completion(
-        result=result,
-        result_reference=reference,
-        protocol_manifest=protocol_manifest,
-    )
-    return _EXIT_BY_REASON[reason_code]
+    try:
+        finished_at = utc_timestamp()
+        event_reference = (
+            events.finalize(outcome=outcome, reason_code=reason_code)
+            if events is not None
+            else writer.write_events_placeholder()
+        )
+        protocol_manifest = writer.write_protocol_manifest(
+            event_stream=event_reference,
+        )
+        result, reference = writer.write_run_result(
+            operation=operation,
+            outcome=outcome,  # type: ignore[arg-type]
+            reason_code=reason_code,
+            message=sanitised_message(message, "Factory runner stopped."),
+            started_at=started_at,
+            finished_at=finished_at,
+            identity=spec.identity if spec is not None else None,
+            repository=spec.repository if spec is not None else None,
+            completed_stages=completed_stages,
+            latest_checkpoint=latest_checkpoint,
+            change_set=change_set,
+            verification_evidence=verification_evidence,
+            event_stream_digest=event_reference.digest,
+            protocol_manifest=protocol_manifest,
+        )
+        writer.write_completion(
+            result=result,
+            result_reference=reference,
+            protocol_manifest=protocol_manifest,
+        )
+        return _EXIT_BY_REASON[reason_code]
+    except Exception:
+        # A partially finalized output tree is intentionally left without a
+        # completion marker and must never be rewritten recursively.
+        return _EXIT_BY_REASON["runner_failed"]
 
 
 def execute_factory(
@@ -381,7 +405,11 @@ def execute_factory(
 
     try:
         validated_output = validate_output_root(inputs.output_dir)
-        writer = OutputWriter(validated_output)
+        writer = OutputWriter(
+            validated_output,
+            max_artifact_bytes=_MAX_ARTIFACT_BYTES,
+            max_total_bytes=_MAX_TOTAL_OUTPUT_BYTES,
+        )
         events = _RunEvents(
             writer=writer,
             spec=inputs.run_spec,
@@ -481,6 +509,34 @@ def execute_factory(
                 raise ValueError("author stage event status is invalid")
             events.emit(event_type, payload={"stage": stage})
 
+        def emit_test_started(start: PhaseCommandStart) -> None:
+            events.emit(
+                "TestStarted",
+                payload={
+                    "phase": start.phase,
+                    "command_index": start.index,
+                },
+            )
+
+        def emit_test_completed(completion: PhaseCommandCompletion) -> None:
+            events.emit(
+                "TestCompleted",
+                payload={
+                    "phase": completion.phase,
+                    "command_index": completion.index,
+                    "actual_status": completion.actual_status,
+                    "failure_classification": (
+                        completion.failure_classification
+                    ),
+                },
+            )
+
+        author_usage = AuthorUsage(agent_turns=0, model_tokens=0)
+
+        def record_author_usage(usage: AuthorUsage) -> None:
+            nonlocal author_usage
+            author_usage = usage
+
         if cancellation_token.cancelled:
             raise _Cancelled
         if deadline.expired:
@@ -498,6 +554,8 @@ def execute_factory(
                 clean_verification=True,
                 boundary_check=boundary_check,
                 git_runtime=git_runtime,
+                on_command_started=emit_test_started,
+                on_command_completed=emit_test_completed,
             )
             events.emit(
                 "VerificationEvidenceWritten",
@@ -547,6 +605,31 @@ def execute_factory(
             sterile_home=sterile_home,
             temp_dir=temp_dir,
         )
+        phase_outcomes: list[PhaseExecutionOutcome] = []
+        baseline_already_green = False
+        try:
+            red = execute_declared_phase(
+                inputs,
+                phase="red",
+                writer=writer,
+                process_runner=process_runner,
+                cancellation_token=cancellation_token,
+                deadline=deadline,
+                sterile_home=sterile_home,
+                temp_dir=temp_dir,
+                boundary_check=boundary_check,
+                git_runtime=git_runtime,
+                on_command_started=emit_test_started,
+                on_command_completed=emit_test_completed,
+            )
+            phase_outcomes.append(red)
+            if red.cancelled:
+                raise _Cancelled
+            if red.timed_out:
+                raise _TimedOut
+        except RedAlreadyGreen:
+            baseline_already_green = True
+
         author = execute_author(
             inputs,
             process_runner=process_runner,
@@ -558,24 +641,102 @@ def execute_factory(
             restore_workspace=restore_workspace,
             progress=log,
             stage_event=emit_stage_event,
+            usage_event=record_author_usage,
         )
         completed_stages = author.completed_stages
+        author_usage = AuthorUsage(
+            agent_turns=author.agent_turns,
+            model_tokens=author.model_tokens,
+        )
         if cancellation_token.cancelled:
             raise _Cancelled
         if deadline.expired:
             raise _TimedOut
 
-        verification = execute_verification(
+        if baseline_already_green:
+            if capture_workspace_patch(inputs, git_runtime=git_runtime) is not None:
+                raise FactoryPolicyViolation(
+                    "author changes require a genuine red baseline"
+                )
+            no_change_verification = execute_declared_phase(
+                inputs,
+                phase="verification",
+                writer=writer,
+                process_runner=process_runner,
+                cancellation_token=cancellation_token,
+                deadline=deadline,
+                sterile_home=sterile_home,
+                temp_dir=temp_dir,
+                boundary_check=boundary_check,
+                git_runtime=git_runtime,
+                on_command_started=emit_test_started,
+                on_command_completed=emit_test_completed,
+            )
+            if no_change_verification.cancelled:
+                raise _Cancelled
+            if no_change_verification.timed_out:
+                raise _TimedOut
+            if not no_change_verification.passed:
+                return _finish(
+                    writer=writer,
+                    operation=expected_operation,
+                    outcome="failed",
+                    reason_code="verification_failed",
+                    message="The already-satisfied behavior became invalid.",
+                    started_at=started_at,
+                    spec=inputs.run_spec,
+                    completed_stages=completed_stages,
+                    events=events,
+                )
+            return _finish(
+                writer=writer,
+                operation=expected_operation,
+                outcome="no_change",
+                reason_code="completed",
+                message="The declared behavior was already satisfied.",
+                started_at=started_at,
+                spec=inputs.run_spec,
+                completed_stages=completed_stages,
+                events=events,
+            )
+
+        for phase in ("green", "refactor", "verification"):
+            phase_outcome = execute_declared_phase(
+                inputs,
+                phase=phase,  # type: ignore[arg-type]
+                writer=writer,
+                process_runner=process_runner,
+                cancellation_token=cancellation_token,
+                deadline=deadline,
+                sterile_home=sterile_home,
+                temp_dir=temp_dir,
+                boundary_check=boundary_check,
+                git_runtime=git_runtime,
+                on_command_started=emit_test_started,
+                on_command_completed=emit_test_completed,
+            )
+            phase_outcomes.append(phase_outcome)
+            if phase_outcome.cancelled:
+                raise _Cancelled
+            if phase_outcome.timed_out:
+                raise _TimedOut
+            if not phase_outcome.passed:
+                return _finish(
+                    writer=writer,
+                    operation=expected_operation,
+                    outcome="failed",
+                    reason_code="verification_failed",
+                    message=f"The declared {phase} phase failed.",
+                    started_at=started_at,
+                    spec=inputs.run_spec,
+                    completed_stages=completed_stages,
+                    events=events,
+                )
+
+        verification = finalize_authoring_evidence(
             inputs,
             writer=writer,
-            process_runner=process_runner,
-            cancellation_token=cancellation_token,
-            deadline=deadline,
-            sterile_home=sterile_home,
-            temp_dir=temp_dir,
-            clean_verification=False,
-            boundary_check=boundary_check,
-            git_runtime=git_runtime,
+            phase_outcomes=tuple(phase_outcomes),
         )
         events.emit(
             "VerificationEvidenceWritten",
@@ -585,23 +746,10 @@ def execute_factory(
             },
             artifact_refs=(verification.reference,),
         )
-        if verification.cancelled:
-            raise _Cancelled
-        if verification.timed_out:
-            raise _TimedOut
-        if not verification.passed:
-            return _finish(
-                writer=writer,
-                operation=expected_operation,
-                outcome="failed",
-                reason_code="verification_failed",
-                message="A declared authoring verification command failed.",
-                started_at=started_at,
-                spec=inputs.run_spec,
-                completed_stages=completed_stages,
-                events=events,
+        if capture_workspace_patch(inputs, git_runtime=git_runtime) is None:
+            raise FactoryPolicyViolation(
+                "a genuine red-to-green transition requires repository changes"
             )
-
         change_set, change_reference = build_change_set(
             inputs,
             writer=writer,
@@ -615,17 +763,7 @@ def execute_factory(
                 artifact_refs=(change_set.patch, change_reference),
             )
         if change_set is None or change_reference is None:
-            return _finish(
-                writer=writer,
-                operation=expected_operation,
-                outcome="no_change",
-                reason_code="completed",
-                message="Authoring completed without repository changes.",
-                started_at=started_at,
-                spec=inputs.run_spec,
-                completed_stages=completed_stages,
-                events=events,
-            )
+            raise FactoryPolicyViolation("repository change set is incomplete")
         return _finish(
             writer=writer,
             operation=expected_operation,
@@ -738,7 +876,12 @@ def execute_factory(
             completed_stages=completed_stages,
             events=events,
         )
-    except (FactoryPolicyViolation, ChangePolicyError, FactoryGitError):
+    except (
+        FactoryPolicyViolation,
+        ChangePolicyError,
+        EvidenceSufficiencyError,
+        FactoryGitError,
+    ):
         log("[factory] runtime policy denied the operation")
         return _finish(
             writer=writer,
