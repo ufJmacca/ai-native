@@ -40,7 +40,8 @@ FULL_CHANGE_CASES = [
         "author-add",
         ["added.txt"],
         "from pathlib import Path; "
-        "assert Path('added.txt').read_text().splitlines() == "
+        "assert Path('added.txt').exists() and "
+        "Path('added.txt').read_text().splitlines() == "
         "['factory addition']",
     ),
     (
@@ -124,7 +125,8 @@ def test_clean_verification_rejects_unexpected_prepared_state(
         author,
         allowed_paths=["added.txt"],
         verification_source="from pathlib import Path; "
-        "assert Path('added.txt').read_text().splitlines() == "
+        "assert Path('added.txt').exists() and "
+        "Path('added.txt').read_text().splitlines() == "
         "['factory addition']",
     )
     authored = invoke_factory(author, agent_mode="author-add")
