@@ -52,6 +52,11 @@ permission, unresolved merge conflict, or failed required check. Resolving an
 exception never waives a required check or branch-protection rule; the
 protected automated path resumes after the underlying issue is corrected.
 
+Repository rules for phase, corrective, and release PRs require zero approving
+human reviews. Required status checks, machine-verifiable phase evidence, and
+branch protection are the merge authority; an operator click, review approval,
+or sign-off is never a normal merge prerequisite.
+
 ---
 
 ## 2. Intended outcome
@@ -1035,7 +1040,8 @@ The normal phase lifecycle is:
    phase-scoped work, pushes that feature branch, and opens one draft PR with
    machine-verifiable red, green, refactor, and final evidence.
 2. GitHub runs all required CI, security, policy, packaging, and compatibility
-   checks. Those checks remain required branch-protection checks.
+   checks. Those checks remain required branch-protection checks; repository
+   rules require zero approving human reviews and permit GitHub auto-merge.
 3. A trusted publisher/control plane, running outside the attempt sandbox,
    verifies the phase manifest, evidence, required check conclusions, and
    branch-protection state. It marks the PR ready and enables GitHub
