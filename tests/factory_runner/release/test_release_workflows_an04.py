@@ -13,10 +13,7 @@ RELEASE_PLEASE_WORKFLOW = (
     REPOSITORY_ROOT / ".github" / "workflows" / "release-please.yml"
 )
 FACTORY_RELEASE_WORKFLOW = (
-    REPOSITORY_ROOT
-    / ".github"
-    / "workflows"
-    / "factory-runner-release.yml"
+    REPOSITORY_ROOT / ".github" / "workflows" / "factory-runner-release.yml"
 )
 WORKFLOW_DIRECTORY = REPOSITORY_ROOT / ".github" / "workflows"
 
@@ -34,12 +31,9 @@ def test_release_please_creates_a_draft_and_arms_protected_auto_merge() -> None:
 
     workflow = _workflow(RELEASE_PLEASE_WORKFLOW)
     job = workflow["jobs"]["release-please"]
-    release_step = next(
-        step for step in job["steps"] if step.get("id") == "release"
-    )
+    release_step = next(step for step in job["steps"] if step.get("id") == "release")
     assert release_step["uses"] == (
-        "googleapis/release-please-action@"
-        "5c625bfb5d1ff62eadeeb3772007f7f66fdcf071"
+        "googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071"
     )
     auto_merge = next(
         step
@@ -56,9 +50,7 @@ def test_release_please_creates_a_draft_and_arms_protected_auto_merge() -> None:
     release_job = workflow["jobs"]["factory-runner-release"]
     assert release_job["needs"] == "release-please"
     assert "release_created" in release_job["if"]
-    assert release_job["uses"] == (
-        "./.github/workflows/factory-runner-release.yml"
-    )
+    assert release_job["uses"] == ("./.github/workflows/factory-runner-release.yml")
     assert "secrets" not in release_job
     assert release_job["permissions"] == {
         "contents": "write",

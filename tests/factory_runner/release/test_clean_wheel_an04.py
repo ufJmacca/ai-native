@@ -109,6 +109,23 @@ def test_clean_wheel_installs_dependencies_and_matches_runtime_goldens(
     assert all(
         str(REPOSITORY_ROOT.resolve()) not in entry for entry in inspected["path"]
     )
+    receipt_cli = subprocess.run(
+        [
+            str(environment_python),
+            "-I",
+            "-m",
+            "ai_native.factory_runner.release_verification",
+            "--help",
+        ],
+        cwd=outside_checkout,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert receipt_cli.returncode == 0, receipt_cli.stderr
+    assert "release receipt" in receipt_cli.stdout
+    assert "--artifact-dir" in receipt_cli.stdout
 
     monkeypatch.delenv("PYTHONPATH", raising=False)
     monkeypatch.setenv("PYTHONNOUSERSITE", "1")
