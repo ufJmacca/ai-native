@@ -13,6 +13,7 @@ from ai_native.factory_runner.process_policy import (
     resolve_trusted_command,
     validate_declared_command,
 )
+from ai_native.factory_runner.runner import _git_environment
 
 
 @pytest.mark.parametrize(
@@ -117,6 +118,46 @@ def _git_config_overrides(environment: dict[str, str]) -> dict[str, str]:
     }
 
 
+def test_runner_git_environment_trusts_only_the_exact_admitted_workspace(
+    tmp_path: Path,
+) -> None:
+    workspace = (tmp_path / "workspace").resolve()
+    sterile_home = tmp_path / "home"
+    temp_dir = tmp_path / "tmp"
+    for directory in (workspace, sterile_home, temp_dir):
+        directory.mkdir()
+
+    environment = _git_environment(
+        {},
+        sterile_home=sterile_home,
+        temp_dir=temp_dir,
+        workspace=workspace,
+    )
+
+    overrides = _git_config_overrides(environment)
+    assert overrides["safe.directory"] == str(workspace)
+    assert overrides["safe.directory"] != "*"
+
+
+def test_runner_git_environment_rejects_a_workspace_alias(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    alias = tmp_path / "workspace-alias"
+    alias.symlink_to(workspace, target_is_directory=True)
+    sterile_home = tmp_path / "home"
+    temp_dir = tmp_path / "tmp"
+    sterile_home.mkdir()
+    temp_dir.mkdir()
+
+    with pytest.raises(FactoryPolicyViolation, match="canonical directory"):
+        _git_environment(
+            {},
+            sterile_home=sterile_home,
+            temp_dir=temp_dir,
+            workspace=alias,
+        )
+
+
 def test_child_environment_is_filtered_and_forces_noninteractive_git(
     tmp_path: Path,
 ) -> None:
@@ -162,6 +203,7 @@ def test_child_environment_is_filtered_and_forces_noninteractive_git(
     overrides = _git_config_overrides(environment)
     assert overrides["credential.helper"] == ""
     assert overrides["core.fsmonitor"] == "false"
+    assert "safe.directory" not in overrides
     hooks_path = Path(overrides["core.hooksPath"])
     assert hooks_path.is_absolute()
     assert hooks_path.is_dir()

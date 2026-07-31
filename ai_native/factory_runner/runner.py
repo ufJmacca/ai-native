@@ -252,15 +252,31 @@ def _git_environment(
     *,
     sterile_home: Path,
     temp_dir: Path,
+    workspace: Path,
 ) -> dict[str, str]:
+    try:
+        resolved_workspace = workspace.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise FactoryPolicyViolation("runner Git workspace is unavailable") from exc
+    if resolved_workspace != workspace or not resolved_workspace.is_dir():
+        raise FactoryPolicyViolation(
+            "runner Git workspace must be one canonical directory"
+        )
     source = dict(source_environment)
     source["PATH"] = "/usr/local/bin:/usr/bin:/bin"
-    return build_child_environment(
+    environment = build_child_environment(
         allowed_keys=("PATH",),
         source_env=source,
         sterile_home=sterile_home,
         temp_dir=temp_dir,
     )
+    # A fixed-UID container sees a bind-mounted checkout as foreign-owned.
+    # Trust only the canonical workspace already admitted for this attempt.
+    override_index = int(environment["GIT_CONFIG_COUNT"])
+    environment["GIT_CONFIG_COUNT"] = str(override_index + 1)
+    environment[f"GIT_CONFIG_KEY_{override_index}"] = "safe.directory"
+    environment[f"GIT_CONFIG_VALUE_{override_index}"] = str(resolved_workspace)
+    return environment
 
 
 def _candidate_run_spec(path: Path) -> RunSpec | None:
@@ -774,6 +790,7 @@ def execute_factory(
             attempt_environment,
             sterile_home=sterile_home,
             temp_dir=temp_dir,
+            workspace=inputs.workspace,
         )
         git_runtime = FactoryGitRuntime(
             workspace=inputs.workspace,
