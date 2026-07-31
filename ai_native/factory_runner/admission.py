@@ -389,9 +389,12 @@ def _validate_context_relationships(
             mode="json",
             exclude={"attempt_id"},
         )
+        producer_identity = producer.identity.model_dump(
+            mode="json",
+            exclude={"attempt_id"},
+        )
         identity_matches = (
-            context_identity == run_identity
-            and context_bundle.identity == producer.identity
+            context_identity == producer_identity == run_identity
             and context_bundle.repository == producer.repository
             and context_bundle.bundle_digest == producer.context_bundle_digest
         )
