@@ -13,10 +13,51 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+      source_sha: ${{ steps.release.outputs.sha }}
+      upload_url: ${{ steps.release.outputs.upload_url }}
+      html_url: ${{ steps.release.outputs.html_url }}
     steps:
       - name: Run release-please
-        uses: googleapis/release-please-action@v4
+        id: release
+        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071
         with:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      - name: Enable protected release PR auto-merge
+        if: steps.release.outputs.prs != '' && steps.release.outputs.prs != '[]'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          RELEASE_PRS: ${{ steps.release.outputs.prs }}
+        run: |
+          set -euo pipefail
+          mapfile -t release_prs < <(jq -r '.[].number' <<<"${RELEASE_PRS}")
+          test "${#release_prs[@]}" -gt 0
+          for release_pr in "${release_prs[@]}"; do
+            gh pr merge "${release_pr}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --auto \
+              --merge
+          done
+
+  factory-runner-release:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    uses: ./.github/workflows/factory-runner-release.yml
+    with:
+      tag_name: ${{ needs.release-please.outputs.tag_name }}
+      version: ${{ needs.release-please.outputs.version }}
+      source_sha: ${{ needs.release-please.outputs.source_sha }}
+      upload_url: ${{ needs.release-please.outputs.upload_url }}
+      html_url: ${{ needs.release-please.outputs.html_url }}
