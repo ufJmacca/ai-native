@@ -7,11 +7,29 @@ consumer verification path for `factory-runner-protocol/v1`.
 
 Release Please is the only semantic-version authority. AN-04 does not choose a
 version in advance and no other workflow edits the version, changelog, or
-release tag. Release Please opens or updates its release PR, repository rules
-require zero approving human reviews, and the trusted workflow enables GitHub
-auto-merge. Required status checks and branch protection remain mandatory.
+release tag. Release Please opens or updates its release PR, and the trusted
+CLI merge controller requires zero approving human reviews and waits for the
+policy-owned `test`, `lint`, `factory-runner-ci`, and release-PR generated-file
+checks on the exact head. Branch protection remains enabled as defence in depth
+where available, but native auto-merge is not used or required.
 
-When the protected release PR merges, Release Please creates the exact tag and
+After the generated-file workflow has settled, the controller snapshots and
+revalidates the exact repository, PR, base, head, and check state. It then uses
+a short-lived repository-scoped credential to submit only this SHA-bound normal
+merge:
+
+```bash
+gh api --method PUT "repos/$owner/$repo/pulls/$pr_number/merge" \
+  -f "sha=$expected_head_sha" \
+  -f merge_method=merge
+```
+
+The controller never uses administrative bypass, an automatic-merge mode, or
+a direct default-branch push. A changed head or base invalidates the snapshot,
+and any ambiguous response is reconciled before retry. Release publication
+begins only after the returned merge SHA is observed on `main`.
+
+When the policy-gated release PR merges, Release Please creates the exact tag and
 a draft release. The reusable release workflow checks out the tag commit by
 its 40-character SHA and verifies the tag, version, draft-release URL, and
 upload URL before building anything.

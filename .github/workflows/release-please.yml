@@ -29,22 +29,6 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-      - name: Enable protected release PR auto-merge
-        if: steps.release.outputs.prs != '' && steps.release.outputs.prs != '[]'
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
-          RELEASE_PRS: ${{ steps.release.outputs.prs }}
-        run: |
-          set -euo pipefail
-          mapfile -t release_prs < <(jq -r '.[].number' <<<"${RELEASE_PRS}")
-          test "${#release_prs[@]}" -gt 0
-          for release_pr in "${release_prs[@]}"; do
-            gh pr merge "${release_pr}" \
-              --repo "${GITHUB_REPOSITORY}" \
-              --auto \
-              --merge
-          done
-
   factory-runner-release:
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'

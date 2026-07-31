@@ -17,6 +17,7 @@ Automated SemVer releases are currently enabled only for the root `ai-native-bas
 - `.github/workflows/release-please.yml` opens and maintains the release PR on pushes to `main`.
 - `.github/workflows/release-pr-uv-lock.yml` runs on release PRs labeled `autorelease: pending`, regenerates the root `uv.lock`, and pushes the lockfile update back to the same PR branch when needed.
 - `.github/workflows/semantic-pr-title.yml` enforces conventional PR titles so squash merges produce SemVer-friendly commit messages.
+- Native auto-merge is not used. After every policy-owned check and generated-file update passes for the exact head, the trusted CLI merge controller submits a SHA-bound normal merge and verifies the returned commit on `main`. Routine human approval is not a gate, and administrative bypass or a direct default-branch push is prohibited.
 
 ## Reserved future components
 

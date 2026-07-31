@@ -46,6 +46,7 @@ def test_factory_runner_ci_exposes_one_stable_blocking_check() -> None:
         "CHANGELOG.md",
         "Makefile",
         "ai_native/**",
+        "docs/factory/**",
         "docs/factory-runner/**",
         "hatch_build.py",
         "images/factory-runner/**",

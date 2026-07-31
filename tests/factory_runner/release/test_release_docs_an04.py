@@ -7,6 +7,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 MAKEFILE = REPOSITORY_ROOT / "Makefile"
 RUNBOOK = REPOSITORY_ROOT / "docs" / "factory-runner" / "releasing.md"
 README = REPOSITORY_ROOT / "docs" / "factory-runner" / "README.md"
+RELEASES = REPOSITORY_ROOT / "docs" / "releases.md"
 
 
 def test_makefile_exposes_reproducible_certification_and_release_gates() -> None:
@@ -24,7 +25,7 @@ def test_makefile_exposes_reproducible_certification_and_release_gates() -> None
 
 def test_release_runbook_is_receipt_first_and_has_no_human_gate() -> None:
     content = RUNBOOK.read_text(encoding="utf-8")
-    lowered = content.casefold()
+    lowered = " ".join(content.casefold().split())
 
     for required in (
         "release please",
@@ -37,9 +38,16 @@ def test_release_runbook_is_receipt_first_and_has_no_human_gate() -> None:
         "new semantic version",
         "gh attestation verify",
         "verify_factory_runner_release_receipt.py",
+        "trusted cli merge",
+        "gh api --method put",
+        "sha=$expected_head_sha",
+        "merge_method=merge",
     ):
         assert required in lowered
 
+    assert "enables github auto-merge" not in lowered
+    assert "--admin" not in lowered
+    assert "--auto" not in lowered
     assert "manual approval" not in lowered
     assert "operator sign-off" not in lowered
     assert ":latest" not in lowered
@@ -47,6 +55,17 @@ def test_release_runbook_is_receipt_first_and_has_no_human_gate() -> None:
 
 def test_factory_runner_readme_links_the_release_runbook_and_an04_evidence() -> None:
     content = README.read_text(encoding="utf-8")
+    lowered = content.casefold()
 
     assert "[Release and independent verification](releasing.md)" in content
     assert "[AN-04 release evidence](evidence/AN-04.md)" in content
+    assert "trusted cli merge" in lowered
+    assert "protected auto-merge remains" not in lowered
+
+
+def test_general_release_docs_delegate_to_the_exact_head_merge_controller() -> None:
+    lowered = RELEASES.read_text(encoding="utf-8").casefold()
+
+    assert "trusted cli merge" in lowered
+    assert "exact head" in lowered
+    assert "native auto-merge is not used" in lowered
