@@ -657,6 +657,28 @@ def _deterministic_patch(
     return b"".join(fragments)
 
 
+def capture_workspace_patch(
+    inputs: ValidatedInputs,
+    *,
+    git_runtime: FactoryGitRuntime,
+) -> bytes | None:
+    """Capture the admitted workspace delta for an immutable safe boundary."""
+
+    head = _git(git_runtime, "rev-parse", "HEAD").decode().strip()
+    if head != inputs.run_spec.repository.base_commit_sha:
+        raise ChangePolicyError("factory authoring changed repository HEAD")
+    entries = _status_entries(git_runtime)
+    if not entries:
+        return None
+    for _status, path in entries:
+        if not _path_is_allowed(inputs, path):
+            raise ChangePolicyError("repository change is outside allowed paths")
+    patch = _deterministic_patch(git_runtime, entries=entries)
+    if not patch:
+        raise ChangePolicyError("workspace changes have no corresponding patch")
+    return patch
+
+
 def build_change_set(
     inputs: ValidatedInputs,
     *,
@@ -682,10 +704,6 @@ def build_change_set(
     )
     if not evidence_passed:
         raise ChangePolicyError("ChangeSet requires passing deterministic evidence")
-    head = _git(git_runtime, "rev-parse", "HEAD").decode().strip()
-    if head != inputs.run_spec.repository.base_commit_sha:
-        raise ChangePolicyError("factory authoring changed repository HEAD")
-
     entries = _status_entries(git_runtime)
     if not entries:
         return None, None
@@ -695,8 +713,8 @@ def build_change_set(
         git_runtime=git_runtime,
         entries=entries,
     )
-    patch = _deterministic_patch(git_runtime, entries=entries)
-    if not patch:
+    patch = capture_workspace_patch(inputs, git_runtime=git_runtime)
+    if patch is None:
         raise ChangePolicyError("changed-file manifest has no corresponding patch")
     patch_reference = writer.write_bytes(
         "changeset/change.patch",
@@ -755,6 +773,7 @@ __all__ = [
     "ChangePolicyError",
     "RepositorySecuritySnapshot",
     "build_change_set",
+    "capture_workspace_patch",
     "capture_repository_security_snapshot",
     "restore_clean_author_workspace",
     "validate_author_boundary",
