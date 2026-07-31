@@ -57,6 +57,96 @@ class OutputTreeSnapshot:
     entries: tuple[_OutputSnapshotEntry, ...]
 
 
+class StagedArtifact:
+    """Writer-owned append sink that is invisible until atomic finalization."""
+
+    __slots__ = (
+        "_byte_size",
+        "_digest",
+        "_lock",
+        "_media_type",
+        "_parent_fd",
+        "_relative_path",
+        "_staging_name",
+        "_state",
+        "_target_name",
+        "_writer",
+    )
+
+    def __init__(
+        self,
+        *,
+        writer: OutputWriter,
+        parent_fd: int,
+        staging_name: str,
+        target_name: str,
+        relative_path: str,
+        media_type: str,
+    ) -> None:
+        self._writer = writer
+        self._parent_fd = parent_fd
+        self._staging_name = staging_name
+        self._target_name = target_name
+        self._relative_path = relative_path
+        self._media_type = media_type
+        self._byte_size = 0
+        self._digest = hashlib.sha256()
+        self._state: Literal["open", "finalized", "aborted"] = "open"
+        self._lock = threading.RLock()
+
+    def _ensure_open(self) -> None:
+        if self._state == "finalized":
+            raise RuntimeError("staged artifact is already finalized")
+        if self._state == "aborted":
+            raise RuntimeError("staged artifact is already aborted")
+
+    def _close_parent(self) -> None:
+        if self._parent_fd >= 0:
+            parent_fd = self._parent_fd
+            self._parent_fd = -1
+            try:
+                os.close(parent_fd)
+            except OSError:
+                pass
+
+    def append(self, content: bytes) -> None:
+        """Append and durably flush bytes without publishing the final path."""
+
+        with self._lock:
+            self._ensure_open()
+            self._writer._append_staged_artifact(self, content)
+
+    def finalize(self) -> ArtifactReference:
+        """Validate, atomically publish, and register the completed artifact."""
+
+        with self._lock:
+            self._ensure_open()
+            reference = self._writer._finalize_staged_artifact(self)
+            self._state = "finalized"
+            self._close_parent()
+            return reference
+
+    def abort(self) -> None:
+        """Discard an unpublished staging file without following replacements."""
+
+        with self._lock:
+            self._ensure_open()
+            self._writer._abort_staged_artifact(self)
+            self._state = "aborted"
+            self._close_parent()
+
+    def __del__(self) -> None:
+        if getattr(self, "_state", None) != "open":
+            return
+        try:
+            self.abort()
+        except Exception:
+            try:
+                self._close_parent()
+            except Exception:
+                pass
+
+
 def utc_timestamp() -> str:
     return datetime.now(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
@@ -322,6 +412,290 @@ class OutputWriter:
         finally:
             os.close(current_fd)
 
+    @staticmethod
+    def _path_identity(metadata: os.stat_result) -> tuple[int, int]:
+        return metadata.st_dev, metadata.st_ino
+
+    @staticmethod
+    def _require_regular_staging_file(metadata: os.stat_result) -> None:
+        if stat.S_ISLNK(metadata.st_mode):
+            raise ValueError("staging artifact may not be a symbolic link")
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("staging artifact must be a regular file")
+        if stat.S_IMODE(metadata.st_mode) != 0o600:
+            raise ValueError("staging artifact has an unsafe file mode")
+
+    @staticmethod
+    def _target_must_be_absent(parent_fd: int, target_name: str) -> None:
+        try:
+            metadata = os.stat(
+                target_name,
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            return
+        if stat.S_ISLNK(metadata.st_mode):
+            raise ValueError("artifact target may not be a symbolic link")
+        raise ValueError("artifact target already exists")
+
+    def _require_staged_artifact(self, staged: StagedArtifact) -> None:
+        if not isinstance(staged, StagedArtifact) or staged._writer is not self:
+            raise ValueError("staged artifact is not owned by this output writer")
+        staged._ensure_open()
+
+    def _open_staging_file(
+        self,
+        staged: StagedArtifact,
+        flags: int,
+    ) -> tuple[int, os.stat_result]:
+        try:
+            path_metadata = os.stat(
+                staged._staging_name,
+                dir_fd=staged._parent_fd,
+                follow_symlinks=False,
+            )
+            self._require_regular_staging_file(path_metadata)
+            descriptor = os.open(
+                staged._staging_name,
+                flags | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=staged._parent_fd,
+            )
+        except FileNotFoundError as exc:
+            raise ValueError("staging artifact is unavailable") from exc
+        except OSError as exc:
+            if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
+                raise ValueError("staging artifact contains a symbolic link") from exc
+            raise ValueError("staging artifact is unavailable") from exc
+
+        try:
+            opened_metadata = os.fstat(descriptor)
+            self._require_regular_staging_file(opened_metadata)
+            if self._path_identity(opened_metadata) != self._path_identity(
+                path_metadata
+            ):
+                raise ValueError("staging artifact changed while being opened")
+        except Exception:
+            os.close(descriptor)
+            raise
+        return descriptor, opened_metadata
+
+    def begin_staged_artifact(
+        self,
+        relative_path: str,
+        *,
+        media_type: str = OCTET_STREAM_MEDIA_TYPE,
+    ) -> StagedArtifact:
+        """Create a hidden writer-owned staging file beside its final target."""
+
+        if not isinstance(media_type, str) or not media_type or "\x00" in media_type:
+            raise ValueError("staged artifact media type is invalid")
+        with self._write_lock:
+            self._ensure_writable()
+            if any(item.path == relative_path for item in self._manifest):
+                raise ValueError("artifact path is already recorded")
+            with self._parent_directory(relative_path) as (parent_fd, target_name):
+                self._target_must_be_absent(parent_fd, target_name)
+                staging_name = f".{target_name}.{uuid.uuid4().hex}.staging"
+                descriptor = -1
+                staging_created = False
+                staged_parent_fd = -1
+                try:
+                    descriptor = os.open(
+                        staging_name,
+                        (
+                            os.O_WRONLY
+                            | os.O_CREAT
+                            | os.O_EXCL
+                            | getattr(os, "O_CLOEXEC", 0)
+                            | getattr(os, "O_NOFOLLOW", 0)
+                        ),
+                        0o600,
+                        dir_fd=parent_fd,
+                    )
+                    staging_created = True
+                    metadata = os.fstat(descriptor)
+                    self._require_regular_staging_file(metadata)
+                    os.fsync(descriptor)
+                    os.close(descriptor)
+                    descriptor = -1
+                    os.fsync(parent_fd)
+                    staged_parent_fd = os.dup(parent_fd)
+                    return StagedArtifact(
+                        writer=self,
+                        parent_fd=staged_parent_fd,
+                        staging_name=staging_name,
+                        target_name=target_name,
+                        relative_path=relative_path,
+                        media_type=media_type,
+                    )
+                except Exception:
+                    if descriptor >= 0:
+                        os.close(descriptor)
+                    if staged_parent_fd >= 0:
+                        os.close(staged_parent_fd)
+                    if staging_created:
+                        try:
+                            os.unlink(staging_name, dir_fd=parent_fd)
+                        except (FileNotFoundError, IsADirectoryError):
+                            pass
+                        try:
+                            os.fsync(parent_fd)
+                        except OSError:
+                            pass
+                    raise
+
+    def _append_staged_artifact(
+        self,
+        staged: StagedArtifact,
+        content: bytes,
+    ) -> None:
+        with self._write_lock:
+            self._ensure_writable()
+            self._require_staged_artifact(staged)
+            if not isinstance(content, bytes):
+                raise TypeError("staged artifact content must be bytes")
+            resulting_size = staged._byte_size + len(content)
+            if (
+                self._max_artifact_bytes is not None
+                and resulting_size > self._max_artifact_bytes
+            ):
+                raise ValueError("artifact size exceeds the artifact limit")
+            if (
+                self._max_total_bytes is not None
+                and resulting_size > self._max_total_bytes - self._total_bytes
+            ):
+                raise ValueError("total output size exceeds the total limit")
+            self._secret_scanner.require_clean_chunks((content,))
+
+            descriptor, before = self._open_staging_file(
+                staged,
+                os.O_WRONLY | os.O_APPEND,
+            )
+            try:
+                if before.st_size != staged._byte_size:
+                    raise ValueError("staging artifact size changed unexpectedly")
+                view = memoryview(content)
+                written = 0
+                while written < len(view):
+                    consumed = os.write(descriptor, view[written:])
+                    if consumed <= 0:
+                        raise OSError("staging artifact append made no progress")
+                    written += consumed
+                os.fsync(descriptor)
+                after = os.fstat(descriptor)
+                if (
+                    self._path_identity(after) != self._path_identity(before)
+                    or after.st_size != resulting_size
+                ):
+                    raise ValueError("staging artifact changed during append")
+            finally:
+                os.close(descriptor)
+
+            staged._digest.update(content)
+            staged._byte_size = resulting_size
+
+    def _finalize_staged_artifact(
+        self,
+        staged: StagedArtifact,
+    ) -> ArtifactReference:
+        with self._write_lock:
+            self._ensure_writable()
+            self._require_staged_artifact(staged)
+            if any(item.path == staged._relative_path for item in self._manifest):
+                raise ValueError("artifact path is already recorded")
+            if (
+                self._max_artifact_bytes is not None
+                and staged._byte_size > self._max_artifact_bytes
+            ):
+                raise ValueError("artifact size exceeds the artifact limit")
+            if (
+                self._max_total_bytes is not None
+                and staged._byte_size > self._max_total_bytes - self._total_bytes
+            ):
+                raise ValueError("total output size exceeds the total limit")
+
+            descriptor, before = self._open_staging_file(staged, os.O_RDONLY)
+            digest = hashlib.sha256()
+            consumed = 0
+
+            def scanned_chunks() -> Iterator[bytes]:
+                nonlocal consumed
+                while True:
+                    chunk = os.read(descriptor, 1024 * 1024)
+                    if not chunk:
+                        return
+                    consumed += len(chunk)
+                    if consumed > staged._byte_size:
+                        raise ValueError("staging artifact size changed unexpectedly")
+                    digest.update(chunk)
+                    yield chunk
+
+            try:
+                if before.st_size != staged._byte_size:
+                    raise ValueError("staging artifact size changed unexpectedly")
+                self._secret_scanner.require_clean_chunks(scanned_chunks())
+                after = os.fstat(descriptor)
+            finally:
+                os.close(descriptor)
+
+            expected_digest = staged._digest.hexdigest()
+            if (
+                consumed != staged._byte_size
+                or digest.hexdigest() != expected_digest
+                or self._path_identity(after) != self._path_identity(before)
+            ):
+                raise ValueError("staging artifact changed before finalization")
+            try:
+                path_metadata = os.stat(
+                    staged._staging_name,
+                    dir_fd=staged._parent_fd,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError as exc:
+                raise ValueError("staging artifact is unavailable") from exc
+            self._require_regular_staging_file(path_metadata)
+            if self._path_identity(path_metadata) != self._path_identity(before):
+                raise ValueError("staging artifact changed before finalization")
+
+            self._target_must_be_absent(
+                staged._parent_fd,
+                staged._target_name,
+            )
+            os.replace(
+                staged._staging_name,
+                staged._target_name,
+                src_dir_fd=staged._parent_fd,
+                dst_dir_fd=staged._parent_fd,
+            )
+            os.fsync(staged._parent_fd)
+
+            reference = ArtifactReference(
+                path=staged._relative_path,
+                media_type=staged._media_type,
+                byte_size=staged._byte_size,
+                digest=f"sha256:{expected_digest}",
+            )
+            self._manifest.append(reference)
+            self._total_bytes += staged._byte_size
+            return reference
+
+    def _abort_staged_artifact(self, staged: StagedArtifact) -> None:
+        with self._write_lock:
+            self._require_staged_artifact(staged)
+            try:
+                os.unlink(
+                    staged._staging_name,
+                    dir_fd=staged._parent_fd,
+                )
+            except FileNotFoundError:
+                pass
+            except IsADirectoryError as exc:
+                raise ValueError(
+                    "staging artifact was replaced by a directory"
+                ) from exc
+            os.fsync(staged._parent_fd)
+
     def write_bytes(
         self,
         relative_path: str,
@@ -453,9 +827,7 @@ class OutputWriter:
                 try:
                     before = os.fstat(descriptor)
                     if not stat.S_ISREG(before.st_mode):
-                        raise ValueError(
-                            "external artifact must be a regular file"
-                        )
+                        raise ValueError("external artifact must be a regular file")
                     if before.st_size != validated.byte_size:
                         raise ValueError("external artifact size mismatch")
                     digest = hashlib.sha256()
@@ -670,9 +1042,7 @@ class OutputWriter:
             "run_result": result_reference.model_dump(mode="json"),
         }
         if manifest_reference is not None:
-            completion["protocol_manifest"] = manifest_reference.model_dump(
-                mode="json"
-            )
+            completion["protocol_manifest"] = manifest_reference.model_dump(mode="json")
         with self._write_lock:
             self._ensure_writable()
             self.write_json("completion.json", completion, record=False)
@@ -695,6 +1065,7 @@ __all__ = [
     "OCTET_STREAM_MEDIA_TYPE",
     "OutputWriter",
     "OutputTreeSnapshot",
+    "StagedArtifact",
     "capture_output_tree",
     "enforce_output_tree_unchanged",
     "restore_output_tree",

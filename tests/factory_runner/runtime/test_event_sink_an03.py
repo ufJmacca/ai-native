@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from io import BytesIO
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -50,9 +51,97 @@ def _writer(tmp_path: Path) -> OutputWriter:
 
 def _event_bytes(*events: RunnerEvent) -> bytes:
     return b"".join(
-        canonical_json_bytes(event.model_dump(mode="json")) + b"\n"
-        for event in events
+        canonical_json_bytes(event.model_dump(mode="json")) + b"\n" for event in events
     )
+
+
+def _event_staging_files(root: Path) -> tuple[Path, ...]:
+    return tuple(sorted(root.glob(".events.ndjson.*.staging")))
+
+
+def test_event_sink_fsyncs_each_append_to_unpublished_staging(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    writer = _writer(tmp_path)
+    fsync_descriptors: list[int] = []
+    real_fsync = os.fsync
+
+    def record_fsync(descriptor: int) -> None:
+        fsync_descriptors.append(descriptor)
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(os, "fsync", record_fsync)
+    sink = EventSink(writer=writer)
+    started = _event(1, "RunnerStarted")
+    validated = _event(2, "InputValidated")
+
+    before_first_append = len(fsync_descriptors)
+    sink.append(started)
+
+    staging = _event_staging_files(writer.root)
+    assert len(staging) == 1
+    assert staging[0].read_bytes() == _event_bytes(started)
+    assert len(fsync_descriptors) > before_first_append
+    assert not (writer.root / "events.ndjson").exists()
+    assert not (writer.root / "completion.json").exists()
+
+    before_second_append = len(fsync_descriptors)
+    sink.append(validated)
+
+    assert staging[0].read_bytes() == _event_bytes(started, validated)
+    assert len(fsync_descriptors) > before_second_append
+    assert not (writer.root / "events.ndjson").exists()
+
+    sink.abort()
+    assert not _event_staging_files(writer.root)
+    assert not (writer.root / "events.ndjson").exists()
+    assert not (writer.root / "completion.json").exists()
+
+
+def test_unfinalized_event_sink_has_no_valid_event_or_completion_artifact(
+    tmp_path: Path,
+) -> None:
+    writer = _writer(tmp_path)
+    sink = EventSink(writer=writer)
+
+    sink.append(_event(1, "RunnerStarted"))
+
+    assert len(_event_staging_files(writer.root)) == 1
+    assert not (writer.root / "events.ndjson").exists()
+    assert not (writer.root / "protocol-manifest.json").exists()
+    assert not (writer.root / "completion.json").exists()
+
+
+def test_event_staging_rejects_traversal_links_and_replacement(
+    tmp_path: Path,
+) -> None:
+    writer = _writer(tmp_path)
+    outside = tmp_path / "outside"
+    outside.write_bytes(b"outside remains unchanged")
+    linked = writer.root / "linked"
+    linked.symlink_to(tmp_path, target_is_directory=True)
+
+    for unsafe_path in ("../events.ndjson", "/events.ndjson", "linked/events.ndjson"):
+        with pytest.raises(ValueError):
+            writer.begin_staged_artifact(
+                unsafe_path,
+                media_type="application/x-ndjson",
+            )
+
+    sink = EventSink(writer=writer)
+    sink.append(_event(1, "RunnerStarted"))
+    staging = _event_staging_files(writer.root)
+    assert len(staging) == 1
+    staging[0].unlink()
+    staging[0].symlink_to(outside)
+
+    with pytest.raises(ValueError, match="link|staging|regular"):
+        sink.finalize()
+
+    assert outside.read_bytes() == b"outside remains unchanged"
+    assert not (writer.root / "events.ndjson").exists()
+    sink.abort()
 
 
 def _write_no_change_result(
@@ -98,12 +187,12 @@ def test_event_sink_writes_ordered_canonical_runner_event_ndjson(
     reference = sink.finalize()
 
     content = (writer.root / reference.path).read_bytes()
+    assert not _event_staging_files(writer.root)
     assert reference.path == "events.ndjson"
     assert reference.media_type == "application/x-ndjson"
     assert content == _event_bytes(started, validated)
     decoded = [
-        RunnerEvent.model_validate(json.loads(line))
-        for line in content.splitlines()
+        RunnerEvent.model_validate(json.loads(line)) for line in content.splitlines()
     ]
     assert [event.sequence for event in decoded] == [1, 2]
     assert [event.event_type for event in decoded] == [
