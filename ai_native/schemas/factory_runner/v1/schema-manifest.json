@@ -17,10 +17,22 @@
       "schema_id": "urn:ai-native:factory-runner:v1:checkpoint"
     },
     {
+      "digest": "sha256:403f2bebb7bd8bb422e26283507515938e466b0a687014dcbf34868bf724592e",
+      "path": "completion.schema.json",
+      "schema": "completion/v1",
+      "schema_id": "urn:ai-native:factory-runner:v1:completion"
+    },
+    {
       "digest": "sha256:af0ef0a06de95b6581b19393fede65b990862cdc20b360c41ee23e6dde9dbe46",
       "path": "context-bundle.schema.json",
       "schema": "context-bundle/v1",
       "schema_id": "urn:ai-native:factory-runner:v1:context-bundle"
+    },
+    {
+      "digest": "sha256:e9f48cc2186a4ffb83618a1ad4382e3ca6f1c3f389a19862e3b39b012f0d2e51",
+      "path": "protocol-manifest.schema.json",
+      "schema": "protocol-manifest/v1",
+      "schema_id": "urn:ai-native:factory-runner:v1:protocol-manifest"
     },
     {
       "digest": "sha256:b7c20373d41266a1924780ec6d0babd25d86f5c45898db2a0329f56b7c9b862b",

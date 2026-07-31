@@ -1,0 +1,25 @@
+# Implement the deterministic greeting change.
+
+## Acceptance criteria
+- greeting('Codex') returns 'Hello, Codex!'
+
+## Non-goals
+- Commit or publish the change
+
+## Constraints
+- Use only declared stages and commands
+
+## Repository instructions
+- Keep the public greeting function in app.py.
+
+## Trusted policy summary
+- The attempt may author and verify but may not publish.
+
+## Approved repository memory
+- The greeting function accepts one name string.
+
+## Dependency outputs
+- No upstream dependency changes are required.
+
+## Operator input
+- Preserve the greeting(name: str) signature.

@@ -1,0 +1,59 @@
+{
+  "active_slice": null,
+  "base_ref": null,
+  "created_at": "2026-07-31T00:00:00+00:00",
+  "current_stage": "plan",
+  "feature_slug": "factory-run",
+  "metadata": {
+    "attempt_id": "attempt-an-02",
+    "factory_mode": true,
+    "workspace_artifacts_root": "@{FACTORY_PRIVATE_RUN}@/agent-workspace"
+  },
+  "run_dir": "@{FACTORY_PRIVATE_RUN}@",
+  "run_id": "run-an-02",
+  "run_projection": {
+    "blocked_steps": [],
+    "completed_steps": [
+      "plan"
+    ],
+    "in_progress_steps": [],
+    "next_executable_steps": [
+      "intake"
+    ],
+    "schema_version": 1
+  },
+  "scheduler_status": "idle",
+  "slice_states": {},
+  "spec_hash": "170a25110f11e2fa7365e129568001c38ebbb226280f1ecd762c32c8d793480c",
+  "spec_path": "@{FACTORY_PRIVATE_RUN}@/spec.md",
+  "stage_status": {
+    "plan": {
+      "artifacts": [
+        "@{FACTORY_PRIVATE_RUN}@/plan/grounding.md",
+        "@{FACTORY_PRIVATE_RUN}@/plan/questions.json",
+        "@{FACTORY_PRIVATE_RUN}@/plan/questions.md",
+        "@{FACTORY_PRIVATE_RUN}@/plan/answers.json",
+        "@{FACTORY_PRIVATE_RUN}@/plan/answers.md",
+        "@{FACTORY_PRIVATE_RUN}@/plan/intent.md",
+        "@{FACTORY_PRIVATE_RUN}@/plan/implementation.md",
+        "@{FACTORY_PRIVATE_RUN}@/plan/approval-checklist.md",
+        "@{FACTORY_PRIVATE_RUN}@/plan/critique-history.md",
+        "@{FACTORY_PRIVATE_RUN}@/plan/blocker-ledger.md",
+        "@{FACTORY_PRIVATE_RUN}@/plan/plan.json",
+        "@{FACTORY_PRIVATE_RUN}@/plan/plan.md",
+        "@{FACTORY_PRIVATE_RUN}@/plan/plan-attempt-1.json",
+        "@{FACTORY_PRIVATE_RUN}@/plan/plan-attempt-1.md",
+        "@{FACTORY_PRIVATE_RUN}@/plan/plan-review.md",
+        "@{FACTORY_PRIVATE_RUN}@/plan/plan-review.json",
+        "@{FACTORY_PRIVATE_RUN}@/plan/plan-review-attempt-1.md",
+        "@{FACTORY_PRIVATE_RUN}@/plan/plan-review-attempt-1.json"
+      ],
+      "notes": [],
+      "stage": "plan",
+      "status": "completed"
+    }
+  },
+  "status": "in_progress",
+  "updated_at": "2026-07-31T00:00:00+00:00",
+  "workspace_root": "@{FACTORY_WORKSPACE_ROOT}@"
+}

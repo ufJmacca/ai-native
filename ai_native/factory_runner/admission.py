@@ -12,12 +12,17 @@ import stat
 from types import MappingProxyType
 from typing import Literal, TypeVar, cast
 
-from ai_native.factory_runner.contracts.change_set import ChangeSet
+from ai_native.factory_runner.contracts.change_set import ChangeSet, ChangedFile
 from ai_native.factory_runner.contracts.common import ArtifactReference
 from ai_native.factory_runner.contracts.context_bundle import ContextBundle
 from ai_native.factory_runner.contracts.run_spec import RunSpec
 from ai_native.factory_runner.contracts.verification_evidence import (
     VerificationEvidence,
+)
+from ai_native.factory_runner.checkpoints import (
+    CheckpointError,
+    CheckpointManager,
+    LoadedCheckpoint,
 )
 from ai_native.factory_runner.errors import (
     ContractErrorCode,
@@ -50,6 +55,8 @@ ContractModel = TypeVar(
 )
 
 _MAX_CONTRACT_BYTES = 16 * 1024 * 1024
+_MAX_CHANGED_FILE_BYTES = 16 * 1024 * 1024
+_MAX_CHANGED_BYTES = 64 * 1024 * 1024
 _MAX_POLICY_PATH_ENTRIES = 100_000
 _GATEWAY_ONLY_ENVIRONMENT_KEYS = frozenset({"ATTEMPT_GATEWAY_TOKEN_FILE"})
 _RUNNER_BOOTSTRAP_ENVIRONMENT_KEYS = frozenset(
@@ -58,7 +65,7 @@ _RUNNER_BOOTSTRAP_ENVIRONMENT_KEYS = frozenset(
         *_GATEWAY_ONLY_ENVIRONMENT_KEYS,
     }
 )
-_SUPPORTED_CAPABILITIES = ("author", "verify")
+_SUPPORTED_CAPABILITIES = ("author", "verify", "structured-events")
 _SUPPORTED_NETWORK_PROFILES = frozenset(
     {
         "model-gateway-only",
@@ -114,6 +121,7 @@ class ValidatedInputs:
     workspace: Path
     context_digest: str
     environment: Mapping[str, str]
+    checkpoint: LoadedCheckpoint | None = None
 
 
 def _fail(
@@ -301,7 +309,7 @@ def _audit_environment(environment: Mapping[str, str]) -> Mapping[str, str]:
 
 def _validate_capabilities_and_profiles(run_spec: RunSpec) -> None:
     try:
-        negotiate_protocol(
+        negotiation = negotiate_protocol(
             protocol=run_spec.protocol,
             required_capabilities=run_spec.capabilities.required,
             optional_capabilities=run_spec.capabilities.optional,
@@ -326,10 +334,13 @@ def _validate_capabilities_and_profiles(run_spec: RunSpec) -> None:
             ContractErrorCode.POLICY_DENIED,
             "credential profile is not available in factory mode",
         )
-    if run_spec.outputs.stream_events_to_stdout:
+    if (
+        run_spec.outputs.stream_events_to_stdout
+        and "structured-events" not in negotiation.negotiated_capabilities
+    ):
         raise _fail(
             ContractErrorCode.UNSUPPORTED_CAPABILITY,
-            "stdout event streaming is not available until AN-03",
+            "stdout event streaming requires structured-events negotiation",
         )
     if run_spec.operation == "author" and not policy.allowed_commands:
         raise _fail(
@@ -364,8 +375,38 @@ def _validate_capabilities_and_profiles(run_spec: RunSpec) -> None:
 def _validate_context_relationships(
     run_spec: RunSpec,
     context_bundle: ContextBundle,
+    checkpoint: LoadedCheckpoint | None,
 ) -> None:
-    if context_bundle.identity != run_spec.identity:
+    if checkpoint is None and run_spec.operation == "author":
+        identity_matches = context_bundle.identity == run_spec.identity
+    elif checkpoint is not None:
+        producer = checkpoint.checkpoint
+        context_identity = context_bundle.identity.model_dump(
+            mode="json",
+            exclude={"attempt_id"},
+        )
+        run_identity = run_spec.identity.model_dump(
+            mode="json",
+            exclude={"attempt_id"},
+        )
+        producer_identity = producer.identity.model_dump(
+            mode="json",
+            exclude={"attempt_id"},
+        )
+        identity_matches = (
+            context_identity == producer_identity == run_identity
+            and context_bundle.repository == producer.repository
+            and context_bundle.bundle_digest == producer.context_bundle_digest
+        )
+    else:
+        identity_matches = context_bundle.identity.model_dump(
+            mode="json",
+            exclude={"attempt_id"},
+        ) == run_spec.identity.model_dump(
+            mode="json",
+            exclude={"attempt_id"},
+        )
+    if not identity_matches:
         raise _fail(
             ContractErrorCode.INVALID_INPUT,
             "context identity does not match the run spec",
@@ -484,7 +525,10 @@ def _validate_context_objects(
         )
 
 
-def _load_context(run_spec: RunSpec) -> tuple[ContextBundle, Path]:
+def _load_context(
+    run_spec: RunSpec,
+    checkpoint: LoadedCheckpoint | None,
+) -> tuple[ContextBundle, Path]:
     context_path, context_model = _read_contract(
         Path(run_spec.context.manifest_path),
         expected_schema="context-bundle/v1",
@@ -504,9 +548,40 @@ def _load_context(run_spec: RunSpec) -> tuple[ContextBundle, Path]:
             ContractErrorCode.DIGEST_MISMATCH,
             "context bundle does not match its expected digest",
         )
-    _validate_context_relationships(run_spec, context_bundle)
+    _validate_context_relationships(run_spec, context_bundle, checkpoint)
     _validate_context_objects(context_path, context_bundle)
     return context_bundle, context_path
+
+
+def _load_resume_checkpoint(
+    run_spec: RunSpec,
+    *,
+    input_root: Path,
+) -> LoadedCheckpoint | None:
+    checkpoint_path = run_spec.resume.checkpoint_path
+    expected_digest = run_spec.resume.expected_digest
+    if checkpoint_path is None or expected_digest is None:
+        return None
+    resume_root = input_root / "resume"
+    try:
+        if resume_root.is_symlink():
+            raise CheckpointError("checkpoint root must not be a symbolic link")
+        resolved_root = resume_root.resolve(strict=True)
+        checkpoint_candidate = Path(checkpoint_path)
+        resolved_checkpoint = checkpoint_candidate.resolve(strict=True)
+        if not resolved_checkpoint.is_relative_to(resolved_root):
+            raise CheckpointError("checkpoint path escapes the resume input root")
+        return CheckpointManager(resolved_root).load_for_resume(
+            checkpoint_candidate,
+            expected_digest=expected_digest,
+            run_spec=run_spec,
+            supported_capabilities=_SUPPORTED_CAPABILITIES,
+        )
+    except (CheckpointError, OSError, RuntimeError) as exc:
+        raise _fail(
+            ContractErrorCode.CHECKPOINT_INCOMPATIBLE,
+            "checkpoint input is incompatible with this run",
+        ) from exc
 
 
 def _load_change_set(
@@ -537,8 +612,17 @@ def _load_change_set(
             ContractErrorCode.DIGEST_MISMATCH,
             "verification change set does not match its expected digest",
         )
+    change_set_lineage = change_set.identity.model_dump(
+        mode="json",
+        exclude={"attempt_id"},
+    )
+    run_lineage = run_spec.identity.model_dump(
+        mode="json",
+        exclude={"attempt_id"},
+    )
     if (
-        change_set.identity != run_spec.identity
+        change_set_lineage != run_lineage
+        or context_bundle.identity != change_set.identity
         or change_set.repository != run_spec.repository
         or change_set.context_digest != context_bundle.bundle_digest
     ):
@@ -631,12 +715,6 @@ def admit_inputs(
         )
 
     audited_environment = _audit_environment(environment)
-    if run_spec.resume.checkpoint_path is not None:
-        raise _fail(
-            ContractErrorCode.CHECKPOINT_INCOMPATIBLE,
-            "checkpoint resume is not available until durable AN-03 checkpoints",
-        )
-
     workspace = _resolved_workspace(run_spec.workspace.path)
     cli_output = _resolved_output(Path(output_dir))
     declared_output = _resolved_output(Path(run_spec.outputs.output_dir))
@@ -652,7 +730,11 @@ def admit_inputs(
         )
 
     _validate_capabilities_and_profiles(run_spec)
-    context_bundle, _ = _load_context(run_spec)
+    checkpoint = _load_resume_checkpoint(
+        run_spec,
+        input_root=resolved_run_spec.parent,
+    )
+    context_bundle, _ = _load_context(run_spec, checkpoint)
     change_set = _load_change_set(
         run_spec,
         context_bundle,
@@ -668,6 +750,7 @@ def admit_inputs(
         workspace=workspace,
         context_digest=context_bundle.bundle_digest,
         environment=audited_environment,
+        checkpoint=checkpoint,
     )
 
 
@@ -708,20 +791,83 @@ def _git_bytes(
         ) from exc
 
 
-def _working_tree_mode(path: Path) -> str:
+def _git_diff_bytes(
+    workspace: Path,
+    *arguments: str,
+    git_runtime: FactoryGitRuntime,
+) -> bytes:
     try:
-        metadata = path.lstat()
+        return git_runtime.run_diff(*arguments)
+    except (FactoryGitCancelled, FactoryGitTimedOut):
+        raise
+    except FactoryGitError as exc:
+        raise _fail(
+            ContractErrorCode.INVALID_INPUT,
+            "workspace repository could not be inspected",
+        ) from exc
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedFile:
+    content: bytes
+    mode: str
+
+    @property
+    def digest(self) -> str:
+        return f"sha256:{hashlib.sha256(self.content).hexdigest()}"
+
+    @property
+    def binary(self) -> bool:
+        return b"\0" in self.content
+
+
+def _working_tree_file(path: Path) -> _PreparedFile:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags)
     except OSError as exc:
         raise _fail(
             ContractErrorCode.POLICY_DENIED,
             "prepared verification file is unavailable",
         ) from exc
-    if not stat.S_ISREG(metadata.st_mode):
-        raise _fail(
-            ContractErrorCode.POLICY_DENIED,
-            "prepared verification paths must be regular files",
-        )
-    return "100755" if metadata.st_mode & stat.S_IXUSR else "100644"
+    try:
+        metadata = os.fstat(descriptor)
+        permissions = stat.S_IMODE(metadata.st_mode)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or permissions not in {0o644, 0o755}
+        ):
+            raise _fail(
+                ContractErrorCode.POLICY_DENIED,
+                "prepared verification file type or mode is unsupported",
+            )
+        if metadata.st_size > _MAX_CHANGED_FILE_BYTES:
+            raise _fail(
+                ContractErrorCode.POLICY_DENIED,
+                "prepared verification file exceeds the byte limit",
+            )
+        chunks: list[bytes] = []
+        consumed = 0
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            consumed += len(chunk)
+            if consumed > _MAX_CHANGED_FILE_BYTES:
+                raise _fail(
+                    ContractErrorCode.POLICY_DENIED,
+                    "prepared verification file exceeds the byte limit",
+                )
+            chunks.append(chunk)
+    finally:
+        os.close(descriptor)
+    return _PreparedFile(
+        content=b"".join(chunks),
+        mode="100755" if permissions == 0o755 else "100644",
+    )
 
 
 def _path_rule_covers(rule: str, path: str) -> bool:
@@ -778,6 +924,11 @@ def _reject_symlink_tree(root: Path, *, description: str) -> None:
             raise _fail(
                 ContractErrorCode.POLICY_DENIED,
                 f"{description} contains a special file",
+            )
+        elif metadata.st_nlink != 1:
+            raise _fail(
+                ContractErrorCode.POLICY_DENIED,
+                f"{description} contains a hard link alias",
             )
 
 
@@ -864,6 +1015,269 @@ def _base_tree_mode(
     return mode
 
 
+def _base_tree_contains(
+    workspace: Path,
+    path: str,
+    *,
+    git_runtime: FactoryGitRuntime,
+) -> bool:
+    return bool(
+        _git_bytes(
+            workspace,
+            "ls-tree",
+            "-z",
+            "HEAD",
+            "--",
+            path,
+            git_runtime=git_runtime,
+        )
+    )
+
+
+def _base_tree_file(
+    workspace: Path,
+    path: str,
+    *,
+    git_runtime: FactoryGitRuntime,
+) -> _PreparedFile:
+    content = _git_bytes(
+        workspace,
+        "show",
+        f"HEAD:{path}",
+        git_runtime=git_runtime,
+    )
+    if len(content) > _MAX_CHANGED_FILE_BYTES:
+        raise _fail(
+            ContractErrorCode.POLICY_DENIED,
+            "prepared verification base file exceeds the byte limit",
+        )
+    return _PreparedFile(
+        content=content,
+        mode=_base_tree_mode(
+            workspace,
+            path,
+            git_runtime=git_runtime,
+        ),
+    )
+
+
+def _require_worktree_path_absent(path: Path) -> None:
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise _fail(
+            ContractErrorCode.POLICY_DENIED,
+            "prepared verification path could not be inspected",
+        ) from exc
+    raise _fail(
+        ContractErrorCode.POLICY_DENIED,
+        "prepared verification path must be absent",
+    )
+
+
+def _prepared_status_entries(
+    inputs: ValidatedInputs,
+    *,
+    git_runtime: FactoryGitRuntime,
+) -> list[tuple[str, str]]:
+    raw = _git_bytes(
+        inputs.workspace,
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+        "--no-renames",
+        git_runtime=git_runtime,
+    )
+    entries: list[tuple[str, str]] = []
+    observed_paths: set[str] = set()
+    for record in (item for item in raw.split(b"\0") if item):
+        try:
+            decoded = record.decode("utf-8", errors="strict")
+        except UnicodeError as exc:
+            raise _fail(
+                ContractErrorCode.POLICY_DENIED,
+                "verify workspace contains an unsupported path",
+            ) from exc
+        if len(decoded) < 4 or decoded[2] != " ":
+            raise _fail(
+                ContractErrorCode.POLICY_DENIED,
+                "verify workspace has an unsupported Git status",
+            )
+        status_code = decoded[:2]
+        path = decoded[3:]
+        if status_code not in {" M", " D", "??"}:
+            raise _fail(
+                ContractErrorCode.POLICY_DENIED,
+                "verify workspace has staged or unsupported changes",
+            )
+        if path in observed_paths:
+            raise _fail(
+                ContractErrorCode.POLICY_DENIED,
+                "verify workspace reports a duplicate changed path",
+            )
+        observed_paths.add(path)
+        entries.append((status_code, path))
+    return sorted(entries, key=lambda item: item[1].encode("utf-8"))
+
+
+def _expected_status_entries(
+    changed_files: tuple[ChangedFile, ...],
+) -> dict[str, str]:
+    expected: dict[str, str] = {}
+
+    def add(path: str, status_code: str) -> None:
+        if path in expected:
+            raise _fail(
+                ContractErrorCode.POLICY_DENIED,
+                "verify ChangeSet contains conflicting path operations",
+            )
+        expected[path] = status_code
+
+    for changed in changed_files:
+        if changed.operation == "add":
+            add(changed.path, "??")
+        elif changed.operation == "delete":
+            add(changed.path, " D")
+        elif changed.operation == "modify":
+            add(changed.path, " M")
+        else:
+            assert changed.previous_path is not None
+            add(changed.previous_path, " D")
+            add(changed.path, "??")
+    return expected
+
+
+def _validate_changed_file_state(
+    inputs: ValidatedInputs,
+    changed: ChangedFile,
+    *,
+    git_runtime: FactoryGitRuntime,
+) -> int:
+    source_path = (
+        changed.previous_path if changed.operation == "rename" else changed.path
+    )
+    relevant_paths = (changed.path,) + (
+        (changed.previous_path,) if changed.previous_path is not None else ()
+    )
+    if any(
+        path is None or not _path_is_allowed(inputs.run_spec, path)
+        for path in relevant_paths
+    ):
+        raise _fail(
+            ContractErrorCode.POLICY_DENIED,
+            "verify ChangeSet contains a path outside admitted authority",
+        )
+
+    previous: _PreparedFile | None = None
+    resulting: _PreparedFile | None = None
+    if changed.operation != "add":
+        assert source_path is not None
+        previous = _base_tree_file(
+            inputs.workspace,
+            source_path,
+            git_runtime=git_runtime,
+        )
+    elif _base_tree_contains(
+        inputs.workspace,
+        changed.path,
+        git_runtime=git_runtime,
+    ):
+        raise _fail(
+            ContractErrorCode.POLICY_DENIED,
+            "prepared added path already exists at the declared base",
+        )
+
+    if changed.operation != "delete":
+        resulting = _working_tree_file(inputs.workspace / changed.path)
+    else:
+        _require_worktree_path_absent(inputs.workspace / changed.path)
+
+    if changed.operation == "rename":
+        assert changed.previous_path is not None
+        _require_worktree_path_absent(inputs.workspace / changed.previous_path)
+        if previous is None or resulting is None or previous.digest != resulting.digest:
+            raise _fail(
+                ContractErrorCode.POLICY_DENIED,
+                "prepared verification supports exact-content renames only",
+            )
+
+    if (
+        changed.previous_blob_digest
+        != (previous.digest if previous is not None else None)
+        or changed.resulting_blob_digest
+        != (resulting.digest if resulting is not None else None)
+        or changed.previous_mode != (previous.mode if previous is not None else None)
+        or changed.resulting_mode != (resulting.mode if resulting is not None else None)
+        or changed.binary
+        != (
+            (previous.binary if previous is not None else False)
+            or (resulting.binary if resulting is not None else False)
+        )
+    ):
+        raise _fail(
+            ContractErrorCode.POLICY_DENIED,
+            "verify workspace content does not match the admitted ChangeSet",
+        )
+    return len(previous.content if previous is not None else b"") + len(
+        resulting.content if resulting is not None else b""
+    )
+
+
+def _prepared_patch(
+    inputs: ValidatedInputs,
+    *,
+    entries: list[tuple[str, str]],
+    git_runtime: FactoryGitRuntime,
+) -> bytes:
+    fragments: list[bytes] = []
+    tracked_patch = _git_bytes(
+        inputs.workspace,
+        "diff",
+        "--binary",
+        "--full-index",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-renames",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        "HEAD",
+        "--",
+        git_runtime=git_runtime,
+    )
+    if tracked_patch:
+        fragments.append(tracked_patch)
+    for status_code, path in entries:
+        if status_code != "??":
+            continue
+        patch = _git_diff_bytes(
+            inputs.workspace,
+            "diff",
+            "--no-index",
+            "--binary",
+            "--full-index",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            "--",
+            "/dev/null",
+            path,
+            git_runtime=git_runtime,
+        )
+        if not patch:
+            raise _fail(
+                ContractErrorCode.POLICY_DENIED,
+                "prepared added path has no deterministic patch",
+            )
+        fragments.append(patch)
+    return b"".join(fragments)
+
+
 def _validate_prepared_change_set(
     inputs: ValidatedInputs,
     *,
@@ -876,99 +1290,36 @@ def _validate_prepared_change_set(
             "verify workspace is missing its admitted ChangeSet",
         )
 
-    status_output = _git(
-        inputs.workspace,
-        "status",
-        "--porcelain=v1",
-        "--untracked-files=all",
-        "--no-renames",
-        git_runtime=git_runtime,
-    )
-    status_paths: dict[str, str] = {}
-    for line in status_output.splitlines():
-        if len(line) < 4 or line[2] != " ":
-            raise _fail(
-                ContractErrorCode.POLICY_DENIED,
-                "verify workspace has an unsupported Git status",
-            )
-        status_code = line[:2]
-        path = line[3:]
-        if status_code[0] != " ":
-            raise _fail(
-                ContractErrorCode.POLICY_DENIED,
-                "verify workspace may not contain staged changes",
-            )
-        status_paths[path] = status_code
-
-    declared_paths = {changed.path for changed in change_set.changed_files}
-    if set(status_paths) != declared_paths:
+    entries = _prepared_status_entries(inputs, git_runtime=git_runtime)
+    status_paths = {path: status_code for status_code, path in entries}
+    if status_paths != _expected_status_entries(change_set.changed_files):
         raise _fail(
             ContractErrorCode.POLICY_DENIED,
             "verify workspace changes do not match the admitted ChangeSet",
         )
 
+    consumed = 0
     for changed in change_set.changed_files:
-        paths = (changed.path,) + (
-            (changed.previous_path,) if changed.previous_path is not None else ()
-        )
-        if any(not _path_is_allowed(inputs.run_spec, path) for path in paths):
-            raise _fail(
-                ContractErrorCode.POLICY_DENIED,
-                "verify ChangeSet contains a path outside admitted authority",
-            )
-        if changed.operation != "modify" or status_paths[changed.path] != " M":
-            raise _fail(
-                ContractErrorCode.POLICY_DENIED,
-                "AN-02 clean verification supports tracked modifications only",
-            )
-        previous = _git_bytes(
-            inputs.workspace,
-            "show",
-            f"HEAD:{changed.path}",
+        consumed += _validate_changed_file_state(
+            inputs,
+            changed,
             git_runtime=git_runtime,
         )
-        resulting_path = inputs.workspace / changed.path
-        try:
-            resulting = resulting_path.read_bytes()
-        except OSError as exc:
+        if consumed > _MAX_CHANGED_BYTES:
             raise _fail(
                 ContractErrorCode.POLICY_DENIED,
-                "prepared verification file could not be read",
-            ) from exc
-        previous_digest = f"sha256:{hashlib.sha256(previous).hexdigest()}"
-        resulting_digest = f"sha256:{hashlib.sha256(resulting).hexdigest()}"
-        if (
-            previous_digest != changed.previous_blob_digest
-            or resulting_digest != changed.resulting_blob_digest
-            or _base_tree_mode(
-                inputs.workspace,
-                changed.path,
-                git_runtime=git_runtime,
+                "prepared verification files exceed the aggregate byte limit",
             )
-            != changed.previous_mode
-            or _working_tree_mode(resulting_path) != changed.resulting_mode
-        ):
-            raise _fail(
-                ContractErrorCode.POLICY_DENIED,
-                "verify workspace content does not match the admitted ChangeSet",
-            )
-
-    prepared_patch = _git_bytes(
-        inputs.workspace,
-        "diff",
-        "--binary",
-        "--full-index",
-        "--no-color",
-        "--no-ext-diff",
-        "--no-textconv",
-        "--src-prefix=a/",
-        "--dst-prefix=b/",
-        "HEAD",
-        "--",
+    prepared_patch = _prepared_patch(
+        inputs,
+        entries=entries,
         git_runtime=git_runtime,
     )
     prepared_patch_digest = f"sha256:{hashlib.sha256(prepared_patch).hexdigest()}"
-    if prepared_patch_digest != change_set.patch.digest:
+    if (
+        prepared_patch_digest != change_set.patch.digest
+        or len(prepared_patch) != change_set.patch.byte_size
+    ):
         raise _fail(
             ContractErrorCode.POLICY_DENIED,
             "verify workspace diff does not match the admitted patch",

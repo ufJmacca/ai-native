@@ -1,0 +1,22 @@
+# Greeting implementation
+
+## Summary
+One deterministic vertical slice.
+
+## Slices
+
+### S001: Update greeting punctuation
+
+Return the requested greeting.
+
+Acceptance criteria:
+- greeting('Codex') returns 'Hello, Codex!'
+
+File impact:
+- app.py
+
+Test plan:
+- Run the declared verification command
+
+Dependencies:
+- None

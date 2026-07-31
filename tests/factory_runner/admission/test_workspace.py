@@ -283,6 +283,22 @@ def test_author_rejects_symlinks_in_writable_path_trees(
     )
 
 
+def test_author_rejects_hard_links_in_writable_path_trees(
+    admission_api: ModuleType,
+    admission_case: AdmissionCase,
+) -> None:
+    source = admission_case.workspace / "src" / "app.py"
+    outside_alias = admission_case.root / "outside-app-alias.py"
+    os.link(source, outside_alias)
+
+    assert_workspace_rejected(
+        admission_api,
+        admission_case,
+        "policy_denied",
+    )
+    assert outside_alias.read_bytes() == source.read_bytes()
+
+
 def test_verify_accepts_a_prepared_uncommitted_change(
     admission_api: ModuleType,
     admission_case: AdmissionCase,

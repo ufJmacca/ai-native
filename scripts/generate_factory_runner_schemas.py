@@ -8,6 +8,7 @@ from ai_native.factory_runner.schema_generation import (
     schema_artifact_drift,
     write_schema_artifacts,
 )
+from ai_native.factory_runner.schema_registry import CONTRACT_SCHEMAS
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -55,7 +56,9 @@ def main() -> int:
         (output_dir / SCHEMA_SET_DIGEST_FILENAME).read_text(encoding="ascii").strip()
     )
     action = "verified" if args.check else "generated"
-    print(f"{action} 7 factory runner schemas; schema set {digest}")
+    print(
+        f"{action} {len(CONTRACT_SCHEMAS)} factory runner schemas; schema set {digest}"
+    )
     return 0
 
 

@@ -107,6 +107,14 @@ def main() -> int:
         choices=(
             "assert-first-prompt-context",
             "author",
+            "author-add",
+            "author-binary",
+            "author-delete",
+            "author-mode",
+            "author-no-change",
+            "author-pause-verify",
+            "author-rename",
+            "author-secret",
             "blocked",
             "fail-if-called",
             "mutate-git-config",
@@ -127,9 +135,18 @@ def main() -> int:
     with args.marker.open("a", encoding="utf-8") as marker:
         marker.write(f"{args.mode}\n")
 
+    schema_value = os.environ.get("AINATIVE_SCHEMA_FILE")
     if args.mode == "fail-if-called":
         return 97
     if args.mode == "sleep":
+        time.sleep(30)
+        return 98
+    if (
+        args.mode == "author-pause-verify"
+        and schema_value
+        and Path(schema_value).name == "verification-report.json"
+    ):
+        args.marker.with_name("verification-agent.started").write_text("started")
         time.sleep(30)
         return 98
     if args.mode == "mutate-git-config":
@@ -139,7 +156,6 @@ def main() -> int:
     prompt_path = Path(os.environ["AINATIVE_PROMPT_FILE"])
     output_path = Path(os.environ["AINATIVE_OUTPUT_FILE"])
     prompt = prompt_path.read_text(encoding="utf-8")
-    schema_value = os.environ.get("AINATIVE_SCHEMA_FILE")
     if args.mode == "assert-first-prompt-context" and first_call:
         missing = [
             value for value in args.required_first_prompt_text if value not in prompt
@@ -156,7 +172,31 @@ def main() -> int:
         return 0
 
     workspace = Path.cwd()
-    (workspace / "app.py").write_text(AUTHORED_APP, encoding="utf-8")
+    if args.mode in {
+        "author",
+        "assert-first-prompt-context",
+        "author-pause-verify",
+        "mutate-git-config",
+    }:
+        (workspace / "app.py").write_text(AUTHORED_APP, encoding="utf-8")
+    elif args.mode == "author-add":
+        (workspace / "added.txt").write_text("factory addition\n", encoding="utf-8")
+    elif args.mode == "author-delete":
+        (workspace / "app.py").unlink(missing_ok=True)
+    elif args.mode == "author-rename":
+        source = workspace / "app.py"
+        target = workspace / "renamed.py"
+        if source.exists():
+            source.rename(target)
+    elif args.mode == "author-binary":
+        (workspace / "app.py").write_bytes(b"\x00factory-binary\xff\n")
+    elif args.mode == "author-mode":
+        (workspace / "app.py").chmod(0o755)
+    elif args.mode == "author-secret":
+        (workspace / "app.py").write_text(
+            "FACTORY_SECRET_CANARY_AN03_8f4d1c7e\n",
+            encoding="utf-8",
+        )
 
     match = re.search(r"Slice artifact directory:\n(?P<path>.+)", prompt)
     if match:

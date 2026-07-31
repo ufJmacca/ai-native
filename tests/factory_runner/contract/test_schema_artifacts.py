@@ -46,7 +46,7 @@ def _checked_in_filenames() -> tuple[str, ...]:
 
 
 def test_checked_in_v1_schema_artifact_set_is_exact() -> None:
-    assert len(EXPECTED_SCHEMA_FILENAMES) == 7
+    assert len(EXPECTED_SCHEMA_FILENAMES) == 9
     assert _checked_in_filenames() == EXPECTED_SCHEMA_ARTIFACT_FILENAMES
 
 

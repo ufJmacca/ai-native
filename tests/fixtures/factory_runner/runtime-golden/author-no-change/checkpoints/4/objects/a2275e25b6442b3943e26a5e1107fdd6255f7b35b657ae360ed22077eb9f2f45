@@ -1,0 +1,22 @@
+# Deterministic greeting change
+
+## Summary
+Change the tracked greeting punctuation.
+
+## Implementation Steps
+- Update app.py
+
+## Interfaces
+- greeting(name: str) -> str
+
+## Data Flow
+- name -> greeting -> formatted string
+
+## Edge Cases
+- Empty names remain representable
+
+## Test Strategy
+- Run the declared deterministic command
+
+## Rollout Notes
+- No publication from the attempt sandbox

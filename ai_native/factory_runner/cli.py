@@ -39,6 +39,7 @@ def execute_factory_command(
             environment=os.environ,
             cancellation_token=cancellation,
             log=lambda message: print(message, file=sys.stderr, flush=True),
+            event_stdout=sys.stdout.buffer,
         )
     finally:
         signal.signal(signal.SIGTERM, previous_sigterm)

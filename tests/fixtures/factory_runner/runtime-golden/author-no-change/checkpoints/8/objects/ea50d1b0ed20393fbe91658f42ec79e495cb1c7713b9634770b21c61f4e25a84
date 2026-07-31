@@ -1,0 +1,15 @@
+# Verification
+
+- Verdict: `passed`
+
+## Summary
+The declared deterministic verification passed.
+
+## Acceptance Checks
+- greeting('Codex') returns 'Hello, Codex!'
+
+## Evidence
+- declared verification command
+
+## Gaps
+- None

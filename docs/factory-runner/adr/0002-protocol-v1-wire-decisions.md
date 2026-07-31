@@ -137,8 +137,10 @@ decoded document, deletes only that direct member, canonicalises everything
 remaining, and hashes those canonical bytes. It does not replace the field
 with null or omit any other digest.
 
-The schema manifest lists the seven schemas in lexical POSIX filename order
-with each schema identifier, schema `$id`, and canonical decoded-JSON digest.
+AN-01 initially froze seven domain schemas. AN-03 adds the self-describing
+`protocol-manifest/v1` and `completion/v1` terminal documents, so the current
+schema manifest lists nine schemas in lexical POSIX filename order with each
+schema identifier, schema `$id`, and canonical decoded-JSON digest.
 `schema-set.sha256` contains the digest of the RFC-8785-canonical decoded
 manifest. The schema-manifest digest is separate and covers the exact
 deterministic, pretty-printed manifest file bytes. The later release receipt
@@ -183,7 +185,7 @@ and content are bound. The helper accepts only an actual ordered sequence,
 revalidates every entry, and rejects duplicate resulting or source-side paths.
 The patch byte size is positive. JSON Schema validates the two fields
 structurally but does not calculate their equality. Patch generation and
-verification remain AN-03 work.
+verification are implemented by AN-03.
 
 ### Validation layers and stable failures
 
@@ -195,8 +197,8 @@ important local cross-field conditionals.
 
 Both the `RunnerEvent` model and generated schema reject the fixed set of
 secret and control-plane payload keys recursively using ASCII
-case-insensitive matching. Full value-based secret scanning remains deferred
-runtime enforcement.
+case-insensitive matching. AN-03 adds value-based streaming secret scanning at
+every durable output boundary.
 
 Portable semantic validation additionally covers rules such as exact identity
 preservation, nanosecond-aware timestamp ordering, keyed uniqueness, internal
@@ -229,4 +231,5 @@ does not execute commands, inspect a real filesystem, restore checkpoints,
 generate patches, stream events, scan secrets, or prove sandbox independence.
 It also does not prove artifact bytes, byte sizes, path-policy decisions, or
 workspace state merely because a document claims them. Those runtime
-responsibilities remain in AN-02 and AN-03.
+responsibilities are implemented across AN-02 and AN-03; AN-04 still owns
+installed-wheel and OCI release certification.

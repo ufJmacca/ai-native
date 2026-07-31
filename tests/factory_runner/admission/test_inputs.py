@@ -244,7 +244,7 @@ def test_unsupported_required_capability_is_rejected(
     )
 
 
-def test_required_structured_events_are_rejected_until_an03(
+def test_required_structured_events_are_admitted_in_an03(
     admission_api: ModuleType,
     admission_case: AdmissionCase,
 ) -> None:
@@ -254,18 +254,22 @@ def test_required_structured_events_are_rejected_until_an03(
     }
     admission_case.write_run_spec()
 
-    assert_admission_rejected(
-        admission_api,
-        admission_case,
-        "unsupported_capability",
+    validated = assert_read_only(
+        admission_case.root,
+        lambda: admit(admission_api, admission_case),
     )
+    assert isinstance(validated, admission_api.ValidatedInputs)
 
 
-def test_stdout_event_streaming_is_rejected_until_an03(
+def test_stdout_event_streaming_requires_structured_events_negotiation(
     admission_api: ModuleType,
     admission_case: AdmissionCase,
 ) -> None:
     admission_case.run_spec["outputs"]["stream_events_to_stdout"] = True
+    admission_case.run_spec["capabilities"] = {
+        "required": ["author"],
+        "optional": [],
+    }
     admission_case.write_run_spec()
 
     assert_admission_rejected(

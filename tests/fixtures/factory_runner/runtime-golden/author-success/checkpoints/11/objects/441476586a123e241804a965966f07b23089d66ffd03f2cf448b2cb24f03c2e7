@@ -1,0 +1,16 @@
+# S001: Update greeting punctuation
+
+## Goal
+Return the requested greeting.
+
+## Acceptance Criteria
+- greeting('Codex') returns 'Hello, Codex!'
+
+## File Impact
+- app.py
+
+## Test Plan
+- Run the declared verification command
+
+## Dependencies
+- None

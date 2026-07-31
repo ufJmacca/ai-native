@@ -16,7 +16,9 @@ from ai_native.factory_runner.canonical import (
 from ai_native.factory_runner.contracts import (
     ChangeSet,
     Checkpoint,
+    CompletionManifest,
     ContextBundle,
+    ProtocolManifest,
     RunnerEvent,
     RunResult,
     RunSpec,
@@ -58,7 +60,9 @@ ContractDocument: TypeAlias = (
     | Checkpoint
     | VerificationEvidence
     | ChangeSet
+    | ProtocolManifest
     | RunResult
+    | CompletionManifest
     | RunnerEvent
 )
 
@@ -336,12 +340,14 @@ __all__ = [
     "ChangeSet",
     "Checkpoint",
     "CheckpointCompatibilityResult",
+    "CompletionManifest",
     "ContextBundle",
     "ContractDocument",
     "ContractErrorCode",
     "ContractValidationError",
     "PROTOCOL_V1",
     "ProtocolNegotiationResult",
+    "ProtocolManifest",
     "RunResult",
     "RunSpec",
     "RunnerEvent",

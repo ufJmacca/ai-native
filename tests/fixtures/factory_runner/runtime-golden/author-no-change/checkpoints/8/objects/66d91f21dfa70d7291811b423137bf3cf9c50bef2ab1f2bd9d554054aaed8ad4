@@ -1,0 +1,11 @@
+{
+  "acceptance_checks": [
+    "greeting('Codex') returns 'Hello, Codex!'"
+  ],
+  "evidence": [
+    "declared verification command"
+  ],
+  "gaps": [],
+  "summary": "The declared deterministic verification passed.",
+  "verdict": "passed"
+}

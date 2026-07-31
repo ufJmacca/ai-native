@@ -1,6 +1,6 @@
 # Existing-module inventory for the factory runner
 
-This inventory records the integration decisions implemented through AN-02.
+This inventory records the integration decisions implemented through AN-03.
 Factory execution uses a restricted dispatcher around selected stage ports; it
 never invokes the legacy orchestrator or its publication stages.
 
@@ -18,7 +18,7 @@ never invokes the legacy orchestrator or its publication stages.
 | `ai_native/stages/slicing.py` | Slice planning | Reused only when `slice` is admitted |
 | `ai_native/stages/loop.py` | Test-first implementation loop | Reused only when `loop` is admitted |
 | `ai_native/stages/verify.py` | Agent-assisted authoring review | Reused only in author mode; clean verify mode never instantiates an agent |
-| `ai_native/state.py` | Legacy local run state | Stored only in ephemeral runner scratch; not exposed as a protocol checkpoint |
+| `ai_native/state.py` | Legacy local run state | Remains in ephemeral runner scratch; allowlisted private bytes are tokenised into content-addressed checkpoint objects at safe boundaries |
 | `ai_native/workspace_artifacts.py` | Workflow artifact locations | Redirected to ephemeral runner scratch in factory mode |
 | `ai_native/prompts/` | Installed prompt assets | Reused only for admitted authoring stages |
 
@@ -32,19 +32,27 @@ execute only when the current `RunSpec` explicitly admits them; recon may scan
 the prepared workspace and use the bounded gateway but cannot fetch
 undeclared external context.
 
-## AN-02 factory-only modules
+## AN-02 and AN-03 factory-only modules
 
 | Module | Responsibility |
 |---|---|
 | `factory_runner/admission.py` | Contract, digest, identity, capability, workspace, ChangeSet, path, and repository-topology admission |
 | `factory_runner/runner.py` | Operation separation, safe-boundary coordination, exit classification, and terminal result dispatch |
 | `factory_runner/author.py` | Restricted legacy-stage adapter with turn/token budgets and non-interactive clarification handling |
-| `factory_runner/verification.py` | Exact deterministic command execution and minimal genuine verification evidence |
+| `factory_runner/verification.py` | Exact phased command execution, genuine-red classification, and authoring versus clean-verification evidence |
 | `factory_runner/process.py` | Closed-stdin process supervision, bounded capture, cancellation, deadlines, process-group cleanup, and Linux detached-descendant reaping |
 | `factory_runner/process_policy.py` | Environment filtering, credential rejection, trusted executable resolution, and immutable Git/GitHub/shell denial |
 | `factory_runner/git_runtime.py` | Bounded runner-owned Git inspection through the central process supervisor |
-| `factory_runner/changes.py` | Repository boundary checks and minimal tracked-modification ChangeSet generation |
-| `factory_runner/outputs.py` | Fresh-root, no-follow, descriptor-relative atomic terminal writes |
+| `factory_runner/changes.py` | Repository boundary checks plus deterministic add, modify, delete, rename, binary, mode, patch, and ChangeSet generation |
+| `factory_runner/outputs.py` | Bounded no-follow atomic artifacts, staged event support, typed protocol manifests, and completion-last sealing |
+| `factory_runner/events.py` | Ordered canonical NDJSON staging, durable append, optional identical stdout mirroring, and atomic finalisation |
+| `factory_runner/checkpoints.py` | Immutable checkpoint publication, artifact validation, and transactional workspace restore |
+| `factory_runner/checkpoint_runtime.py` | Portable checkpoint construction, lineage, authority, budgets, and content-addressed state objects |
+| `factory_runner/evidence.py` | Evidence status derivation and expected behavioral Red classification |
+| `factory_runner/phase_checkpoint.py` | Snapshot and restore of complete phased evidence across attempts |
+| `factory_runner/private_state.py` | Bounded path-tokenised snapshot and restore of private author scratch state |
+| `factory_runner/redaction.py` | Producer-side text redaction and streaming secret-canary detection |
+| `factory_runner/attempt_secrets.py` | Attempt-scoped secret policy construction without persisting credential values |
 | `factory_runner/workflow_adapter.py` | Documented attempt-scoped gateway file contract, process adaptation, and protection of runner-owned state |
 
 ## Legacy-only or prohibited in factory mode
@@ -84,11 +92,7 @@ AN-00 centralises runtime stage groupings in `ai_native/workflow_stages.py`.
 The `ai_native.stages.capabilities` module is a compatibility re-export so
 low-level modules do not import the handler package and create cycles.
 
-## Deferred beyond AN-02
+## Deferred beyond AN-03
 
-- complete append-only events, durable resume checkpoints, secret scanning and
-  redaction, recovery, and complete output manifests (AN-03);
-- full add/delete/rename patch handling and release-grade ChangeSet
-  certification (AN-03);
 - wheel or OCI release certification and receipts (AN-04);
 - all `ai-native-factory` implementation code.

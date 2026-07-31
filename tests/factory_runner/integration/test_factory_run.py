@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 
+from ai_native.factory_runner.protocol import validate_contract
 from tests.factory_runner.integration._support import (
     AUTHORED_APP,
     FactoryInvocation,
@@ -221,7 +222,12 @@ def test_factory_author_repairs_and_rejects_protocol_output_tampering(
     completed = invoke_factory(invocation, agent_mode="author")
 
     assert completed.returncode == 3, completed.stderr
-    assert events_path.read_bytes() == b""
+    events = tuple(
+        validate_contract(line, expected_schema="runner-event/v1")
+        for line in events_path.read_bytes().splitlines()
+    )
+    assert tuple(event.sequence for event in events) == tuple(range(1, len(events) + 1))
+    assert events[-1].event_type == "RunnerFailed"
     result = load_valid_result(invocation)
     assert result.outcome == "policy_denied"
     assert result.reason_code == "policy_denied"

@@ -87,9 +87,19 @@ SCHEMA_INVALID_CASES = (
         "enum",
     ),
     SchemaInvalidCase(
+        _SCHEMA_NAMES_BY_STEM["completion"],
+        "completion.invalid-run-result-path.json",
+        "const",
+    ),
+    SchemaInvalidCase(
         _SCHEMA_NAMES_BY_STEM["context-bundle"],
         "context-bundle.malformed-digest.json",
         "pattern",
+    ),
+    SchemaInvalidCase(
+        _SCHEMA_NAMES_BY_STEM["protocol-manifest"],
+        "protocol-manifest.invalid-event-path.json",
+        "const",
     ),
     SchemaInvalidCase(
         _SCHEMA_NAMES_BY_STEM["run-result"],

@@ -1,0 +1,14 @@
+{
+  "architecture_summary": "Factory-supplied, digest-verified repository context is available.",
+  "languages": [],
+  "manifests": [],
+  "recommended_questions": [],
+  "repo_state": "existing",
+  "risks": [
+    "The attempt may author and verify but may not publish."
+  ],
+  "test_frameworks": [],
+  "touched_areas": [
+    "app.py"
+  ]
+}

@@ -69,6 +69,14 @@ FAKE_AGENT = Path(__file__).with_name("_fake_agent.py")
 AgentMode = Literal[
     "assert-first-prompt-context",
     "author",
+    "author-add",
+    "author-binary",
+    "author-delete",
+    "author-mode",
+    "author-no-change",
+    "author-pause-verify",
+    "author-rename",
+    "author-secret",
     "blocked",
     "fail-if-called",
     "mutate-git-config",
@@ -719,3 +727,85 @@ def assert_valid_completion(
     assert isinstance(referenced_result, RunResult)
     verify_contract_digest(referenced_result)
     assert referenced_result == result
+
+
+def prepare_clean_verification_from_author(
+    root: Path,
+    *,
+    author_invocation: FactoryInvocation,
+    author_result: RunResult,
+) -> FactoryInvocation:
+    """Stage one emitted author ChangeSet in a fresh verification checkout."""
+
+    change_set = load_valid_change_set(author_invocation, author_result)
+    workspace = root / "workspace"
+    root.mkdir(parents=True)
+    subprocess.run(
+        [
+            "git",
+            "clone",
+            "--quiet",
+            "--no-local",
+            str(author_invocation.workspace),
+            str(workspace),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    _run_git(workspace, "remote", "remove", "origin")
+    patch = (author_invocation.output_dir / change_set.patch.path).read_bytes()
+    subprocess.run(
+        ["git", "apply", "--binary", "--whitespace=nowarn", "-"],
+        cwd=workspace,
+        input=patch,
+        check=True,
+        capture_output=True,
+    )
+
+    input_dir = root / "input"
+    input_dir.mkdir()
+    shutil.copytree(
+        author_invocation.context_bundle_path.parent,
+        input_dir / "context",
+    )
+    shutil.copytree(author_invocation.output_dir, input_dir, dirs_exist_ok=True)
+    output_dir = root / "output"
+
+    payload = json.loads(author_invocation.run_spec_path.read_text(encoding="utf-8"))
+    payload["identity"]["attempt_id"] = "attempt-an-03-clean-verify"
+    payload["operation"] = "verify"
+    payload["workspace"] = {
+        "path": str(workspace.resolve()),
+        "initial_state": "prepared_verification",
+    }
+    payload["policy"]["allowed_stages"] = ["verify"]
+    payload["capabilities"]["required"] = ["verify"]
+    payload["context"]["manifest_path"] = str(
+        (input_dir / "context" / "context-bundle.json").resolve()
+    )
+    assert author_result.change_set is not None
+    change_set_path = input_dir / author_result.change_set.path
+    payload["verification_input"] = {
+        "change_set_path": str(change_set_path.resolve()),
+        "expected_digest": change_set.change_set_digest,
+    }
+    payload["outputs"] = {
+        "output_dir": str(output_dir.resolve()),
+        "stream_events_to_stdout": False,
+    }
+    validate_contract(payload, expected_schema="run-spec/v1")
+    run_spec_path = input_dir / "run-spec.json"
+    _write_json(run_spec_path, payload)
+
+    return FactoryInvocation(
+        operation="verify",
+        workspace=workspace,
+        input_dir=input_dir,
+        output_dir=output_dir,
+        run_spec_path=run_spec_path,
+        context_bundle_path=input_dir / "context" / "context-bundle.json",
+        change_set_path=change_set_path,
+        base_sha=author_invocation.base_sha,
+        marker_path=root / "agent-calls.log",
+    )

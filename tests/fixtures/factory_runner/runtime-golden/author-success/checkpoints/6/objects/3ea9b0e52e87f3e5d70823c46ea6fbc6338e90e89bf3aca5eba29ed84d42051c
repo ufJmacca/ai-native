@@ -1,0 +1,136 @@
+{
+  "active_slice": null,
+  "base_ref": null,
+  "created_at": "2026-07-31T00:00:00+00:00",
+  "current_stage": "loop",
+  "feature_slug": "factory-run",
+  "metadata": {
+    "attempt_id": "attempt-an-02",
+    "factory_mode": true,
+    "workspace_artifacts_root": "@{FACTORY_PRIVATE_RUN}@/agent-workspace"
+  },
+  "run_dir": "@{FACTORY_PRIVATE_RUN}@",
+  "run_id": "run-an-02",
+  "run_projection": {
+    "blocked_steps": [
+      {
+        "reason": "Slice execution state is not initialized.",
+        "step": "S001:loop"
+      }
+    ],
+    "completed_steps": [
+      "plan",
+      "architecture",
+      "prd",
+      "slice"
+    ],
+    "in_progress_steps": [],
+    "next_executable_steps": [
+      "intake"
+    ],
+    "schema_version": 1
+  },
+  "scheduler_status": "idle",
+  "slice_states": {},
+  "spec_hash": "170a25110f11e2fa7365e129568001c38ebbb226280f1ecd762c32c8d793480c",
+  "spec_path": "@{FACTORY_PRIVATE_RUN}@/spec.md",
+  "stage_status": {
+    "architecture": {
+      "artifacts": [
+        "@{FACTORY_PRIVATE_RUN}@/architecture/critique-history.md",
+        "@{FACTORY_PRIVATE_RUN}@/architecture/blocker-ledger.md",
+        "@{FACTORY_PRIVATE_RUN}@/architecture/architecture.json",
+        "@{FACTORY_PRIVATE_RUN}@/architecture/architecture.mmd",
+        "@{FACTORY_PRIVATE_RUN}@/architecture/architecture.md",
+        "@{FACTORY_PRIVATE_RUN}@/architecture/architecture-attempt-1.json",
+        "@{FACTORY_PRIVATE_RUN}@/architecture/architecture-attempt-1.mmd",
+        "@{FACTORY_PRIVATE_RUN}@/architecture/architecture-attempt-1.md",
+        "@{FACTORY_PRIVATE_RUN}@/architecture/validation.json",
+        "@{FACTORY_PRIVATE_RUN}@/architecture/validation-attempt-1.json",
+        "@{FACTORY_PRIVATE_RUN}@/architecture/architecture-review.md",
+        "@{FACTORY_PRIVATE_RUN}@/architecture/architecture-review.json",
+        "@{FACTORY_PRIVATE_RUN}@/architecture/architecture-review-attempt-1.md",
+        "@{FACTORY_PRIVATE_RUN}@/architecture/architecture-review-attempt-1.json"
+      ],
+      "notes": [],
+      "stage": "architecture",
+      "status": "completed"
+    },
+    "loop": {
+      "artifacts": [
+        "@{FACTORY_PRIVATE_RUN}@/slices/S001/critique-history.md",
+        "@{FACTORY_PRIVATE_RUN}@/slices/S001/blocker-ledger.md",
+        "@{FACTORY_PRIVATE_RUN}@/slices/S001/builder-summary.md",
+        "@{FACTORY_PRIVATE_RUN}@/slices/S001/red.log",
+        "@{FACTORY_PRIVATE_RUN}@/slices/S001/green.log",
+        "@{FACTORY_PRIVATE_RUN}@/slices/S001/refactor-notes.md",
+        "@{FACTORY_PRIVATE_RUN}@/slices/S001/builder-summary-attempt-1.md",
+        "@{FACTORY_PRIVATE_RUN}@/slices/S001/red-attempt-1.log",
+        "@{FACTORY_PRIVATE_RUN}@/slices/S001/green-attempt-1.log",
+        "@{FACTORY_PRIVATE_RUN}@/slices/S001/refactor-notes-attempt-1.md",
+        "@{FACTORY_PRIVATE_RUN}@/slices/S001/test-review.md",
+        "@{FACTORY_PRIVATE_RUN}@/slices/S001/test-review.json",
+        "@{FACTORY_PRIVATE_RUN}@/slices/S001/test-review-attempt-1.md",
+        "@{FACTORY_PRIVATE_RUN}@/slices/S001/test-review-attempt-1.json"
+      ],
+      "notes": [],
+      "stage": "loop",
+      "status": "completed"
+    },
+    "plan": {
+      "artifacts": [
+        "@{FACTORY_PRIVATE_RUN}@/plan/grounding.md",
+        "@{FACTORY_PRIVATE_RUN}@/plan/questions.json",
+        "@{FACTORY_PRIVATE_RUN}@/plan/questions.md",
+        "@{FACTORY_PRIVATE_RUN}@/plan/answers.json",
+        "@{FACTORY_PRIVATE_RUN}@/plan/answers.md",
+        "@{FACTORY_PRIVATE_RUN}@/plan/intent.md",
+        "@{FACTORY_PRIVATE_RUN}@/plan/implementation.md",
+        "@{FACTORY_PRIVATE_RUN}@/plan/approval-checklist.md",
+        "@{FACTORY_PRIVATE_RUN}@/plan/critique-history.md",
+        "@{FACTORY_PRIVATE_RUN}@/plan/blocker-ledger.md",
+        "@{FACTORY_PRIVATE_RUN}@/plan/plan.json",
+        "@{FACTORY_PRIVATE_RUN}@/plan/plan.md",
+        "@{FACTORY_PRIVATE_RUN}@/plan/plan-attempt-1.json",
+        "@{FACTORY_PRIVATE_RUN}@/plan/plan-attempt-1.md",
+        "@{FACTORY_PRIVATE_RUN}@/plan/plan-review.md",
+        "@{FACTORY_PRIVATE_RUN}@/plan/plan-review.json",
+        "@{FACTORY_PRIVATE_RUN}@/plan/plan-review-attempt-1.md",
+        "@{FACTORY_PRIVATE_RUN}@/plan/plan-review-attempt-1.json"
+      ],
+      "notes": [],
+      "stage": "plan",
+      "status": "completed"
+    },
+    "prd": {
+      "artifacts": [
+        "@{FACTORY_PRIVATE_RUN}@/prd/critique-history.md",
+        "@{FACTORY_PRIVATE_RUN}@/prd/blocker-ledger.md",
+        "@{FACTORY_PRIVATE_RUN}@/prd/prd.json",
+        "@{FACTORY_PRIVATE_RUN}@/prd/prd.md",
+        "@{FACTORY_PRIVATE_RUN}@/prd/prd-attempt-1.json",
+        "@{FACTORY_PRIVATE_RUN}@/prd/prd-attempt-1.md",
+        "@{FACTORY_PRIVATE_RUN}@/prd/prd-review.md",
+        "@{FACTORY_PRIVATE_RUN}@/prd/prd-review.json",
+        "@{FACTORY_PRIVATE_RUN}@/prd/prd-review-attempt-1.md",
+        "@{FACTORY_PRIVATE_RUN}@/prd/prd-review-attempt-1.json"
+      ],
+      "notes": [],
+      "stage": "prd",
+      "status": "completed"
+    },
+    "slice": {
+      "artifacts": [
+        "@{FACTORY_PRIVATE_RUN}@/slice/slices.json",
+        "@{FACTORY_PRIVATE_RUN}@/slice/slices.md",
+        "@{FACTORY_PRIVATE_RUN}@/slice/S001-update-greeting-punctuation.md"
+      ],
+      "notes": [],
+      "stage": "slice",
+      "status": "completed"
+    }
+  },
+  "status": "in_progress",
+  "updated_at": "2026-07-31T00:00:00+00:00",
+  "workspace_root": "@{FACTORY_WORKSPACE_ROOT}@"
+}
