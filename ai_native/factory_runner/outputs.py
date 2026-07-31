@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import errno
+import hashlib
 import os
 from pathlib import Path
 import stat
@@ -294,6 +295,33 @@ class OutputWriter:
         finally:
             os.close(current_fd)
 
+    @contextmanager
+    def _existing_parent_directory(
+        self,
+        relative_path: str,
+    ) -> Iterator[tuple[int, str]]:
+        relative = Path(relative_path)
+        if relative.is_absolute() or any(
+            part in {"", ".", ".."} for part in relative.parts
+        ):
+            raise ValueError("artifact path must be normalised and relative")
+        if not relative.parts:
+            raise ValueError("artifact path must identify a file")
+
+        current_fd = os.dup(self._root_fd)
+        try:
+            for component in relative.parts[:-1]:
+                next_fd = _open_directory(
+                    current_fd,
+                    component,
+                    description="artifact path",
+                )
+                os.close(current_fd)
+                current_fd = next_fd
+            yield current_fd, relative.parts[-1]
+        finally:
+            os.close(current_fd)
+
     def write_bytes(
         self,
         relative_path: str,
@@ -377,6 +405,99 @@ class OutputWriter:
                 self._manifest.append(reference)
             return reference
 
+    def register_existing_artifact(
+        self,
+        reference: ArtifactReference,
+    ) -> ArtifactReference:
+        """Verify and adopt one immutable artifact written by a local atomic sink."""
+
+        try:
+            validated = ArtifactReference.model_validate(
+                reference.model_dump(mode="json")
+            )
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise ValueError("external artifact reference is invalid") from exc
+
+        with self._write_lock:
+            self._ensure_writable()
+            if any(item.path == validated.path for item in self._manifest):
+                raise ValueError("artifact path is already recorded")
+            if (
+                self._max_artifact_bytes is not None
+                and validated.byte_size > self._max_artifact_bytes
+            ):
+                raise ValueError("artifact size exceeds the artifact limit")
+            if (
+                self._max_total_bytes is not None
+                and validated.byte_size > self._max_total_bytes - self._total_bytes
+            ):
+                raise ValueError("total output size exceeds the total limit")
+
+            with self._existing_parent_directory(validated.path) as (
+                parent_fd,
+                target_name,
+            ):
+                flags = (
+                    os.O_RDONLY
+                    | getattr(os, "O_CLOEXEC", 0)
+                    | getattr(os, "O_NOFOLLOW", 0)
+                )
+                try:
+                    descriptor = os.open(target_name, flags, dir_fd=parent_fd)
+                except OSError as exc:
+                    if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
+                        raise ValueError(
+                            "external artifact contains a symbolic link"
+                        ) from exc
+                    raise ValueError("external artifact is unavailable") from exc
+                try:
+                    before = os.fstat(descriptor)
+                    if not stat.S_ISREG(before.st_mode):
+                        raise ValueError(
+                            "external artifact must be a regular file"
+                        )
+                    if before.st_size != validated.byte_size:
+                        raise ValueError("external artifact size mismatch")
+                    digest = hashlib.sha256()
+                    chunks: list[bytes] = []
+                    consumed = 0
+                    while True:
+                        chunk = os.read(descriptor, 1024 * 1024)
+                        if not chunk:
+                            break
+                        consumed += len(chunk)
+                        if consumed > validated.byte_size:
+                            raise ValueError("external artifact size mismatch")
+                        digest.update(chunk)
+                        chunks.append(chunk)
+                    after = os.fstat(descriptor)
+                finally:
+                    os.close(descriptor)
+
+            identity_before = (
+                before.st_dev,
+                before.st_ino,
+                before.st_size,
+                before.st_mtime_ns,
+                before.st_ctime_ns,
+            )
+            identity_after = (
+                after.st_dev,
+                after.st_ino,
+                after.st_size,
+                after.st_mtime_ns,
+                after.st_ctime_ns,
+            )
+            if identity_before != identity_after or consumed != validated.byte_size:
+                raise ValueError("external artifact changed while being verified")
+            actual_digest = f"sha256:{digest.hexdigest()}"
+            if actual_digest != validated.digest:
+                raise ValueError("external artifact digest mismatch")
+            self._secret_scanner.require_clean_chunks(chunks)
+            self._manifest.append(validated)
+            self._total_bytes += validated.byte_size
+            return validated
+
     def write_json(
         self,
         relative_path: str,
@@ -450,6 +571,7 @@ class OutputWriter:
         identity: RunIdentity | None,
         repository: RepositoryIdentity | None,
         completed_stages: Sequence[str],
+        latest_checkpoint: ArtifactReference | None = None,
         change_set: ArtifactReference | None = None,
         verification_evidence: ArtifactReference | None = None,
         event_stream_digest: str = EMPTY_DIGEST,
@@ -485,7 +607,11 @@ class OutputWriter:
             "started_at": started_at,
             "finished_at": finished_at,
             "completed_stages": list(completed_stages),
-            "latest_checkpoint": None,
+            "latest_checkpoint": (
+                latest_checkpoint.model_dump(mode="json")
+                if latest_checkpoint is not None
+                else None
+            ),
             "change_set": (
                 change_set.model_dump(mode="json") if change_set is not None else None
             ),
