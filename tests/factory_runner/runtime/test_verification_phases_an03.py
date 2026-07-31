@@ -24,6 +24,7 @@ from ai_native.factory_runner.verification import (
     FalseRedEvidenceError,
     PhaseCommandCompletion,
     PhaseCommandStart,
+    RedAlreadyGreen,
     execute_declared_phase,
     execute_verification,
     finalize_authoring_evidence,
@@ -254,6 +255,26 @@ def test_false_red_is_rejected_after_capture_and_before_final_evidence(
     assert (
         inputs.output_dir / "evidence/objects/red-command-001.stderr"
     ).read_bytes() == result.stderr_bytes
+    assert not (inputs.output_dir / "evidence/verification-evidence.json").exists()
+
+
+def test_passing_red_probe_is_distinguished_for_explicit_no_change(
+    tmp_path: Path,
+) -> None:
+    inputs = _inputs(tmp_path)
+    writer = OutputWriter(inputs.output_dir)
+
+    with pytest.raises(RedAlreadyGreen):
+        _execute_phase(
+            inputs,
+            phase="red",
+            results=(_result(returncode=0, stdout=b"already satisfied\n"),),
+            writer=writer,
+        )
+
+    assert (
+        inputs.output_dir / "evidence/objects/red-command-001.stdout"
+    ).read_bytes() == b"already satisfied\n"
     assert not (inputs.output_dir / "evidence/verification-evidence.json").exists()
 
 
