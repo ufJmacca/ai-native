@@ -10,6 +10,9 @@ from typing import Any, cast
 import pytest
 
 from ai_native.factory_runner.canonical import canonical_json_bytes, sha256_digest
+from ai_native.factory_runner.checkpoint_runtime import build_checkpoint_bundle
+from ai_native.factory_runner.contracts.checkpoint import ResourceBudget
+from ai_native.factory_runner.contracts.run_spec import RunSpec
 from ai_native.factory_runner.contracts.verification_evidence import EvidenceItem
 from ai_native.factory_runner.outputs import OutputWriter
 from ai_native.factory_runner.phase_checkpoint import (
@@ -22,6 +25,7 @@ from ai_native.factory_runner.phase_checkpoint import (
 from ai_native.factory_runner.process_policy import FactoryPolicyViolation
 from ai_native.factory_runner.redaction import SecretPolicy, SecretScanner
 from ai_native.factory_runner.verification import PhaseExecutionOutcome
+from tests.factory_runner.contract._support import run_spec as run_spec_fixture
 
 
 COMMAND = ("pytest", "-q", "tests/test_app.py")
@@ -180,8 +184,7 @@ def test_phase_snapshot_captures_exact_refs_reports_and_deduplicated_objects(
     )
     assert outcome_object.byte_size == outcome_state["byte_size"]
     assert [
-        outcome["phase"]
-        for outcome in json.loads(outcome_object.content)["outcomes"]
+        outcome["phase"] for outcome in json.loads(outcome_object.content)["outcomes"]
     ] == ["red", "green"]
     assert [
         artifact["path"] for artifact in snapshot.descriptor["artifacts"]
@@ -189,9 +192,7 @@ def test_phase_snapshot_captures_exact_refs_reports_and_deduplicated_objects(
     assert {artifact["digest"] for artifact in snapshot.descriptor["artifacts"]} == {
         sha256_digest(payload) for payload in content.values()
     }
-    assert set(content.values()).issubset(
-        {item.content for item in snapshot.objects}
-    )
+    assert set(content.values()).issubset({item.content for item in snapshot.objects})
     assert len(snapshot.objects) <= len(content)
     assert all(item.digest == sha256_digest(item.content) for item in snapshot.objects)
 
@@ -248,6 +249,28 @@ def test_absolute_admitted_argv_is_detached_from_portable_workflow_state(
         if item.digest == outcome_state["object_digest"]
     )
     assert absolute_command[0].encode() in outcome_object.content
+    spec_payload = run_spec_fixture()
+    spec_payload["policy"]["allowed_commands"] = [list(absolute_command)]
+    spec = RunSpec.model_validate(spec_payload)
+    bundle = build_checkpoint_bundle(
+        run_spec=spec,
+        context_bundle_digest=spec.context.expected_digest,
+        sequence=1,
+        created_at=CREATED_AT,
+        completed_stages=("plan", "loop"),
+        next_permitted_stage="verify",
+        workflow_state={
+            "stage": "loop",
+            PHASE_EVIDENCE_WORKFLOW_KEY: snapshot.descriptor,
+        },
+        consumed=ResourceBudget(
+            wall_seconds=1,
+            agent_turns=1,
+            model_tokens=1,
+        ),
+        state_objects=snapshot.objects,
+    )
+    assert outcome_state["object_digest"] in bundle.checkpoint.object_digests
 
     destination = tmp_path / "destination"
     destination.mkdir()
@@ -391,7 +414,18 @@ def test_restore_rejects_untrusted_descriptor_or_objects_before_writing(
         first = next(iter(objects))
         objects[first] = b"x" * len(objects[first])
     else:
-        descriptor["outcomes"][1]["items"][0]["command"] = ["other"]
+        outcome_state = descriptor["outcome_state"]
+        outcome_path = next(
+            path
+            for path, content in objects.items()
+            if sha256_digest(content) == outcome_state["object_digest"]
+        )
+        outcome_document = json.loads(objects[outcome_path])
+        outcome_document["outcomes"][1]["items"][0]["command"] = ["other"]
+        damaged_outcomes = canonical_json_bytes(outcome_document)
+        objects[outcome_path] = damaged_outcomes
+        outcome_state["object_digest"] = sha256_digest(damaged_outcomes)
+        outcome_state["byte_size"] = len(damaged_outcomes)
     destination = tmp_path / "destination"
     destination.mkdir()
 

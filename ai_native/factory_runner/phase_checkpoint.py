@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import errno
+import json
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -28,9 +29,11 @@ from ai_native.factory_runner.verification import PhaseExecutionOutcome
 PHASE_EVIDENCE_WORKFLOW_KEY = "phase_evidence"
 
 _SCHEMA = "phase-evidence-state/v1"
+_OUTCOME_SCHEMA = "phase-execution-outcomes/v1"
 _AUTHOR_PHASES = ("red", "green", "refactor", "verification")
 _VERIFY_PHASES = ("verification",)
 _CONTROL_PATTERN = re.compile(r"[\x00-\x1f\x7f]")
+_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 _READ_CHUNK_BYTES = 1024 * 1024
 _MAX_DESCRIPTOR_BYTES = 262_144
 _HARD_MAX_ARTIFACTS = 4096
@@ -375,6 +378,19 @@ def snapshot_phase_evidence(
     outcomes, references = _validated_outcomes(inputs, phase_outcomes)
     if len(references) > limits.max_artifacts:
         raise PhaseEvidenceError("phase evidence artifact count exceeds its limit")
+    outcome_document = canonical_json_bytes(
+        {
+            "schema": _OUTCOME_SCHEMA,
+            "outcomes": [_outcome_payload(outcome) for outcome in outcomes],
+        }
+    )
+    if len(outcome_document) > limits.max_artifact_bytes:
+        raise PhaseEvidenceError("phase outcome state exceeds its artifact size limit")
+    scanner.require_clean_chunks((outcome_document,))
+    outcome_object = CheckpointStateObject(
+        content=outcome_document,
+        media_type="application/json",
+    )
     root = _output_root(inputs, writer)
     try:
         root_fd = os.open(root, _directory_flags())
@@ -382,8 +398,12 @@ def snapshot_phase_evidence(
         raise PhaseEvidenceError(
             "phase evidence output root could not be opened safely"
         ) from exc
-    objects: dict[str, CheckpointStateObject] = {}
-    total_bytes = 0
+    objects: dict[str, CheckpointStateObject] = {
+        outcome_object.digest: outcome_object,
+    }
+    total_bytes = outcome_object.byte_size
+    if total_bytes > limits.max_total_bytes:
+        raise PhaseEvidenceError("phase outcome state exceeds its total size limit")
     try:
         for reference in references:
             content = _read_artifact(root_fd, reference, limits=limits)
@@ -404,7 +424,10 @@ def snapshot_phase_evidence(
     sorted_references = tuple(sorted(references, key=lambda item: item.path))
     descriptor = {
         "schema": _SCHEMA,
-        "outcomes": [_outcome_payload(outcome) for outcome in outcomes],
+        "outcome_state": {
+            "object_digest": outcome_object.digest,
+            "byte_size": outcome_object.byte_size,
+        },
         "artifacts": [
             reference.model_dump(mode="json") for reference in sorted_references
         ],
@@ -419,26 +442,29 @@ def snapshot_phase_evidence(
     )
 
 
-def _descriptor_outcomes(
-    descriptor: Mapping[str, Any],
-) -> tuple[
-    tuple[PhaseExecutionOutcome, ...],
-    tuple[ArtifactReference, ...],
-]:
-    if set(descriptor) != {"schema", "outcomes", "artifacts"} or (
-        descriptor.get("schema") != _SCHEMA
+def _parse_outcome_document(
+    content: bytes,
+) -> tuple[PhaseExecutionOutcome, ...]:
+    try:
+        decoded = json.loads(content.decode("utf-8", errors="strict"))
+        if (
+            not isinstance(decoded, Mapping)
+            or set(decoded) != {"schema", "outcomes"}
+            or decoded.get("schema") != _OUTCOME_SCHEMA
+            or canonical_json_bytes(decoded) != content
+        ):
+            raise PhaseEvidenceError(
+                "phase outcome state is not canonical or schema-valid"
+            )
+        raw_outcomes = decoded["outcomes"]
+    except PhaseEvidenceError:
+        raise
+    except (TypeError, UnicodeError, ValueError) as exc:
+        raise PhaseEvidenceError("phase outcome state is invalid JSON") from exc
+    if isinstance(raw_outcomes, str | bytes | bytearray) or not isinstance(
+        raw_outcomes, Sequence
     ):
-        raise PhaseEvidenceError("phase evidence descriptor schema is invalid")
-    raw_outcomes = descriptor["outcomes"]
-    raw_artifacts = descriptor["artifacts"]
-    if (
-        isinstance(raw_outcomes, str | bytes | bytearray)
-        or not isinstance(raw_outcomes, Sequence)
-        or isinstance(raw_artifacts, str | bytes | bytearray)
-        or not isinstance(raw_artifacts, Sequence)
-    ):
-        raise PhaseEvidenceError("phase evidence descriptor lists are invalid")
-
+        raise PhaseEvidenceError("phase outcome state list is invalid")
     outcomes: list[PhaseExecutionOutcome] = []
     try:
         for raw in raw_outcomes:
@@ -469,26 +495,21 @@ def _descriptor_outcomes(
                     ),
                 )
             )
-        artifacts = tuple(
-            ArtifactReference.model_validate(reference) for reference in raw_artifacts
-        )
     except PhaseEvidenceError:
         raise
     except (TypeError, ValueError) as exc:
-        raise PhaseEvidenceError(
-            "phase evidence descriptor contract is invalid"
-        ) from exc
-    return tuple(outcomes), artifacts
+        raise PhaseEvidenceError("phase outcome state contract is invalid") from exc
+    return tuple(outcomes)
 
 
-def _validate_descriptor(
-    inputs: Any,
+def _descriptor_header(
     descriptor: Mapping[str, Any],
     *,
     limits: PhaseEvidenceLimits,
     scanner: SecretScanner,
 ) -> tuple[
-    tuple[PhaseExecutionOutcome, ...],
+    str,
+    int,
     tuple[ArtifactReference, ...],
 ]:
     try:
@@ -500,8 +521,37 @@ def _validate_descriptor(
     if len(descriptor_bytes) > _MAX_DESCRIPTOR_BYTES:
         raise PhaseEvidenceError("phase evidence descriptor exceeds its size limit")
     scanner.require_clean_chunks((descriptor_bytes,))
-    outcomes, artifacts = _descriptor_outcomes(descriptor)
-    validated, used_references = _validated_outcomes(inputs, outcomes)
+    if set(descriptor) != {"schema", "outcome_state", "artifacts"} or (
+        descriptor.get("schema") != _SCHEMA
+    ):
+        raise PhaseEvidenceError("phase evidence descriptor schema is invalid")
+    outcome_state = descriptor["outcome_state"]
+    raw_artifacts = descriptor["artifacts"]
+    if (
+        not isinstance(outcome_state, Mapping)
+        or set(outcome_state) != {"object_digest", "byte_size"}
+        or isinstance(raw_artifacts, str | bytes | bytearray)
+        or not isinstance(raw_artifacts, Sequence)
+    ):
+        raise PhaseEvidenceError("phase evidence descriptor bindings are invalid")
+    outcome_digest = outcome_state["object_digest"]
+    outcome_size = outcome_state["byte_size"]
+    if (
+        not isinstance(outcome_digest, str)
+        or _DIGEST_PATTERN.fullmatch(outcome_digest) is None
+        or isinstance(outcome_size, bool)
+        or not isinstance(outcome_size, int)
+        or not 0 <= outcome_size <= limits.max_artifact_bytes
+    ):
+        raise PhaseEvidenceError("phase outcome state digest or size is invalid")
+    try:
+        artifacts = tuple(
+            ArtifactReference.model_validate(reference) for reference in raw_artifacts
+        )
+    except (TypeError, ValueError) as exc:
+        raise PhaseEvidenceError(
+            "phase evidence artifact descriptor is invalid"
+        ) from exc
     if len(artifacts) > limits.max_artifacts:
         raise PhaseEvidenceError("phase evidence artifact count exceeds its limit")
     paths = tuple(reference.path for reference in artifacts)
@@ -511,6 +561,17 @@ def _validate_descriptor(
         )
     if paths != tuple(sorted(paths)):
         raise PhaseEvidenceError("phase evidence artifact descriptor order is invalid")
+    for reference in artifacts:
+        _path(reference.path, evidence=True)
+    return outcome_digest, outcome_size, artifacts
+
+
+def _validate_reference_consistency(
+    inputs: Any,
+    outcomes: Sequence[PhaseExecutionOutcome],
+    artifacts: Sequence[ArtifactReference],
+) -> tuple[PhaseExecutionOutcome, ...]:
+    validated, used_references = _validated_outcomes(inputs, outcomes)
     declared = tuple(reference.model_dump(mode="json") for reference in artifacts)
     used = tuple(
         reference.model_dump(mode="json")
@@ -520,7 +581,7 @@ def _validate_descriptor(
         raise PhaseEvidenceError(
             "phase evidence descriptor artifact references are inconsistent"
         )
-    return validated, artifacts
+    return validated
 
 
 def _object_content(
@@ -589,16 +650,35 @@ def restore_phase_evidence(
         raise TypeError("secret_scanner must be a SecretScanner or null")
     if not isinstance(descriptor, Mapping):
         raise PhaseEvidenceError("phase evidence descriptor must be an object")
-    outcomes, references = _validate_descriptor(
-        inputs,
+    outcome_digest, outcome_size, references = _descriptor_header(
         descriptor,
         limits=limits,
         scanner=scanner,
     )
-    required = frozenset(reference.digest for reference in references)
+    required = frozenset(
+        (
+            outcome_digest,
+            *(reference.digest for reference in references),
+        )
+    )
     by_digest = _object_content(objects, required=required)
+    outcome_content = by_digest.get(outcome_digest)
+    if (
+        outcome_content is None
+        or len(outcome_content) != outcome_size
+        or sha256_digest(outcome_content) != outcome_digest
+    ):
+        raise PhaseEvidenceError("phase outcome state object digest or size is invalid")
+    scanner.require_clean_chunks((outcome_content,))
+    outcomes = _validate_reference_consistency(
+        inputs,
+        _parse_outcome_document(outcome_content),
+        references,
+    )
     contents: dict[str, bytes] = {}
-    total_bytes = 0
+    total_bytes = len(outcome_content)
+    if total_bytes > limits.max_total_bytes:
+        raise PhaseEvidenceError("phase outcome state exceeds its total size limit")
     for reference in references:
         content = by_digest.get(reference.digest)
         if (
