@@ -835,7 +835,11 @@ def _working_tree_file(path: Path) -> _PreparedFile:
     try:
         metadata = os.fstat(descriptor)
         permissions = stat.S_IMODE(metadata.st_mode)
-        if not stat.S_ISREG(metadata.st_mode) or permissions not in {0o644, 0o755}:
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or permissions not in {0o644, 0o755}
+        ):
             raise _fail(
                 ContractErrorCode.POLICY_DENIED,
                 "prepared verification file type or mode is unsupported",
@@ -920,6 +924,11 @@ def _reject_symlink_tree(root: Path, *, description: str) -> None:
             raise _fail(
                 ContractErrorCode.POLICY_DENIED,
                 f"{description} contains a special file",
+            )
+        elif metadata.st_nlink != 1:
+            raise _fail(
+                ContractErrorCode.POLICY_DENIED,
+                f"{description} contains a hard link alias",
             )
 
 

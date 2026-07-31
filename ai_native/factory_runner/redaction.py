@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+import json
 import re
 
+from ai_native.factory_runner.canonical import canonical_json_bytes
 from ai_native.factory_runner.process_policy import FactoryPolicyViolation
 
 
@@ -84,10 +86,40 @@ class SecretScanner:
                 key=lambda item: (-len(item[1]), item[0], item[1]),
             )
         )
+        detection_canaries: set[tuple[str, bytes]] = set(self._canaries)
+        for identifier, canary in self._canaries:
+            try:
+                textual_canary = canary.decode("utf-8", errors="strict")
+            except UnicodeError:
+                continue
+            encoded_variants = (
+                canonical_json_bytes(textual_canary),
+                json.dumps(
+                    textual_canary,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8"),
+                json.dumps(
+                    textual_canary,
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                ).encode("ascii"),
+            )
+            detection_canaries.update(
+                (identifier, encoded[1:-1])
+                for encoded in encoded_variants
+                if len(encoded) >= 2
+            )
+        self._detection_canaries = tuple(
+            sorted(
+                detection_canaries,
+                key=lambda item: (-len(item[1]), item[0], item[1]),
+            )
+        )
         self._overlap_bytes = max(
             (
                 _BUILTIN_OVERLAP_BYTES,
-                *(len(value) - 1 for _identifier, value in self._canaries),
+                *(len(value) - 1 for _identifier, value in self._detection_canaries),
             ),
         )
 
@@ -101,7 +133,7 @@ class SecretScanner:
             candidate = tail + chunk
             if _BUILTIN_CANARY.search(candidate) is not None:
                 raise SecretDetectedError("secret-canary")
-            for identifier, canary in self._canaries:
+            for identifier, canary in self._detection_canaries:
                 if canary in candidate:
                     raise SecretDetectedError(identifier)
             if self._overlap_bytes:

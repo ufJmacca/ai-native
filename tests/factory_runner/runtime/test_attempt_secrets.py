@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+import json
 import os
 from pathlib import Path
 import re
@@ -8,8 +10,12 @@ import pytest
 
 from ai_native.factory_runner.attempt_secrets import (
     AttemptSecretSourceError,
+    admit_attempt_secrets,
     build_attempt_secret_scanner,
+    materialize_attempt_secret_files,
+    remove_materialized_attempt_secret_files,
 )
+from ai_native.factory_runner.canonical import canonical_json_bytes
 from ai_native.factory_runner.redaction import SecretDetectedError
 
 
@@ -117,6 +123,39 @@ def test_builtin_canary_policy_remains_enabled_and_cross_chunk() -> None:
 
 
 @pytest.mark.parametrize(
+    "secret",
+    (
+        'credential-"quoted"-value',
+        r"credential-\escaped-value",
+        "credential-\n-control-value",
+        "credential-\N{SNOWMAN}-unicode-value",
+    ),
+)
+@pytest.mark.parametrize(
+    "serialized",
+    (
+        lambda value: canonical_json_bytes({"value": value}),
+        lambda value: json.dumps(
+            {"value": value},
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ).encode("ascii"),
+    ),
+)
+def test_json_escaped_textual_canaries_are_detected(
+    secret: str,
+    serialized: Callable[[str], bytes],
+) -> None:
+    scanner = build_attempt_secret_scanner({"SERVICE_TOKEN": secret})
+    payload = serialized(secret)
+
+    with pytest.raises(SecretDetectedError):
+        scanner.require_clean_chunks(
+            (payload[: len(payload) // 2], payload[len(payload) // 2 :])
+        )
+
+
+@pytest.mark.parametrize(
     "damage",
     (
         "relative",
@@ -183,3 +222,79 @@ def test_oversized_direct_secret_fails_without_exposing_it() -> None:
         build_attempt_secret_scanner({"SERVICE_TOKEN": secret})
 
     assert secret not in str(caught.value)
+
+
+def test_credential_files_are_pinned_to_the_bytes_that_were_scanned(
+    tmp_path: Path,
+) -> None:
+    admitted_secret = b"credential-value-admitted-by-the-runner"
+    replacement_secret = b"credential-value-swapped-after-admission"
+    source = tmp_path / "mutable-token"
+    source.write_bytes(admitted_secret + b"\n")
+    environment = {"ATTEMPT_GATEWAY_TOKEN_FILE": str(source.resolve())}
+
+    admission = admit_attempt_secrets(environment)
+    source.write_bytes(replacement_secret + b"\n")
+    pinned = materialize_attempt_secret_files(
+        admission,
+        destination=tmp_path / "runner-owned-secrets",
+    )
+
+    pinned_path = Path(pinned["ATTEMPT_GATEWAY_TOKEN_FILE"])
+    assert pinned_path != source
+    assert pinned_path.read_bytes() == admitted_secret
+    assert pinned_path.stat().st_mode & 0o777 == 0o600
+    assert pinned_path.parent.stat().st_mode & 0o777 == 0o700
+    with pytest.raises(SecretDetectedError):
+        admission.scanner.require_clean_chunks((pinned_path.read_bytes(),))
+    admission.scanner.require_clean_chunks((replacement_secret,))
+
+
+def test_materialized_environment_preserves_non_file_values(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "token"
+    source.write_text("pinned-token", encoding="utf-8")
+    environment = {
+        "ATTEMPT_GATEWAY_TOKEN_FILE": str(source.resolve()),
+        "LANG": "C.UTF-8",
+        "SERVICE_TOKEN": "direct-token",
+    }
+
+    admission = admit_attempt_secrets(environment)
+    materialized = materialize_attempt_secret_files(
+        admission,
+        destination=tmp_path / "secrets",
+    )
+
+    assert materialized["LANG"] == "C.UTF-8"
+    assert materialized["SERVICE_TOKEN"] == "direct-token"
+    assert (
+        Path(materialized["ATTEMPT_GATEWAY_TOKEN_FILE"]).read_text(encoding="utf-8")
+        == "pinned-token"
+    )
+
+
+def test_pinned_credential_directory_is_removed_before_untrusted_phases(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "token"
+    source.write_text("pinned-token", encoding="utf-8")
+    admission = admit_attempt_secrets(
+        {"ATTEMPT_GATEWAY_TOKEN_FILE": str(source.resolve())}
+    )
+    destination = tmp_path / "secrets"
+    materialized = materialize_attempt_secret_files(
+        admission,
+        destination=destination,
+    )
+    pinned_path = Path(materialized["ATTEMPT_GATEWAY_TOKEN_FILE"])
+    assert pinned_path.exists()
+
+    remove_materialized_attempt_secret_files(
+        admission,
+        destination=destination,
+    )
+
+    assert not destination.exists()
+    assert source.read_text(encoding="utf-8") == "pinned-token"

@@ -296,6 +296,96 @@ def _reject_questions(_stage: str, questions: list[str]) -> list[str]:
     )
 
 
+def validate_restored_author_state(
+    inputs: ValidatedInputs,
+    *,
+    scratch_root: Path,
+    completed_stages: Sequence[str],
+) -> None:
+    """Semantically validate portable legacy state before acknowledging resume."""
+
+    private_run_dir = private_run_directory(inputs, scratch_root)
+    state_store = StateStore(private_run_dir.parent, registry=None)
+    try:
+        state = state_store.load(private_run_dir)
+        spec_path = (private_run_dir / "spec.md").resolve(strict=True)
+        workspace = inputs.workspace.resolve(strict=True)
+        run_dir = private_run_dir.resolve(strict=True)
+        artifacts_root = (private_run_dir / "agent-workspace").resolve(strict=False)
+        state_spec_path = Path(state.spec_path).resolve(strict=True)
+        state_workspace = Path(state.workspace_root).resolve(strict=True)
+        state_run_dir = Path(state.run_dir).resolve(strict=True)
+        state_artifacts_root = Path(
+            state.metadata.get("workspace_artifacts_root", "")
+        ).resolve(strict=False)
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise FactoryAuthorError(
+            "portable author state could not be loaded safely"
+        ) from exc
+    expected_completed = tuple(completed_stages)
+    completed_in_state = tuple(
+        stage
+        for stage in LEGACY_ORDERED_STAGES
+        if stage in state.stage_status
+        and state.stage_status[stage].status == "completed"
+    )
+    effective_completed_in_state = tuple(
+        stage
+        for stage in completed_in_state
+        if stage in inputs.run_spec.policy.allowed_stages
+    )
+    producer_attempt = (
+        inputs.checkpoint.checkpoint.producer_attempt_id
+        if inputs.checkpoint is not None
+        else inputs.run_spec.identity.attempt_id
+    )
+    if (
+        state.run_id != inputs.run_spec.identity.run_id
+        or state.feature_slug != "factory-run"
+        or state_spec_path != spec_path
+        or state_workspace != workspace
+        or state_run_dir != run_dir
+        or state_artifacts_root != artifacts_root
+        or state.spec_hash != hashlib.sha256(spec_path.read_bytes()).hexdigest()
+        or state.metadata.get("factory_mode") is not True
+        or state.metadata.get("attempt_id") != producer_attempt
+        or effective_completed_in_state != expected_completed
+        or any(stage not in LEGACY_ORDERED_STAGES for stage in state.stage_status)
+    ):
+        raise FactoryAuthorError("portable author state is semantically incompatible")
+
+
+def retarget_restored_author_state(
+    inputs: ValidatedInputs,
+    *,
+    scratch_root: Path,
+) -> None:
+    """Bind validated portable state to the replacement attempt before checkpointing."""
+
+    if inputs.checkpoint is None:
+        raise FactoryAuthorError("portable author state has no producer checkpoint")
+    private_run_dir = private_run_directory(inputs, scratch_root)
+    state_store = StateStore(private_run_dir.parent, registry=None)
+    try:
+        state = state_store.load(private_run_dir)
+    except (OSError, ValueError) as exc:
+        raise FactoryAuthorError(
+            "portable author state could not be retargeted"
+        ) from exc
+    if (
+        state.metadata.get("attempt_id")
+        != inputs.checkpoint.checkpoint.producer_attempt_id
+    ):
+        raise FactoryAuthorError("portable author state producer is incompatible")
+    state.metadata["attempt_id"] = inputs.run_spec.identity.attempt_id
+    try:
+        state_store.save(state)
+    except (OSError, ValueError) as exc:
+        raise FactoryAuthorError(
+            "portable author state could not be retargeted"
+        ) from exc
+
+
 def execute_author(
     inputs: ValidatedInputs,
     *,
@@ -334,8 +424,9 @@ def execute_author(
             raise FactoryAuthorError(
                 "portable author state could not be restored"
             ) from exc
-        state.metadata["attempt_id"] = inputs.run_spec.identity.attempt_id
-        state_store.save(state)
+        if state.metadata.get("attempt_id") != inputs.run_spec.identity.attempt_id:
+            state.metadata["attempt_id"] = inputs.run_spec.identity.attempt_id
+            state_store.save(state)
     else:
         _write_factory_spec(inputs, spec_path)
         state = _initial_state(
@@ -396,8 +487,8 @@ def execute_author(
 
     requested = set(inputs.run_spec.policy.allowed_stages)
     completed = list(completed_stages)
-    if len(set(completed)) != len(completed) or not set(completed).issubset(
-        requested
+    if len(set(completed)) != len(completed) or any(
+        stage not in LEGACY_ORDERED_STAGES for stage in completed
     ):
         raise FactoryAuthorError("resumed author stages exceed admitted authority")
     for stage in LEGACY_ORDERED_STAGES:
@@ -433,6 +524,8 @@ def execute_author(
             if deadline.expired:
                 raise FactoryAuthorTimedOut from exc
             raise FactoryAuthorError(f"{stage} stage failed") from exc
+        except FactoryPolicyViolation:
+            raise
         except (StageError, ValueError, OSError) as exc:
             raise FactoryAuthorError(f"{stage} stage failed") from exc
         state_store.update_stage(
@@ -461,4 +554,6 @@ __all__ = [
     "FactoryClarificationRequired",
     "execute_author",
     "private_run_directory",
+    "retarget_restored_author_state",
+    "validate_restored_author_state",
 ]

@@ -25,7 +25,9 @@ SAFETY_AGENT = Path(__file__).with_name("_author_safety_agent.py")
 ATTEMPT_CANARY = "attempt-credential-DO-NOT-PERSIST-4f31a90d"
 SafetyMode = Literal[
     "author",
+    "hardlink",
     "invalid-mode",
+    "secret-binary-repository",
     "secret-model-output",
     "secret-repository",
     "special-file",
@@ -121,6 +123,75 @@ def _assert_not_persisted(invocation: FactoryInvocation, canary: bytes) -> None:
             assert canary not in path.read_bytes(), path
 
 
+def test_partial_secret_admission_failure_emits_no_unscanned_identity(
+    factory_invocation: Callable[..., FactoryInvocation],
+    tmp_path: Path,
+) -> None:
+    invocation = factory_invocation(operation="author")
+    payload = json.loads(invocation.run_spec_path.read_text(encoding="utf-8"))
+    attempt_id = payload["identity"]["attempt_id"]
+
+    completed = _invoke(
+        invocation,
+        mode="author",
+        additions={
+            "SERVICE_TOKEN": attempt_id,
+            "ZZZ_TOKEN_FILE": str((tmp_path / "missing-token").resolve()),
+        },
+    )
+
+    assert completed.returncode == 3, completed.stderr
+    assert not invocation.output_dir.exists()
+    assert attempt_id not in completed.stdout
+    assert attempt_id not in completed.stderr
+
+
+def test_protocol_identity_secret_is_policy_denied_not_invalid_output(
+    factory_invocation: Callable[..., FactoryInvocation],
+) -> None:
+    invocation = factory_invocation(operation="author")
+    payload = json.loads(invocation.run_spec_path.read_text(encoding="utf-8"))
+    attempt_id = payload["identity"]["attempt_id"]
+
+    completed = _invoke(
+        invocation,
+        mode="author",
+        additions={"SERVICE_TOKEN": attempt_id},
+    )
+
+    assert completed.returncode == 3, completed.stderr
+    assert invocation.output_dir.is_dir()
+    assert tuple(invocation.output_dir.iterdir()) == ()
+    assert attempt_id not in completed.stdout
+    assert attempt_id not in completed.stderr
+
+
+def test_admission_failure_cannot_serialize_unscanned_identity_secret(
+    factory_invocation: Callable[..., FactoryInvocation],
+) -> None:
+    invocation = factory_invocation(operation="author")
+    payload = json.loads(invocation.run_spec_path.read_text(encoding="utf-8"))
+    attempt_id = 'attempt-credential-with-"quoted"-identity'
+    payload["identity"]["attempt_id"] = attempt_id
+    payload["context"]["expected_digest"] = "sha256:" + ("0" * 64)
+    invocation.run_spec_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    completed = _invoke(
+        invocation,
+        mode="author",
+        additions={"SERVICE_TOKEN": attempt_id},
+    )
+
+    assert completed.returncode == 3, completed.stderr
+    if invocation.output_dir.exists():
+        assert tuple(invocation.output_dir.iterdir()) == ()
+    assert attempt_id not in completed.stdout
+    assert attempt_id not in completed.stderr
+
+
 @pytest.mark.parametrize(
     ("source", "expected_classification"),
     (
@@ -179,8 +250,12 @@ def test_false_red_is_rejected_before_authoring(
             "from pathlib import Path; import stat; "
             "assert stat.S_IMODE(Path('app.py').stat().st_mode) == 0o600",
         ),
+        (
+            "hardlink",
+            "from app import greeting; assert greeting('Codex') == 'Hello, Codex!'",
+        ),
     ),
-    ids=("symlink", "special-file", "invalid-mode"),
+    ids=("symlink", "special-file", "invalid-mode", "hardlink"),
 )
 def test_author_change_must_be_a_supported_regular_file(
     factory_invocation: Callable[..., FactoryInvocation],
@@ -196,6 +271,19 @@ def test_author_change_must_be_a_supported_regular_file(
     completed = _invoke(invocation, mode=mode)
 
     _assert_policy_denied(invocation, completed)
+    result = load_valid_result(invocation)
+    reference = result.latest_checkpoint
+    assert reference is not None
+    checkpoint = json.loads(
+        (invocation.output_dir / reference.path).read_text(encoding="utf-8")
+    )
+    assert checkpoint["workspace_patch_digest"] is None
+    assert tuple(checkpoint["completed_stages"]) == result.completed_stages
+    if mode == "hardlink":
+        outside = invocation.marker_path.with_name("outside-authored-app.py")
+        assert outside.read_text(encoding="utf-8") == (
+            'def greeting(name: str) -> str:\n    return f"Hello, {name}!"\n'
+        )
 
 
 def test_protocol_output_total_limit_is_enforced(
@@ -244,6 +332,7 @@ def test_protocol_output_total_limit_is_enforced(
         ("direct", "command-output"),
         ("direct", "model-output"),
         ("direct", "repository"),
+        ("direct", "binary-repository"),
         ("file", "model-output"),
         ("file", "repository"),
     ),
@@ -269,6 +358,8 @@ def test_attempt_secret_never_reaches_durable_output(
     mode: SafetyMode
     if sink_kind == "model-output":
         mode = "secret-model-output"
+    elif sink_kind == "binary-repository":
+        mode = "secret-binary-repository"
     elif sink_kind == "repository":
         mode = "secret-repository"
     else:
@@ -302,3 +393,38 @@ def test_attempt_secret_never_reaches_durable_output(
     assert ATTEMPT_CANARY not in completed.stdout
     assert ATTEMPT_CANARY not in completed.stderr
     _assert_not_persisted(invocation, ATTEMPT_CANARY.encode())
+
+
+def test_gateway_only_credential_is_absent_during_deterministic_commands(
+    factory_invocation: Callable[..., FactoryInvocation],
+    tmp_path: Path,
+) -> None:
+    invocation = factory_invocation(operation="author")
+    source = tmp_path / "gateway-only-credential"
+    source.write_text(ATTEMPT_CANARY + "\n", encoding="utf-8")
+    marker = tmp_path / "deterministic-command-stole-credential"
+    command = (
+        "from pathlib import Path; import os; "
+        "root = Path(os.environ['HOME']).parent; "
+        "matches = tuple(root.rglob('credential-*')); "
+        f"Path({str(marker)!r}).write_bytes(matches[0].read_bytes()) "
+        "if matches else None; "
+        "from app import greeting; "
+        "assert greeting('Codex') == 'Hello, Codex!'"
+    )
+    _write_policy(
+        invocation,
+        commands=[[sys.executable, "-B", "-c", command]],
+        allowed_environment_keys=[],
+    )
+
+    completed = _invoke(
+        invocation,
+        mode="author",
+        additions={
+            "ATTEMPT_GATEWAY_TOKEN_FILE": str(source.resolve()),
+        },
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert not marker.exists()

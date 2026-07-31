@@ -20,12 +20,14 @@ from ai_native.factory_runner.contracts.change_set import (
     changed_file_manifest_digest,
 )
 from ai_native.factory_runner.contracts.common import ArtifactReference
+from ai_native.factory_runner.contracts.run_spec import RunPolicy
 from ai_native.factory_runner.contracts.verification_evidence import (
     VerificationEvidence,
 )
 from ai_native.factory_runner.git_runtime import FactoryGitRuntime
 from ai_native.factory_runner.outputs import EMPTY_DIGEST, OutputWriter, utc_timestamp
 from ai_native.factory_runner.protocol import contract_document_digest
+from ai_native.factory_runner.redaction import SecretScanner
 
 
 class ChangePolicyError(RuntimeError):
@@ -223,11 +225,37 @@ def _path_rule_covers(rule: str, path: str) -> bool:
 
 def _path_is_allowed(inputs: ValidatedInputs, path: str) -> bool:
     policy = inputs.run_spec.policy
+    return _path_is_allowed_by_policy(policy, path)
+
+
+def _path_is_allowed_by_policy(policy: RunPolicy, path: str) -> bool:
     allowed = any(_path_rule_covers(rule, path) for rule in policy.allowed_paths)
     prohibited = any(_path_rule_covers(rule, path) for rule in policy.prohibited_paths)
     return (
         allowed and not prohibited and path != ".git" and not path.startswith(".git/")
     )
+
+
+def validate_checkpoint_patch_paths(
+    policy: RunPolicy,
+    *,
+    patch: bytes,
+    git_runtime: FactoryGitRuntime,
+) -> tuple[str, ...]:
+    """Reject a checkpoint patch that exceeds the resumed path authority."""
+
+    if not isinstance(policy, RunPolicy):
+        raise TypeError("checkpoint path validation requires a RunPolicy")
+    if not isinstance(git_runtime, FactoryGitRuntime):
+        raise TypeError(
+            "checkpoint path validation requires a runner-owned Git runtime"
+        )
+    paths = git_runtime.inspect_patch_paths(patch)
+    if any(not _path_is_allowed_by_policy(policy, path) for path in paths):
+        raise ChangePolicyError(
+            "checkpoint workspace patch is outside resumed path authority"
+        )
+    return paths
 
 
 def _status_entries(
@@ -262,6 +290,7 @@ def validate_author_boundary(
     *,
     git_runtime: FactoryGitRuntime,
     security_snapshot: RepositorySecuritySnapshot,
+    secret_scanner: SecretScanner | None = None,
 ) -> None:
     """Fail closed when an author stage escapes repository authority."""
 
@@ -270,9 +299,16 @@ def validate_author_boundary(
     head = _git(git_runtime, "rev-parse", "HEAD").decode().strip()
     if head != inputs.run_spec.repository.base_commit_sha:
         raise ChangePolicyError("factory authoring changed repository HEAD")
-    for _status, path in _status_entries(git_runtime):
+    entries = _status_entries(git_runtime)
+    for _status, path in entries:
         if not _path_is_allowed(inputs, path):
             raise ChangePolicyError("repository change is outside allowed paths")
+    _full_changed_file_manifest(
+        inputs,
+        git_runtime=git_runtime,
+        entries=entries,
+        secret_scanner=secret_scanner,
+    )
 
 
 def _restore_tracked_file(
@@ -300,9 +336,7 @@ def _restore_tracked_file(
                 parent.mkdir(mode=0o700)
                 metadata = parent.lstat()
             except OSError as exc:
-                raise ChangePolicyError(
-                    "changed path parent is unavailable"
-                ) from exc
+                raise ChangePolicyError("changed path parent is unavailable") from exc
         except OSError as exc:
             raise ChangePolicyError("changed path parent is unavailable") from exc
         if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
@@ -316,11 +350,15 @@ def _restore_tracked_file(
     except OSError as exc:
         raise ChangePolicyError("changed file is unavailable for restore") from exc
     if metadata is not None and (
-        stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode)
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_nlink != 1
     ):
         raise ChangePolicyError("changed file is unsafe to restore")
 
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    flags = os.O_WRONLY
+    if metadata is None:
+        flags |= os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_CLOEXEC"):
         flags |= os.O_CLOEXEC
     if hasattr(os, "O_NOFOLLOW"):
@@ -330,8 +368,17 @@ def _restore_tracked_file(
     except OSError as exc:
         raise ChangePolicyError("changed file could not be restored") from exc
     try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or (
+                metadata is not None
+                and (opened.st_dev, opened.st_ino) != (metadata.st_dev, metadata.st_ino)
+            )
+        ):
             raise ChangePolicyError("changed file is unsafe to restore")
+        os.ftruncate(descriptor, 0)
         view = memoryview(content)
         while view:
             written = os.write(descriptor, view)
@@ -340,6 +387,12 @@ def _restore_tracked_file(
             view = view[written:]
         os.fchmod(descriptor, 0o755 if mode == "100755" else 0o644)
         os.fsync(descriptor)
+        after = os.fstat(descriptor)
+        if (after.st_dev, after.st_ino) != (
+            opened.st_dev,
+            opened.st_ino,
+        ) or after.st_nlink != 1:
+            raise ChangePolicyError("changed file changed during restore")
     except OSError as exc:
         raise ChangePolicyError("changed file could not be restored") from exc
     finally:
@@ -448,7 +501,12 @@ def _read_resulting_file(workspace: Path, path: str) -> _FileState:
             raise ChangePolicyError("changed path parent is unsafe")
 
     target = workspace / relative
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
     try:
         descriptor = os.open(target, flags)
     except OSError as exc:
@@ -457,6 +515,8 @@ def _read_resulting_file(workspace: Path, path: str) -> _FileState:
         metadata = os.fstat(descriptor)
         if not stat.S_ISREG(metadata.st_mode):
             raise ChangePolicyError("changed paths must be regular files")
+        if metadata.st_nlink != 1:
+            raise ChangePolicyError("changed paths may not have hard link aliases")
         if metadata.st_size > _MAX_CHANGED_FILE_BYTES:
             raise ChangePolicyError("changed file exceeds the byte limit")
         permissions = stat.S_IMODE(metadata.st_mode)
@@ -472,6 +532,25 @@ def _read_resulting_file(workspace: Path, path: str) -> _FileState:
             if consumed > _MAX_CHANGED_FILE_BYTES:
                 raise ChangePolicyError("changed file exceeds the byte limit")
             chunks.append(chunk)
+        after = os.fstat(descriptor)
+        if (
+            after.st_dev,
+            after.st_ino,
+            after.st_nlink,
+            after.st_size,
+            after.st_mode,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        ) != (
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_nlink,
+            metadata.st_size,
+            metadata.st_mode,
+            metadata.st_mtime_ns,
+            metadata.st_ctime_ns,
+        ):
+            raise ChangePolicyError("changed file changed during validation")
     finally:
         os.close(descriptor)
     return _FileState(
@@ -524,6 +603,7 @@ def _full_changed_file_manifest(
     *,
     git_runtime: FactoryGitRuntime,
     entries: list[tuple[str, str]],
+    secret_scanner: SecretScanner | None = None,
 ) -> list[ChangedFile]:
     deleted: dict[str, _FileState] = {}
     added: dict[str, _FileState] = {}
@@ -535,15 +615,22 @@ def _full_changed_file_manifest(
             raise ChangePolicyError("repository change is outside allowed paths")
         if status_code == " D":
             state = _read_base_file(git_runtime, path)
+            if secret_scanner is not None:
+                secret_scanner.require_clean_chunks((state.content,))
             deleted[path] = state
             total_bytes += len(state.content)
         elif status_code == "??":
             state = _read_resulting_file(inputs.workspace, path)
+            if secret_scanner is not None:
+                secret_scanner.require_clean_chunks((state.content,))
             added[path] = state
             total_bytes += len(state.content)
         else:
             previous = _read_base_file(git_runtime, path)
             resulting = _read_resulting_file(inputs.workspace, path)
+            if secret_scanner is not None:
+                secret_scanner.require_clean_chunks((previous.content,))
+                secret_scanner.require_clean_chunks((resulting.content,))
             total_bytes += len(previous.content) + len(resulting.content)
             modified.append(
                 _changed_file(
@@ -686,6 +773,7 @@ def build_change_set(
     git_runtime: FactoryGitRuntime,
     evidence: VerificationEvidence,
     evidence_reference: ArtifactReference,
+    secret_scanner: SecretScanner | None = None,
 ) -> tuple[ChangeSet | None, ArtifactReference | None]:
     """Create a deterministic patch for tracked modifications, or no change."""
 
@@ -712,6 +800,7 @@ def build_change_set(
         inputs,
         git_runtime=git_runtime,
         entries=entries,
+        secret_scanner=secret_scanner,
     )
     patch = capture_workspace_patch(inputs, git_runtime=git_runtime)
     if patch is None:
@@ -777,4 +866,5 @@ __all__ = [
     "capture_repository_security_snapshot",
     "restore_clean_author_workspace",
     "validate_author_boundary",
+    "validate_checkpoint_patch_paths",
 ]

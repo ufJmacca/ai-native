@@ -56,7 +56,9 @@ def main() -> int:
         "--mode",
         choices=(
             "author",
+            "hardlink",
             "invalid-mode",
+            "secret-binary-repository",
             "secret-model-output",
             "secret-repository",
             "special-file",
@@ -81,7 +83,12 @@ def main() -> int:
     prompt = Path(os.environ["AINATIVE_PROMPT_FILE"]).read_text(encoding="utf-8")
     workspace = Path.cwd()
     target = workspace / "app.py"
-    if args.mode == "symlink":
+    if args.mode == "hardlink":
+        outside = args.marker.with_name("outside-authored-app.py")
+        outside.write_text(AUTHORED_APP, encoding="utf-8")
+        _replace_path(target)
+        os.link(outside, target)
+    elif args.mode == "symlink":
         outside = args.marker.with_name("outside-authored-app.py")
         outside.write_text(AUTHORED_APP, encoding="utf-8")
         _replace_path(target)
@@ -97,6 +104,8 @@ def main() -> int:
             AUTHORED_APP + f"# {_attempt_secret()}\n",
             encoding="utf-8",
         )
+    elif args.mode == "secret-binary-repository":
+        target.write_bytes(b"\x00binary-secret:" + _attempt_secret().encode())
     else:
         target.write_text(AUTHORED_APP, encoding="utf-8")
 
