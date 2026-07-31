@@ -19,6 +19,11 @@ from ai_native.factory_runner.contracts.run_spec import RunSpec
 from ai_native.factory_runner.contracts.verification_evidence import (
     VerificationEvidence,
 )
+from ai_native.factory_runner.checkpoints import (
+    CheckpointError,
+    CheckpointManager,
+    LoadedCheckpoint,
+)
 from ai_native.factory_runner.errors import (
     ContractErrorCode,
     ContractValidationError,
@@ -114,6 +119,7 @@ class ValidatedInputs:
     workspace: Path
     context_digest: str
     environment: Mapping[str, str]
+    checkpoint: LoadedCheckpoint | None = None
 
 
 def _fail(
@@ -364,8 +370,27 @@ def _validate_capabilities_and_profiles(run_spec: RunSpec) -> None:
 def _validate_context_relationships(
     run_spec: RunSpec,
     context_bundle: ContextBundle,
+    checkpoint: LoadedCheckpoint | None,
 ) -> None:
-    if context_bundle.identity != run_spec.identity:
+    if checkpoint is None:
+        identity_matches = context_bundle.identity == run_spec.identity
+    else:
+        producer = checkpoint.checkpoint
+        context_identity = context_bundle.identity.model_dump(
+            mode="json",
+            exclude={"attempt_id"},
+        )
+        run_identity = run_spec.identity.model_dump(
+            mode="json",
+            exclude={"attempt_id"},
+        )
+        identity_matches = (
+            context_identity == run_identity
+            and context_bundle.identity == producer.identity
+            and context_bundle.repository == producer.repository
+            and context_bundle.bundle_digest == producer.context_bundle_digest
+        )
+    if not identity_matches:
         raise _fail(
             ContractErrorCode.INVALID_INPUT,
             "context identity does not match the run spec",
@@ -484,7 +509,10 @@ def _validate_context_objects(
         )
 
 
-def _load_context(run_spec: RunSpec) -> tuple[ContextBundle, Path]:
+def _load_context(
+    run_spec: RunSpec,
+    checkpoint: LoadedCheckpoint | None,
+) -> tuple[ContextBundle, Path]:
     context_path, context_model = _read_contract(
         Path(run_spec.context.manifest_path),
         expected_schema="context-bundle/v1",
@@ -504,9 +532,40 @@ def _load_context(run_spec: RunSpec) -> tuple[ContextBundle, Path]:
             ContractErrorCode.DIGEST_MISMATCH,
             "context bundle does not match its expected digest",
         )
-    _validate_context_relationships(run_spec, context_bundle)
+    _validate_context_relationships(run_spec, context_bundle, checkpoint)
     _validate_context_objects(context_path, context_bundle)
     return context_bundle, context_path
+
+
+def _load_resume_checkpoint(
+    run_spec: RunSpec,
+    *,
+    input_root: Path,
+) -> LoadedCheckpoint | None:
+    checkpoint_path = run_spec.resume.checkpoint_path
+    expected_digest = run_spec.resume.expected_digest
+    if checkpoint_path is None or expected_digest is None:
+        return None
+    resume_root = input_root / "resume"
+    try:
+        if resume_root.is_symlink():
+            raise CheckpointError("checkpoint root must not be a symbolic link")
+        resolved_root = resume_root.resolve(strict=True)
+        checkpoint_candidate = Path(checkpoint_path)
+        resolved_checkpoint = checkpoint_candidate.resolve(strict=True)
+        if not resolved_checkpoint.is_relative_to(resolved_root):
+            raise CheckpointError("checkpoint path escapes the resume input root")
+        return CheckpointManager(resolved_root).load_for_resume(
+            checkpoint_candidate,
+            expected_digest=expected_digest,
+            run_spec=run_spec,
+            supported_capabilities=_SUPPORTED_CAPABILITIES,
+        )
+    except (CheckpointError, OSError, RuntimeError) as exc:
+        raise _fail(
+            ContractErrorCode.CHECKPOINT_INCOMPATIBLE,
+            "checkpoint input is incompatible with this run",
+        ) from exc
 
 
 def _load_change_set(
@@ -631,12 +690,6 @@ def admit_inputs(
         )
 
     audited_environment = _audit_environment(environment)
-    if run_spec.resume.checkpoint_path is not None:
-        raise _fail(
-            ContractErrorCode.CHECKPOINT_INCOMPATIBLE,
-            "checkpoint resume is not available until durable AN-03 checkpoints",
-        )
-
     workspace = _resolved_workspace(run_spec.workspace.path)
     cli_output = _resolved_output(Path(output_dir))
     declared_output = _resolved_output(Path(run_spec.outputs.output_dir))
@@ -652,7 +705,11 @@ def admit_inputs(
         )
 
     _validate_capabilities_and_profiles(run_spec)
-    context_bundle, _ = _load_context(run_spec)
+    checkpoint = _load_resume_checkpoint(
+        run_spec,
+        input_root=resolved_run_spec.parent,
+    )
+    context_bundle, _ = _load_context(run_spec, checkpoint)
     change_set = _load_change_set(
         run_spec,
         context_bundle,
@@ -668,6 +725,7 @@ def admit_inputs(
         workspace=workspace,
         context_digest=context_bundle.bundle_digest,
         environment=audited_environment,
+        checkpoint=checkpoint,
     )
 
 
