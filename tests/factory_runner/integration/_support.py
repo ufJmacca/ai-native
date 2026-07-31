@@ -754,9 +754,7 @@ def prepare_clean_verification_from_author(
         text=True,
     )
     _run_git(workspace, "remote", "remove", "origin")
-    patch = (
-        author_invocation.output_dir / change_set.patch.path
-    ).read_bytes()
+    patch = (author_invocation.output_dir / change_set.patch.path).read_bytes()
     subprocess.run(
         ["git", "apply", "--binary", "--whitespace=nowarn", "-"],
         cwd=workspace,
@@ -774,9 +772,7 @@ def prepare_clean_verification_from_author(
     shutil.copytree(author_invocation.output_dir, input_dir, dirs_exist_ok=True)
     output_dir = root / "output"
 
-    payload = json.loads(
-        author_invocation.run_spec_path.read_text(encoding="utf-8")
-    )
+    payload = json.loads(author_invocation.run_spec_path.read_text(encoding="utf-8"))
     payload["identity"]["attempt_id"] = "attempt-an-03-clean-verify"
     payload["operation"] = "verify"
     payload["workspace"] = {

@@ -180,8 +180,12 @@ def test_output_redaction_preserves_exact_bytes_except_for_secret_values() -> No
     assert secret not in redacted.content
 
 
-def test_author_evidence_contains_complete_ordered_tdd_and_verification_phases() -> None:
-    items = tuple(_item(phase) for phase in ("red", "green", "refactor", "verification"))
+def test_author_evidence_contains_complete_ordered_tdd_and_verification_phases() -> (
+    None
+):
+    items = tuple(
+        _item(phase) for phase in ("red", "green", "refactor", "verification")
+    )
 
     evidence = _author_evidence(items)
 
@@ -215,7 +219,9 @@ def test_author_evidence_rejects_an_incomplete_phase_set(
 
 
 def test_author_evidence_cannot_claim_clean_verification_provenance() -> None:
-    items = tuple(_item(phase) for phase in ("red", "green", "refactor", "verification"))
+    items = tuple(
+        _item(phase) for phase in ("red", "green", "refactor", "verification")
+    )
 
     with pytest.raises(EvidenceSufficiencyError, match="authoring|clean"):
         _author_evidence(

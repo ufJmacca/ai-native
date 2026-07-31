@@ -50,7 +50,9 @@ def test_exact_canary_is_detected_across_stream_chunks(
     scanner = _scanner(redaction_api)
 
     with pytest.raises(redaction_api.SecretDetectedError):
-        scanner.require_clean_chunks((b"prefix-" + CANARY[:13], CANARY[13:] + b"-suffix"))
+        scanner.require_clean_chunks(
+            (b"prefix-" + CANARY[:13], CANARY[13:] + b"-suffix")
+        )
 
 
 def test_human_text_redaction_is_deterministic_and_rescans_clean(

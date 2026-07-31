@@ -226,9 +226,7 @@ def test_factory_author_repairs_and_rejects_protocol_output_tampering(
         validate_contract(line, expected_schema="runner-event/v1")
         for line in events_path.read_bytes().splitlines()
     )
-    assert tuple(event.sequence for event in events) == tuple(
-        range(1, len(events) + 1)
-    )
+    assert tuple(event.sequence for event in events) == tuple(range(1, len(events) + 1))
     assert events[-1].event_type == "RunnerFailed"
     result = load_valid_result(invocation)
     assert result.outcome == "policy_denied"

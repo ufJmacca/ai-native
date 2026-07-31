@@ -45,15 +45,17 @@ def _bundle(
     )
     run_payload = resuming_run_spec()
     run_payload["resume"] = {
-        "checkpoint_path": str(
-            (root / "checkpoints/1/checkpoint.json").resolve()
-        ),
+        "checkpoint_path": str((root / "checkpoints/1/checkpoint.json").resolve()),
         "expected_digest": checkpoint.checkpoint_digest,
     }
-    return checkpoint, RunSpec.model_validate(run_payload), {
-        PATCH: patch,
-        STATE: state,
-    }
+    return (
+        checkpoint,
+        RunSpec.model_validate(run_payload),
+        {
+            PATCH: patch,
+            STATE: state,
+        },
+    )
 
 
 def _load(
@@ -93,9 +95,7 @@ def test_safe_boundary_write_is_atomic_digest_bound_and_immutable(
     loaded = _load(manager, reference.path, checkpoint, run_spec)
     assert loaded.checkpoint == checkpoint
     assert dict(loaded.objects) == objects
-    assert reference.digest == sha256_digest(
-        (root / reference.path).read_bytes()
-    )
+    assert reference.digest == sha256_digest((root / reference.path).read_bytes())
     assert not tuple(root.rglob("*.tmp"))
 
     before = filesystem_snapshot(root)

@@ -46,9 +46,7 @@ def test_completed_author_has_ordered_events_and_an_acyclic_manifest_chain(
     event_bytes = (invocation.output_dir / "events.ndjson").read_bytes()
     events = _events(invocation)
     event_types = tuple(event.event_type for event in events)
-    assert tuple(event.sequence for event in events) == tuple(
-        range(1, len(events) + 1)
-    )
+    assert tuple(event.sequence for event in events) == tuple(range(1, len(events) + 1))
     assert event_types[:2] == ("RunnerStarted", "InputValidated")
     assert event_types[-1] == "RunnerCompleted"
     assert "StageStarted" in event_types
@@ -57,14 +55,10 @@ def test_completed_author_has_ordered_events_and_an_acyclic_manifest_chain(
     assert "ChangeSetWritten" in event_types
     assert result.event_stream_digest == sha256_digest(event_bytes)
 
-    manifest_bytes = (
-        invocation.output_dir / "protocol-manifest.json"
-    ).read_bytes()
+    manifest_bytes = (invocation.output_dir / "protocol-manifest.json").read_bytes()
     manifest = json.loads(manifest_bytes)
     assert result.output_manifest_digest == sha256_digest(manifest_bytes)
-    manifest_paths = tuple(
-        entry["path"] for entry in manifest["artifacts"]
-    )
+    manifest_paths = tuple(entry["path"] for entry in manifest["artifacts"])
     assert manifest_paths == tuple(sorted(manifest_paths))
     assert "events.ndjson" in manifest_paths
     assert "changeset/change.patch" in manifest_paths
@@ -72,9 +66,7 @@ def test_completed_author_has_ordered_events_and_an_acyclic_manifest_chain(
     assert "result/run-result.json" not in manifest_paths
     assert "completion.json" not in manifest_paths
 
-    completion = json.loads(
-        (invocation.output_dir / "completion.json").read_bytes()
-    )
+    completion = json.loads((invocation.output_dir / "completion.json").read_bytes())
     assert _artifact_bytes(invocation, completion["protocol_manifest"]) == (
         manifest_bytes
     )
@@ -122,9 +114,7 @@ def test_author_changeset_binds_complete_runner_owned_tdd_evidence(
         "refactor",
         "verification",
     )
-    assert evidence.items[0].failure_classification == (
-        "expected_behavioral_failure"
-    )
+    assert evidence.items[0].failure_classification == ("expected_behavioral_failure")
     assert evidence.overall_status == "passed"
 
 
