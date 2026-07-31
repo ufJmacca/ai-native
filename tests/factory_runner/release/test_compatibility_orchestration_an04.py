@@ -32,7 +32,10 @@ from scripts.run_factory_runner_compatibility import (
     CompatibilityInvocation,
     CompatibilityRunner,
     CertificationInputs,
+    _OCI_OUTPUT_CLEANUP_PROGRAM,
+    _OCI_OUTPUT_HANDOFF_PROGRAM,
     _make_oci_fixture_writable,
+    _restore_oci_fixture_cleanup_permissions,
     _resolve_inputs,
 )
 from tests.factory_runner.contract._support import run_result
@@ -200,6 +203,11 @@ class FakeExecutor:
                 ),
                 "",
             )
+        if (
+            _OCI_OUTPUT_HANDOFF_PROGRAM in argv
+            or _OCI_OUTPUT_CLEANUP_PROGRAM in argv
+        ):
+            return CommandResult(0, "", "")
         if "--run-spec" in argv:
             run_spec_path = Path(argv[argv.index("--run-spec") + 1])
             output_dir = Path(argv[argv.index("--output-dir") + 1])
@@ -284,6 +292,11 @@ def test_oci_fixture_keeps_git_security_metadata_read_only(
     assert git_dir.stat().st_mode & 0o222 == 0
     assert index.stat().st_mode & 0o222 == 0
 
+    _restore_oci_fixture_cleanup_permissions(root)
+
+    assert stat.S_IMODE(git_dir.stat().st_mode) == 0o700
+    assert stat.S_IMODE(index.stat().st_mode) == 0o600
+
 
 def test_compatibility_agent_replaces_foreign_writable_file_with_supported_mode(
     tmp_path: Path,
@@ -357,7 +370,13 @@ def test_runner_executes_every_mandatory_fixture_against_exact_artifacts(
     execution_calls = [call for call in executor.calls if "--run-spec" in call]
     assert len(execution_calls) == 9
     assert sum(call[0] == "docker" for call in execution_calls) == 3
-    for call in (item for item in execution_calls if item[0] == "docker"):
+    oci_calls = [
+        call for call in executor.calls if call[:2] == ("docker", "run")
+    ]
+    assert len(oci_calls) == 9
+    assert sum(_OCI_OUTPUT_HANDOFF_PROGRAM in call for call in oci_calls) == 3
+    assert sum(_OCI_OUTPUT_CLEANUP_PROGRAM in call for call in oci_calls) == 3
+    for call in oci_calls:
         assert "--read-only" in call
         assert ("--network", "none") == call[
             call.index("--network") : call.index("--network") + 2

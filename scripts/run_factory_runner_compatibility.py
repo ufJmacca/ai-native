@@ -134,6 +134,46 @@ from ai_native.cli import main
 
 raise SystemExit(main())
 """
+_OCI_OUTPUT_HANDOFF_PROGRAM = """\
+from pathlib import Path
+import stat
+import sys
+
+root = Path(sys.argv[1])
+metadata = root.lstat()
+if root.resolve(strict=True) != root or not stat.S_ISDIR(metadata.st_mode):
+    raise SystemExit("unsafe compatibility output root")
+paths = sorted(root.rglob("*"), reverse=True)
+for path in paths:
+    metadata = path.lstat()
+    if stat.S_ISDIR(metadata.st_mode):
+        path.chmod(0o555)
+    elif stat.S_ISREG(metadata.st_mode):
+        path.chmod(0o444)
+    else:
+        raise SystemExit("unsafe compatibility output entry")
+root.chmod(0o555)
+"""
+_OCI_OUTPUT_CLEANUP_PROGRAM = """\
+from pathlib import Path
+import shutil
+import stat
+import sys
+
+root = Path(sys.argv[1])
+metadata = root.lstat()
+if root.resolve(strict=True) != root or not stat.S_ISDIR(metadata.st_mode):
+    raise SystemExit("unsafe compatibility output root")
+paths = sorted(root.rglob("*"), reverse=True)
+for path in paths:
+    metadata = path.lstat()
+    if stat.S_ISDIR(metadata.st_mode):
+        path.chmod(0o700)
+    elif not stat.S_ISREG(metadata.st_mode):
+        raise SystemExit("unsafe compatibility output entry")
+root.chmod(0o700)
+shutil.rmtree(root)
+"""
 
 
 class CompatibilityExecutionError(RuntimeError):
@@ -429,6 +469,29 @@ def _make_oci_fixture_writable(root: Path) -> None:
         git_marker.chmod(0o555)
 
 
+def _restore_oci_fixture_cleanup_permissions(root: Path) -> None:
+    for git_marker in root.rglob(".git"):
+        metadata = git_marker.lstat()
+        if stat.S_ISREG(metadata.st_mode):
+            git_marker.chmod(0o600)
+            continue
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise CompatibilityExecutionError(
+                "compatibility fixture contains an unsafe Git marker"
+            )
+        for path in sorted(git_marker.rglob("*"), reverse=True):
+            metadata = path.lstat()
+            if stat.S_ISDIR(metadata.st_mode):
+                path.chmod(0o700)
+            elif stat.S_ISREG(metadata.st_mode):
+                path.chmod(0o600)
+            else:
+                raise CompatibilityExecutionError(
+                    "compatibility fixture contains unsafe Git metadata"
+                )
+        git_marker.chmod(0o700)
+
+
 class CompatibilityRunner:
     """Execute the real compatibility suite and construct its certificate."""
 
@@ -700,6 +763,43 @@ class CompatibilityRunner:
             environment["PYTHONPATH"] = str(self.inputs.repository_root)
         return environment
 
+    def _oci_python_command(
+        self,
+        invocation: CompatibilityInvocation,
+        *,
+        arguments: Sequence[str],
+        environment: Mapping[str, str],
+        environment_keys: Sequence[str] = (),
+    ) -> tuple[str, ...]:
+        command = [
+            self.inputs.docker_command,
+            "run",
+            "--rm",
+            "--read-only",
+            "--network",
+            "none",
+            "--user",
+            "10001:10001",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
+            "--tmpfs",
+            (
+                "/run/ainative:rw,noexec,nosuid,nodev,size=64m,"
+                "mode=0700,uid=10001,gid=10001"
+            ),
+            "--mount",
+            (f"type=bind,src={invocation.root},dst={invocation.root}"),
+            "--entrypoint",
+            "/opt/ainative/bin/python",
+        ]
+        for key in environment_keys:
+            command.extend(("--env", f"{key}={environment[key]}"))
+        command.append(self.inputs.oci_runtime_image or self.inputs.oci_image)
+        command.extend(arguments)
+        return tuple(command)
+
     def _execute_fixture(
         self,
         invocation: CompatibilityInvocation,
@@ -751,45 +851,21 @@ class CompatibilityRunner:
                 execution_identity=execution_identity,
                 source_checkout=False,
             )
-            command_parts = [
-                self.inputs.docker_command,
-                "run",
-                "--rm",
-                "--read-only",
-                "--network",
-                "none",
-                "--user",
-                "10001:10001",
-                "--cap-drop",
-                "ALL",
-                "--security-opt",
-                "no-new-privileges",
-                "--tmpfs",
-                (
-                    "/run/ainative:rw,noexec,nosuid,nodev,size=64m,"
-                    "mode=0700,uid=10001,gid=10001"
-                ),
-                "--mount",
-                (f"type=bind,src={invocation.root},dst={invocation.root}"),
-                "--entrypoint",
-                "/opt/ainative/bin/python",
-            ]
-            for key in (
-                "AINATIVE_COMPATIBILITY_BUILD_IDENTITY_JSON",
-                "AINATIVE_FACTORY_AGENT_COMMAND_JSON",
-                "LC_ALL",
-                "PYTHONHASHSEED",
-                "TZ",
-            ):
-                command_parts.extend(("--env", f"{key}={environment[key]}"))
-            command_parts.extend(
-                (
-                    self.inputs.oci_runtime_image or self.inputs.oci_image,
+            command = self._oci_python_command(
+                invocation,
+                arguments=(
                     str(wrapper),
                     *runner_arguments,
-                )
+                ),
+                environment=environment,
+                environment_keys=(
+                    "AINATIVE_COMPATIBILITY_BUILD_IDENTITY_JSON",
+                    "AINATIVE_FACTORY_AGENT_COMMAND_JSON",
+                    "LC_ALL",
+                    "PYTHONHASHSEED",
+                    "TZ",
+                ),
             )
-            command = tuple(command_parts)
             cwd = self.inputs.repository_root
 
         completed = _checked(
@@ -802,11 +878,46 @@ class CompatibilityRunner:
             raise CompatibilityExecutionError(
                 "factory runner wrote unexpected stdout with event streaming disabled"
             )
+        if artifact == "oci":
+            _checked(
+                self.executor,
+                self._oci_python_command(
+                    invocation,
+                    arguments=(
+                        "-I",
+                        "-B",
+                        "-c",
+                        _OCI_OUTPUT_HANDOFF_PROGRAM,
+                        str(invocation.output_dir),
+                    ),
+                    environment=environment,
+                ),
+                cwd=cwd,
+                environment=environment,
+            )
         _operation, expected_outcome = _FIXTURE_EXPECTATIONS[invocation.fixture_id]
         result, output_tree_digest = _load_result(
             invocation,
             expected_outcome=expected_outcome,
         )
+        if artifact == "oci":
+            _checked(
+                self.executor,
+                self._oci_python_command(
+                    invocation,
+                    arguments=(
+                        "-I",
+                        "-B",
+                        "-c",
+                        _OCI_OUTPUT_CLEANUP_PROGRAM,
+                        str(invocation.output_dir),
+                    ),
+                    environment=environment,
+                ),
+                cwd=cwd,
+                environment=environment,
+            )
+            _restore_oci_fixture_cleanup_permissions(invocation.root)
         return ArtifactFixtureResult(
             artifact=artifact,
             status="passed",
