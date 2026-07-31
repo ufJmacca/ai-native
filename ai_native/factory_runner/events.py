@@ -13,6 +13,7 @@ from ai_native.factory_runner.outputs import OutputWriter
 
 EVENT_STREAM_PATH = "events.ndjson"
 EVENT_STREAM_MEDIA_TYPE = "application/x-ndjson"
+EVENT_TERMINAL_RESERVE_BYTES = 8192
 
 
 class EventSink:
@@ -29,6 +30,7 @@ class EventSink:
         self._staged = writer.begin_staged_artifact(
             EVENT_STREAM_PATH,
             media_type=EVENT_STREAM_MEDIA_TYPE,
+            finalization_reserve_bytes=EVENT_TERMINAL_RESERVE_BYTES,
         )
         self._event_count = 0
         self._identity: tuple[str, str, str] | None = None
@@ -99,5 +101,6 @@ class EventSink:
 __all__ = [
     "EVENT_STREAM_MEDIA_TYPE",
     "EVENT_STREAM_PATH",
+    "EVENT_TERMINAL_RESERVE_BYTES",
     "EventSink",
 ]

@@ -13,7 +13,7 @@ from ai_native.factory_runner.contracts.common import (
     RunIdentity,
 )
 from ai_native.factory_runner.contracts.runner_event import RunnerEvent
-from ai_native.factory_runner.events import EventSink
+from ai_native.factory_runner.events import EVENT_TERMINAL_RESERVE_BYTES, EventSink
 from ai_native.factory_runner.outputs import OutputWriter, validate_output_root
 
 
@@ -57,6 +57,32 @@ def _event_bytes(*events: RunnerEvent) -> bytes:
 
 def _event_staging_files(root: Path) -> tuple[Path, ...]:
     return tuple(sorted(root.glob(".events.ndjson.*.staging")))
+
+
+def test_terminal_event_reserve_covers_maximum_unicode_identity() -> None:
+    identity = "😀" * 512
+    event = RunnerEvent.model_validate(
+        {
+            "protocol": PROTOCOL,
+            "schema": "runner-event/v1",
+            "schema_version": 1,
+            "run_id": identity,
+            "attempt_id": identity,
+            "sequence": 1,
+            "timestamp": TIMESTAMP,
+            "event_type": "RunnerFailed",
+            "correlation_id": identity,
+            "causation_id": None,
+            "sanitised_payload": {
+                "operation": "author",
+                "outcome": "policy_denied",
+                "reason_code": "policy_denied",
+            },
+            "artifact_refs": [],
+        }
+    )
+
+    assert len(_event_bytes(event)) <= EVENT_TERMINAL_RESERVE_BYTES
 
 
 def test_event_sink_fsyncs_each_append_to_unpublished_staging(
