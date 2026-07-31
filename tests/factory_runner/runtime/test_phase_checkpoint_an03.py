@@ -78,9 +78,7 @@ def _item(
         termination_reason="exited",
         expected_status="failed" if red else "passed",
         actual_status="failed" if red else "passed",
-        failure_classification=(
-            "expected_behavioral_failure" if red else "none"
-        ),
+        failure_classification=("expected_behavioral_failure" if red else "none"),
         stdout=stdout,
         stderr=stderr,
         test_reports=reports,
@@ -106,9 +104,7 @@ def _phase_fixture(
             writer,
             path,
             payload,
-            media_type=(
-                "application/xml" if path.endswith(".xml") else "text/plain"
-            ),
+            media_type=("application/xml" if path.endswith(".xml") else "text/plain"),
         )
         for path, payload in content.items()
     }
@@ -137,9 +133,7 @@ def _phase_fixture(
                 command=COMMAND,
                 stdout=refs["evidence/objects/green-command-001.stdout"],
                 stderr=refs["evidence/objects/green-command-001.stderr"],
-                reports=(
-                    refs["evidence/objects/green-command-001.junit.xml"],
-                ),
+                reports=(refs["evidence/objects/green-command-001.junit.xml"],),
             ),
             _item(
                 phase="green",
@@ -154,9 +148,7 @@ def _phase_fixture(
 
 def _object_mapping(snapshot: Any) -> dict[str, bytes]:
     return {
-        f"checkpoints/3/objects/{item.digest.removeprefix('sha256:')}": (
-            item.content
-        )
+        f"checkpoints/3/objects/{item.digest.removeprefix('sha256:')}": (item.content)
         for item in snapshot.objects
     }
 
@@ -178,21 +170,19 @@ def test_phase_snapshot_captures_exact_refs_reports_and_deduplicated_objects(
 
     assert PHASE_EVIDENCE_WORKFLOW_KEY == "phase_evidence"
     assert snapshot.descriptor["schema"] == "phase-evidence-state/v1"
-    assert [
-        outcome["phase"] for outcome in snapshot.descriptor["outcomes"]
-    ] == ["red", "green"]
+    assert [outcome["phase"] for outcome in snapshot.descriptor["outcomes"]] == [
+        "red",
+        "green",
+    ]
     assert [
         artifact["path"] for artifact in snapshot.descriptor["artifacts"]
     ] == sorted(content)
-    assert {
-        artifact["digest"] for artifact in snapshot.descriptor["artifacts"]
-    } == {sha256_digest(payload) for payload in content.values()}
+    assert {artifact["digest"] for artifact in snapshot.descriptor["artifacts"]} == {
+        sha256_digest(payload) for payload in content.values()
+    }
     assert {item.content for item in snapshot.objects} == set(content.values())
     assert len(snapshot.objects) < len(content)
-    assert all(
-        item.digest == sha256_digest(item.content)
-        for item in snapshot.objects
-    )
+    assert all(item.digest == sha256_digest(item.content) for item in snapshot.objects)
 
 
 def test_phase_restore_recreates_exact_outcomes_and_writer_artifacts(
@@ -229,10 +219,7 @@ def test_phase_restore_recreates_exact_outcomes_and_writer_artifacts(
         for item in outcome.items
         for reference in (item.stdout, item.stderr, *item.test_reports)
     ]
-    assert [
-        reference.model_dump(mode="json")
-        for reference in repeated_refs
-    ] == [
+    assert [reference.model_dump(mode="json") for reference in repeated_refs] == [
         reference.model_dump(mode="json")
         for outcome in outcomes
         for item in outcome.items
@@ -258,31 +245,40 @@ def test_snapshot_rejects_phase_or_admission_incompatibility(
         damaged = (green, red)
     elif mutation == "command":
         item = green.items[0].model_copy(update={"command": ("other",)})
-        damaged = (red, PhaseExecutionOutcome(
-            phase="green",
-            passed=True,
-            cancelled=False,
-            timed_out=False,
-            items=(item, green.items[1]),
-        ))
+        damaged = (
+            red,
+            PhaseExecutionOutcome(
+                phase="green",
+                passed=True,
+                cancelled=False,
+                timed_out=False,
+                items=(item, green.items[1]),
+            ),
+        )
     elif mutation == "environment":
         item = green.items[0].model_copy(update={"environment_keys": ()})
-        damaged = (red, PhaseExecutionOutcome(
-            phase="green",
-            passed=True,
-            cancelled=False,
-            timed_out=False,
-            items=(item, green.items[1]),
-        ))
+        damaged = (
+            red,
+            PhaseExecutionOutcome(
+                phase="green",
+                passed=True,
+                cancelled=False,
+                timed_out=False,
+                items=(item, green.items[1]),
+            ),
+        )
     else:
         item = green.items[0].model_copy(update={"stderr": green.items[0].stdout})
-        damaged = (red, PhaseExecutionOutcome(
-            phase="green",
-            passed=True,
-            cancelled=False,
-            timed_out=False,
-            items=(item, green.items[1]),
-        ))
+        damaged = (
+            red,
+            PhaseExecutionOutcome(
+                phase="green",
+                passed=True,
+                cancelled=False,
+                timed_out=False,
+                items=(item, green.items[1]),
+            ),
+        )
 
     with pytest.raises(
         PhaseEvidenceError,
@@ -315,9 +311,7 @@ def test_restore_rejects_untrusted_descriptor_or_objects_before_writing(
     if damage == "path":
         descriptor["artifacts"][0]["path"] = "../escape"
     elif damage == "duplicate":
-        descriptor["artifacts"].append(
-            deepcopy(descriptor["artifacts"][0])
-        )
+        descriptor["artifacts"].append(deepcopy(descriptor["artifacts"][0]))
     elif damage == "digest":
         first = next(iter(objects))
         objects[first] = b"x" * len(objects[first])
@@ -380,15 +374,17 @@ def test_snapshot_enforces_secret_and_size_limits_without_echoing_content(
     target = output / outcomes[1].items[0].stdout.path
     replacement = canary + b"-oversize"
     target.write_bytes(replacement)
-    damaged_ref = outcomes[1].items[0].stdout.model_copy(
-        update={
-            "byte_size": len(replacement),
-            "digest": sha256_digest(replacement),
-        }
+    damaged_ref = (
+        outcomes[1]
+        .items[0]
+        .stdout.model_copy(
+            update={
+                "byte_size": len(replacement),
+                "digest": sha256_digest(replacement),
+            }
+        )
     )
-    damaged_item = outcomes[1].items[0].model_copy(
-        update={"stdout": damaged_ref}
-    )
+    damaged_item = outcomes[1].items[0].model_copy(update={"stdout": damaged_ref})
     damaged_green = PhaseExecutionOutcome(
         phase="green",
         passed=True,
