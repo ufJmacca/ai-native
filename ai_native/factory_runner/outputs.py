@@ -16,6 +16,7 @@ import errno
 import os
 from pathlib import Path
 import stat
+import threading
 from typing import Any, Literal
 import uuid
 
@@ -29,6 +30,7 @@ from ai_native.factory_runner.contracts.common import (
 )
 from ai_native.factory_runner.contracts.run_result import RunOutcome, RunResult
 from ai_native.factory_runner.protocol import contract_document_digest
+from ai_native.factory_runner.redaction import SecretPolicy, SecretScanner
 
 
 JSON_MEDIA_TYPE = "application/json"
@@ -211,10 +213,36 @@ def enforce_output_tree_unchanged(snapshot: OutputTreeSnapshot) -> None:
 class OutputWriter:
     """Atomically write bounded artifacts beneath one validated root."""
 
-    def __init__(self, root: Path):
+    def __init__(
+        self,
+        root: Path,
+        *,
+        secret_scanner: SecretScanner | None = None,
+        max_artifact_bytes: int | None = None,
+        max_total_bytes: int | None = None,
+    ):
+        for name, value in (
+            ("max_artifact_bytes", max_artifact_bytes),
+            ("max_total_bytes", max_total_bytes),
+        ):
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or value < 0
+            ):
+                raise ValueError(f"{name} must be a non-negative integer or null")
+        if secret_scanner is not None and not isinstance(
+            secret_scanner,
+            SecretScanner,
+        ):
+            raise TypeError("secret_scanner must be a SecretScanner or null")
         self.root = root
         self._root_fd = os.open(root, _directory_open_flags())
         self._manifest: list[ArtifactReference] = []
+        self._secret_scanner = secret_scanner or SecretScanner(SecretPolicy())
+        self._max_artifact_bytes = max_artifact_bytes
+        self._max_total_bytes = max_total_bytes
+        self._total_bytes = 0
+        self._sealed = False
+        self._write_lock = threading.RLock()
 
     def __del__(self) -> None:
         root_fd = getattr(self, "_root_fd", -1)
@@ -224,6 +252,15 @@ class OutputWriter:
             except OSError:
                 pass
             self._root_fd = -1
+
+    @property
+    def sealed(self) -> bool:
+        with self._write_lock:
+            return self._sealed
+
+    def _ensure_writable(self) -> None:
+        if self._sealed:
+            raise RuntimeError("output writer is finalized by completion.json")
 
     @contextmanager
     def _parent_directory(
@@ -264,62 +301,80 @@ class OutputWriter:
         media_type: str = OCTET_STREAM_MEDIA_TYPE,
         record: bool = True,
     ) -> ArtifactReference:
-        with self._parent_directory(relative_path) as (parent_fd, target_name):
-            try:
-                metadata = os.stat(
-                    target_name,
-                    dir_fd=parent_fd,
-                    follow_symlinks=False,
-                )
-            except FileNotFoundError:
-                metadata = None
-            if metadata is not None:
-                if stat.S_ISLNK(metadata.st_mode):
-                    raise ValueError("artifact target may not be a symbolic link")
-                raise ValueError("artifact target already exists")
-
-            temporary_name = f".{target_name}.{uuid.uuid4().hex}.tmp"
-            descriptor = os.open(
-                temporary_name,
-                (
-                    os.O_WRONLY
-                    | os.O_CREAT
-                    | os.O_EXCL
-                    | getattr(os, "O_CLOEXEC", 0)
-                    | getattr(os, "O_NOFOLLOW", 0)
-                ),
-                0o600,
-                dir_fd=parent_fd,
-            )
-            try:
-                with os.fdopen(descriptor, "wb") as handle:
-                    handle.write(content)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                descriptor = -1
-                os.replace(
-                    temporary_name,
-                    target_name,
-                    src_dir_fd=parent_fd,
-                    dst_dir_fd=parent_fd,
-                )
-                os.fsync(parent_fd)
-            finally:
-                if descriptor >= 0:
-                    os.close(descriptor)
+        with self._write_lock:
+            self._ensure_writable()
+            if not isinstance(content, bytes):
+                raise TypeError("artifact content must be bytes")
+            content_size = len(content)
+            if (
+                self._max_artifact_bytes is not None
+                and content_size > self._max_artifact_bytes
+            ):
+                raise ValueError("artifact size exceeds the artifact limit")
+            if self._secret_scanner is not None:
+                self._secret_scanner.require_clean_chunks((content,))
+            if (
+                self._max_total_bytes is not None
+                and content_size > self._max_total_bytes - self._total_bytes
+            ):
+                raise ValueError("total output size exceeds the total limit")
+            with self._parent_directory(relative_path) as (parent_fd, target_name):
                 try:
-                    os.unlink(temporary_name, dir_fd=parent_fd)
+                    metadata = os.stat(
+                        target_name,
+                        dir_fd=parent_fd,
+                        follow_symlinks=False,
+                    )
                 except FileNotFoundError:
-                    pass
-        reference = ArtifactReference(
-            path=relative_path,
-            media_type=media_type,
-            byte_size=len(content),
-            digest=sha256_digest(content),
-        )
-        if record:
-            self._manifest.append(reference)
-        return reference
+                    metadata = None
+                if metadata is not None:
+                    if stat.S_ISLNK(metadata.st_mode):
+                        raise ValueError("artifact target may not be a symbolic link")
+                    raise ValueError("artifact target already exists")
+
+                temporary_name = f".{target_name}.{uuid.uuid4().hex}.tmp"
+                descriptor = os.open(
+                    temporary_name,
+                    (
+                        os.O_WRONLY
+                        | os.O_CREAT
+                        | os.O_EXCL
+                        | getattr(os, "O_CLOEXEC", 0)
+                        | getattr(os, "O_NOFOLLOW", 0)
+                    ),
+                    0o600,
+                    dir_fd=parent_fd,
+                )
+                try:
+                    with os.fdopen(descriptor, "wb") as handle:
+                        handle.write(content)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    descriptor = -1
+                    os.replace(
+                        temporary_name,
+                        target_name,
+                        src_dir_fd=parent_fd,
+                        dst_dir_fd=parent_fd,
+                    )
+                    os.fsync(parent_fd)
+                finally:
+                    if descriptor >= 0:
+                        os.close(descriptor)
+                    try:
+                        os.unlink(temporary_name, dir_fd=parent_fd)
+                    except FileNotFoundError:
+                        pass
+            self._total_bytes += content_size
+            reference = ArtifactReference(
+                path=relative_path,
+                media_type=media_type,
+                byte_size=len(content),
+                digest=sha256_digest(content),
+            )
+            if record:
+                self._manifest.append(reference)
+            return reference
 
     def write_json(
         self,
@@ -338,11 +393,12 @@ class OutputWriter:
 
     @property
     def manifest_digest(self) -> str:
-        payload = [
-            reference.model_dump(mode="json")
-            for reference in sorted(self._manifest, key=lambda item: item.path)
-        ]
-        return sha256_digest(canonical_json_bytes(payload))
+        with self._write_lock:
+            payload = [
+                reference.model_dump(mode="json")
+                for reference in sorted(self._manifest, key=lambda item: item.path)
+            ]
+            return sha256_digest(canonical_json_bytes(payload))
 
     def write_events_placeholder(self) -> ArtifactReference:
         return self.write_bytes(
@@ -350,6 +406,30 @@ class OutputWriter:
             b"",
             media_type="application/x-ndjson",
         )
+
+    def write_protocol_manifest(
+        self,
+        *,
+        event_stream: ArtifactReference,
+    ) -> ArtifactReference:
+        """Bind the finalized event artifact into the attempt protocol manifest."""
+
+        with self._write_lock:
+            self._ensure_writable()
+            if event_stream.path != "events.ndjson":
+                raise ValueError("protocol manifest requires the canonical event path")
+            if event_stream.media_type != "application/x-ndjson":
+                raise ValueError("protocol manifest requires an NDJSON event stream")
+            if event_stream not in self._manifest:
+                raise ValueError(
+                    "protocol manifest requires a writer-owned event reference"
+                )
+            payload = {
+                "protocol": "factory-runner-protocol/v1",
+                "schema_version": 1,
+                "event_stream": event_stream.model_dump(mode="json"),
+            }
+            return self.write_json("protocol-manifest.json", payload)
 
     def write_run_result(
         self,
@@ -426,7 +506,10 @@ class OutputWriter:
             "output_manifest_digest": result.output_manifest_digest,
             "run_result": result_reference.model_dump(mode="json"),
         }
-        self.write_json("completion.json", completion, record=False)
+        with self._write_lock:
+            self._ensure_writable()
+            self.write_json("completion.json", completion, record=False)
+            self._sealed = True
 
 
 def sanitised_message(value: object, fallback: str) -> str:
