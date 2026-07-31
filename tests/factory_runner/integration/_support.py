@@ -74,6 +74,7 @@ AgentMode = Literal[
     "author-delete",
     "author-mode",
     "author-no-change",
+    "author-pause-verify",
     "author-rename",
     "author-secret",
     "blocked",

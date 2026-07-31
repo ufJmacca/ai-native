@@ -112,6 +112,7 @@ def main() -> int:
             "author-delete",
             "author-mode",
             "author-no-change",
+            "author-pause-verify",
             "author-rename",
             "author-secret",
             "blocked",
@@ -134,9 +135,18 @@ def main() -> int:
     with args.marker.open("a", encoding="utf-8") as marker:
         marker.write(f"{args.mode}\n")
 
+    schema_value = os.environ.get("AINATIVE_SCHEMA_FILE")
     if args.mode == "fail-if-called":
         return 97
     if args.mode == "sleep":
+        time.sleep(30)
+        return 98
+    if (
+        args.mode == "author-pause-verify"
+        and schema_value
+        and Path(schema_value).name == "verification-report.json"
+    ):
+        args.marker.with_name("verification-agent.started").write_text("started")
         time.sleep(30)
         return 98
     if args.mode == "mutate-git-config":
@@ -146,7 +156,6 @@ def main() -> int:
     prompt_path = Path(os.environ["AINATIVE_PROMPT_FILE"])
     output_path = Path(os.environ["AINATIVE_OUTPUT_FILE"])
     prompt = prompt_path.read_text(encoding="utf-8")
-    schema_value = os.environ.get("AINATIVE_SCHEMA_FILE")
     if args.mode == "assert-first-prompt-context" and first_call:
         missing = [
             value for value in args.required_first_prompt_text if value not in prompt
@@ -163,7 +172,12 @@ def main() -> int:
         return 0
 
     workspace = Path.cwd()
-    if args.mode in {"author", "assert-first-prompt-context", "mutate-git-config"}:
+    if args.mode in {
+        "author",
+        "assert-first-prompt-context",
+        "author-pause-verify",
+        "mutate-git-config",
+    }:
         (workspace / "app.py").write_text(AUTHORED_APP, encoding="utf-8")
     elif args.mode == "author-add":
         (workspace / "added.txt").write_text("factory addition\n", encoding="utf-8")
