@@ -102,6 +102,7 @@ def _inputs(
         base_commit_sha="a" * 40,
     )
     run_spec = SimpleNamespace(
+        operation="verify" if clean_verification else "author",
         identity=identity,
         repository=repository,
         policy=SimpleNamespace(
@@ -207,7 +208,10 @@ def test_declared_phase_emits_exact_phase_specific_output_and_callbacks(
 @pytest.mark.parametrize(
     ("result", "expected_classification"),
     [
-        (_result(returncode=1, stderr=b"SyntaxError: invalid syntax\n"), "syntax_error"),
+        (
+            _result(returncode=1, stderr=b"SyntaxError: invalid syntax\n"),
+            "syntax_error",
+        ),
         (
             _result(returncode=2, stderr=b"ERROR collecting tests/test_app.py\n"),
             "collection_error",
@@ -250,9 +254,7 @@ def test_false_red_is_rejected_after_capture_and_before_final_evidence(
     assert (
         inputs.output_dir / "evidence/objects/red-command-001.stderr"
     ).read_bytes() == result.stderr_bytes
-    assert not (
-        inputs.output_dir / "evidence/verification-evidence.json"
-    ).exists()
+    assert not (inputs.output_dir / "evidence/verification-evidence.json").exists()
 
 
 def test_author_evidence_is_written_once_after_complete_grouped_phase_history(
@@ -334,6 +336,20 @@ def test_author_evidence_rejects_incomplete_or_failing_phase_history(
             inputs,
             writer=writer,
             phase_outcomes=(green,),
+        )
+
+
+def test_clean_verification_run_cannot_finalize_authoring_provenance(
+    tmp_path: Path,
+) -> None:
+    inputs = _inputs(tmp_path, clean_verification=True)
+    writer = OutputWriter(inputs.output_dir)
+
+    with pytest.raises(EvidenceSufficiencyError, match="author operation"):
+        finalize_authoring_evidence(
+            inputs,
+            writer=writer,
+            phase_outcomes=(),
         )
 
 

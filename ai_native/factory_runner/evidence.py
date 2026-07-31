@@ -65,18 +65,14 @@ def classify_red_failure(observation: RedFailureObservation) -> RedFailureDecisi
 
     if observation.termination_reason == "timed_out":
         return RedFailureDecision(False, "timeout")
-    if (
-        observation.termination_reason != "exited"
-        or observation.exit_code in (None, 0)
-    ):
+    if observation.termination_reason != "exited" or observation.exit_code in (None, 0):
         return RedFailureDecision(False, "infrastructure_error")
 
     observed = observation.observed_failure
     if observed in _FALSE_RED_CLASSIFICATIONS:
         return RedFailureDecision(False, cast(FailureClassification, observed))
-    if (
-        observed != "assertion_failure"
-        or observation.failed_tests != (observation.intended_test,)
+    if observed != "assertion_failure" or observation.failed_tests != (
+        observation.intended_test,
     ):
         return RedFailureDecision(False, "unrelated_failure")
     return RedFailureDecision(True, "expected_behavioral_failure")
@@ -109,7 +105,11 @@ def _missing_required_phase(items: tuple[EvidenceItem, ...]) -> str | None:
     for phase in required:
         if phase not in phases:
             return phase
-    if phases != required:
+    positions = {phase: index for index, phase in enumerate(required)}
+    if any(
+        positions[current] > positions[following]
+        for current, following in zip(phases, phases[1:], strict=False)
+    ):
         return "ordered red, green, refactor, verification"
     return None
 
