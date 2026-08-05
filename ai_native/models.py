@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 RunStatus = Literal["in_progress", "completed", "failed"]
@@ -34,6 +35,33 @@ SliceExecutionStatus = Literal[
 ]
 
 SliceStageName = Literal["loop", "verify", "commit", "pr"]
+
+_SLICE_ID_MAX_LENGTH = 64
+_PORTABLE_SLICE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+_WINDOWS_RESERVED_COMPONENTS = {
+    "AUX",
+    "CON",
+    "NUL",
+    "PRN",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
+
+
+def _validate_slice_id(value: str) -> str:
+    reserved_stem = value.partition(".")[0].upper()
+    if (
+        not 1 <= len(value) <= _SLICE_ID_MAX_LENGTH
+        or _PORTABLE_SLICE_ID_RE.fullmatch(value) is None
+        or value.endswith(".")
+        or ".." in value
+        or reserved_stem in _WINDOWS_RESERVED_COMPONENTS
+    ):
+        raise ValueError(
+            "slice id must be a portable identifier of 1-64 ASCII letters, "
+            "digits, dots, underscores, or hyphens"
+        )
+    return value
 
 
 def _timestamp() -> str:
@@ -88,11 +116,15 @@ class ReferenceInput(BaseModel):
         has_path = bool(self.path)
         has_url = bool(self.url)
         if self.kind in {"image", "html_export"} and not has_path:
-            raise ValueError(f"reference `{self.id}` with kind `{self.kind}` requires `path`")
+            raise ValueError(
+                f"reference `{self.id}` with kind `{self.kind}` requires `path`"
+            )
         if self.kind == "url" and not has_url:
             raise ValueError(f"reference `{self.id}` with kind `url` requires `url`")
         if has_path and has_url:
-            raise ValueError(f"reference `{self.id}` must define only one of `path` or `url`")
+            raise ValueError(
+                f"reference `{self.id}` must define only one of `path` or `url`"
+            )
         if not self.route.startswith("/"):
             raise ValueError(f"reference `{self.id}` route must start with `/`")
         return self
@@ -106,7 +138,9 @@ class ReferenceManifest(BaseModel):
     @model_validator(mode="after")
     def _validate_references(self) -> "ReferenceManifest":
         if not self.references:
-            raise ValueError("reference-driven web workflow requires at least one reference")
+            raise ValueError(
+                "reference-driven web workflow requires at least one reference"
+            )
         seen: set[str] = set()
         for item in self.references:
             if item.id in seen:
@@ -165,11 +199,79 @@ class SliceDefinition(BaseModel):
     test_plan: list[str] = Field(default_factory=list)
     dependencies: list[str] = Field(default_factory=list)
 
+    @field_validator("id")
+    @classmethod
+    def _validate_id(cls, value: str) -> str:
+        return _validate_slice_id(value)
+
+    @field_validator("dependencies")
+    @classmethod
+    def _validate_dependency_ids(cls, values: list[str]) -> list[str]:
+        return [_validate_slice_id(value) for value in values]
+
 
 class SlicePlan(BaseModel):
     title: str
     summary: str
     slices: list[SliceDefinition] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_dependency_graph(self) -> "SlicePlan":
+        slices_by_id: dict[str, SliceDefinition] = {}
+        casefolded_ids: dict[str, str] = {}
+        for slice_def in self.slices:
+            if slice_def.id in slices_by_id:
+                raise ValueError(f"duplicate slice id `{slice_def.id}`")
+            casefolded_id = slice_def.id.casefold()
+            if casefolded_id in casefolded_ids:
+                raise ValueError(
+                    f"slice id `{slice_def.id}` conflicts with "
+                    f"`{casefolded_ids[casefolded_id]}` on case-insensitive filesystems"
+                )
+            slices_by_id[slice_def.id] = slice_def
+            casefolded_ids[casefolded_id] = slice_def.id
+
+        for slice_def in self.slices:
+            seen_dependencies: set[str] = set()
+            for dependency_id in slice_def.dependencies:
+                if dependency_id == slice_def.id:
+                    raise ValueError(f"slice `{slice_def.id}` cannot depend on itself")
+                if dependency_id in seen_dependencies:
+                    raise ValueError(
+                        f"slice `{slice_def.id}` repeats dependency `{dependency_id}`"
+                    )
+                if dependency_id not in slices_by_id:
+                    raise ValueError(
+                        f"slice `{slice_def.id}` references unknown dependency "
+                        f"`{dependency_id}`"
+                    )
+                seen_dependencies.add(dependency_id)
+
+        visiting: set[str] = set()
+        visited: set[str] = set()
+        path: list[str] = []
+
+        def visit(slice_id: str) -> None:
+            if slice_id in visited:
+                return
+            if slice_id in visiting:
+                cycle_start = path.index(slice_id)
+                cycle = [*path[cycle_start:], slice_id]
+                raise ValueError(
+                    f"slice dependency cycle detected: {' -> '.join(cycle)}"
+                )
+
+            visiting.add(slice_id)
+            path.append(slice_id)
+            for dependency_id in slices_by_id[slice_id].dependencies:
+                visit(dependency_id)
+            path.pop()
+            visiting.remove(slice_id)
+            visited.add(slice_id)
+
+        for slice_def in self.slices:
+            visit(slice_def.id)
+        return self
 
 
 class ReviewReport(BaseModel):
