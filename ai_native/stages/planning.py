@@ -6,10 +6,55 @@ from pathlib import Path
 from ai_native.models import PlanArtifact, QuestionBatch, ReviewReport, RunState
 from ai_native.reference_workflow import append_reference_prompt_block
 from ai_native.specs import load_prompt_spec_text
-from ai_native.stages.common import ExecutionContext, StageError, dump_model, render_plan_markdown, write_review
+from ai_native.stages.common import (
+    ExecutionContext,
+    StageError,
+    dump_model,
+    render_plan_markdown,
+    write_review,
+)
 from ai_native.utils import read_json, read_text, write_json, write_text
 
 ATTEMPT_RE = re.compile(r"plan-review-attempt-(?P<attempt>\d+)\.json$")
+
+_FACTORY_GROUNDING_NOTES = """# Factory Grounding
+
+The immutable factory feature spec and repository context report are the only
+planning sources. No additional model-generated grounding assumptions were
+introduced.
+"""
+
+_FACTORY_INTENT_NOTES = """# Factory Intent
+
+The final plan must satisfy every admitted acceptance criterion, constraint,
+and non-goal without expanding the immutable factory task.
+"""
+
+_FACTORY_IMPLEMENTATION_NOTES = """# Factory Implementation Direction
+
+The final plan synthesizer must choose the smallest repository-grounded
+implementation and make its interfaces, data flow, edge cases, tests, and
+rollout behavior explicit. No implementation decision was precomputed here.
+"""
+
+_FACTORY_APPROVAL_CHECKLIST = """# Approval Checklist
+
+## Approval Gates
+- Every acceptance criterion maps to ordered implementation work and a concrete test.
+- The plan stays within the scope, constraints, and non-goals of the immutable factory task.
+- The implementation is small enough to execute without inventing optional scope.
+
+## Minimum Explicit Contracts
+- Public interfaces, data flow, failure and edge-case behavior, and rollout behavior are explicit.
+- Test strategy covers the admitted behavior and relevant existing regressions.
+- Repository paths and runtime assumptions do not exceed the supplied context.
+
+## Allowed Defaults
+- The planner may choose the smallest repository-consistent implementation detail that does not alter an acceptance-critical contract, and must record that choice.
+
+## Ask The User If
+- An acceptance-critical decision cannot be resolved from the immutable spec and repository context.
+"""
 
 
 def _render_plan_prompt(
@@ -25,7 +70,30 @@ def _render_plan_prompt(
     blocker_ledger: str,
     prior_plan: PlanArtifact | None = None,
     critique: ReviewReport | None = None,
+    factory_mode: bool = False,
 ) -> str:
+    if factory_mode:
+        if prior_plan and critique:
+            prompt = context.prompt_library.render(
+                "factory_plan_revise.md",
+                spec_text=spec_text,
+                context_report=context_report,
+                approval_checklist=approval_checklist,
+                critique_history=critique_history,
+                blocker_ledger=blocker_ledger,
+                prior_plan=prior_plan.model_dump(mode="json"),
+                critique=critique.model_dump(mode="json"),
+            )
+        else:
+            prompt = context.prompt_library.render(
+                "factory_plan.md",
+                spec_text=spec_text,
+                context_report=context_report,
+                approval_checklist=approval_checklist,
+                critique_history=critique_history,
+                blocker_ledger=blocker_ledger,
+            )
+        return append_reference_prompt_block(prompt, Path(context.run_dir))
     if prior_plan and critique:
         prompt = context.prompt_library.render(
             "plan_revise.md",
@@ -57,16 +125,42 @@ def _render_plan_prompt(
     return append_reference_prompt_block(prompt, Path(context.run_dir))
 
 
+def _write_factory_phase_artifacts(stage_dir: Path) -> list[Path]:
+    artifacts = [
+        stage_dir / "grounding.md",
+        stage_dir / "intent.md",
+        stage_dir / "implementation.md",
+    ]
+    for path, content in zip(
+        artifacts,
+        (
+            _FACTORY_GROUNDING_NOTES,
+            _FACTORY_INTENT_NOTES,
+            _FACTORY_IMPLEMENTATION_NOTES,
+        ),
+        strict=True,
+    ):
+        write_text(path, content)
+    return artifacts
+
+
 def _render_user_answers(answer_pairs: list[dict[str, str]]) -> str:
     if not answer_pairs:
         return "No user clarifications were requested."
     lines = []
     for item in answer_pairs:
-        lines.extend([f"- Question: {item['question']}", f"  Answer: {item['answer'] or '(no answer provided)'}"])
+        lines.extend(
+            [
+                f"- Question: {item['question']}",
+                f"  Answer: {item['answer'] or '(no answer provided)'}",
+            ]
+        )
     return "\n".join(lines)
 
 
-def _write_question_artifacts(stage_dir: Path, batch: QuestionBatch, answer_pairs: list[dict[str, str]]) -> list[Path]:
+def _write_question_artifacts(
+    stage_dir: Path, batch: QuestionBatch, answer_pairs: list[dict[str, str]]
+) -> list[Path]:
     questions_json = stage_dir / "questions.json"
     questions_md = stage_dir / "questions.md"
     answers_json = stage_dir / "answers.json"
@@ -134,7 +228,12 @@ def _existing_plan_artifacts(stage_dir: Path) -> list[Path]:
     ):
         if candidate.exists():
             paths.append(candidate)
-    for pattern in ("plan-attempt-*.json", "plan-attempt-*.md", "plan-review-attempt-*.json", "plan-review-attempt-*.md"):
+    for pattern in (
+        "plan-attempt-*.json",
+        "plan-attempt-*.md",
+        "plan-review-attempt-*.json",
+        "plan-review-attempt-*.md",
+    ):
         paths.extend(sorted(stage_dir.glob(pattern)))
     return paths
 
@@ -153,8 +252,12 @@ def _load_resume_state(stage_dir: Path) -> dict[str, object] | None:
         "grounding_notes": read_text(grounding_md),
         "intent_notes": read_text(intent_md),
         "implementation_notes": read_text(implementation_md),
-        "prior_plan": PlanArtifact.model_validate(read_json(stage_dir / f"plan-attempt-{last_attempt}.json")),
-        "prior_review": ReviewReport.model_validate(read_json(stage_dir / f"plan-review-attempt-{last_attempt}.json")),
+        "prior_plan": PlanArtifact.model_validate(
+            read_json(stage_dir / f"plan-attempt-{last_attempt}.json")
+        ),
+        "prior_review": ReviewReport.model_validate(
+            read_json(stage_dir / f"plan-review-attempt-{last_attempt}.json")
+        ),
         "last_attempt": last_attempt,
     }
 
@@ -165,7 +268,9 @@ def _load_review_history(stage_dir: Path) -> list[tuple[int, ReviewReport]]:
         history.append(
             (
                 attempt,
-                ReviewReport.model_validate(read_json(stage_dir / f"plan-review-attempt-{attempt}.json")),
+                ReviewReport.model_validate(
+                    read_json(stage_dir / f"plan-review-attempt-{attempt}.json")
+                ),
             )
         )
     return history
@@ -240,7 +345,9 @@ def _render_blocker_ledger(blockers: list[str]) -> str:
     )
 
 
-def _write_guidance_artifacts(stage_dir: Path, approval_checklist: str, critique_history: str, blocker_ledger: str) -> list[Path]:
+def _write_guidance_artifacts(
+    stage_dir: Path, approval_checklist: str, critique_history: str, blocker_ledger: str
+) -> list[Path]:
     approval_checklist_path = stage_dir / "approval-checklist.md"
     critique_history_path = stage_dir / "critique-history.md"
     blocker_ledger_path = stage_dir / "blocker-ledger.md"
@@ -260,7 +367,9 @@ def _parse_additional_attempts(answer: str, default_attempts: int) -> int:
         return default_attempts
 
 
-def _ask_to_continue_after_exhaustion(context: ExecutionContext, current_limit: int, review: ReviewReport) -> int | None:
+def _ask_to_continue_after_exhaustion(
+    context: ExecutionContext, current_limit: int, review: ReviewReport
+) -> int | None:
     responses = context.ask_questions(
         "plan",
         [
@@ -276,7 +385,9 @@ def _ask_to_continue_after_exhaustion(context: ExecutionContext, current_limit: 
         return None
     if responses[0].strip().lower() not in {"y", "yes"}:
         return None
-    return _parse_additional_attempts(responses[1] if len(responses) > 1 else "", current_limit)
+    return _parse_additional_attempts(
+        responses[1] if len(responses) > 1 else "", current_limit
+    )
 
 
 def run(context: ExecutionContext, state: RunState) -> list[Path]:
@@ -286,6 +397,7 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
     grounding_md = stage_dir / "grounding.md"
     intent_md = stage_dir / "intent.md"
     implementation_md = stage_dir / "implementation.md"
+    factory_mode = state.metadata.get("factory_mode") is True
     artifacts = _existing_plan_artifacts(stage_dir)
     resume_state = _load_resume_state(stage_dir)
     if resume_state:
@@ -295,17 +407,24 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
         context.emit_progress(
             f"[ainative] plan: resuming from previous critique at attempt {int(resume_state['last_attempt']) + 1}"
         )
+    elif factory_mode:
+        grounding_notes = _FACTORY_GROUNDING_NOTES
+        intent_notes = _FACTORY_INTENT_NOTES
+        implementation_notes = _FACTORY_IMPLEMENTATION_NOTES
+        artifacts.extend(_write_factory_phase_artifacts(stage_dir))
     else:
         context.emit_progress("[ainative] plan: grounding")
         grounding_prompt = append_reference_prompt_block(
             context.prompt_library.render(
-            "plan_phase_grounding.md",
-            spec_text=spec_text,
-            context_report=context_report,
+                "plan_phase_grounding.md",
+                spec_text=spec_text,
+                context_report=context_report,
             ),
             Path(context.run_dir),
         )
-        grounding_notes = context.builder.run(grounding_prompt, cwd=context.repo_root).text
+        grounding_notes = context.builder.run(
+            grounding_prompt, cwd=context.repo_root
+        ).text
         write_text(grounding_md, grounding_notes)
         artifacts.append(grounding_md)
 
@@ -314,45 +433,67 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
     answers_json = stage_dir / "answers.json"
     if answers_json.exists():
         answer_pairs = list(read_json(answers_json))
-    remaining_run_budget = max(0, context.config.workspace.question_budget_per_run - int(state.metadata.get("question_batches_used", 0)))
-    if not resume_state and context.config.workspace.question_budget_per_stage > 0 and remaining_run_budget > 0 and not answer_pairs:
-        context.emit_progress("[ainative] plan: evaluating whether clarification is needed")
+    remaining_run_budget = max(
+        0,
+        context.config.workspace.question_budget_per_run
+        - int(state.metadata.get("question_batches_used", 0)),
+    )
+    if (
+        not resume_state
+        and context.config.workspace.question_budget_per_stage > 0
+        and remaining_run_budget > 0
+        and not answer_pairs
+    ):
+        context.emit_progress(
+            "[ainative] plan: evaluating whether clarification is needed"
+        )
         question_prompt = append_reference_prompt_block(
             context.prompt_library.render(
-            "plan_questions.md",
-            spec_text=spec_text,
-            context_report=context_report,
-            grounding_notes=grounding_notes,
-            max_questions=min(3, remaining_run_budget),
+                "plan_questions.md",
+                spec_text=spec_text,
+                context_report=context_report,
+                grounding_notes=grounding_notes,
+                max_questions=min(3, remaining_run_budget),
             ),
             Path(context.run_dir),
         )
         question_schema = context.template_root / "schemas" / "question-batch.json"
-        question_response = context.builder.run(question_prompt, cwd=context.repo_root, schema_path=question_schema)
+        question_response = context.builder.run(
+            question_prompt, cwd=context.repo_root, schema_path=question_schema
+        )
         question_batch = QuestionBatch.model_validate(question_response.json_data)
         if question_batch.needs_user_input and question_batch.questions:
             answers = context.ask_questions("plan", question_batch.questions)
             answer_pairs = [
-                {"question": question, "answer": answers[index] if index < len(answers) else ""}
+                {
+                    "question": question,
+                    "answer": answers[index] if index < len(answers) else "",
+                }
                 for index, question in enumerate(question_batch.questions)
             ]
-            state.metadata["question_batches_used"] = int(state.metadata.get("question_batches_used", 0)) + 1
-        artifacts.extend(_write_question_artifacts(stage_dir, question_batch, answer_pairs))
+            state.metadata["question_batches_used"] = (
+                int(state.metadata.get("question_batches_used", 0)) + 1
+            )
+        artifacts.extend(
+            _write_question_artifacts(stage_dir, question_batch, answer_pairs)
+        )
     elif questions_json.exists():
         existing_batch = QuestionBatch.model_validate(read_json(questions_json))
-        artifacts.extend(_write_question_artifacts(stage_dir, existing_batch, answer_pairs))
+        artifacts.extend(
+            _write_question_artifacts(stage_dir, existing_batch, answer_pairs)
+        )
 
     user_answers = _render_user_answers(answer_pairs)
 
-    if not resume_state:
+    if not resume_state and not factory_mode:
         context.emit_progress("[ainative] plan: intent")
         intent_prompt = append_reference_prompt_block(
             context.prompt_library.render(
-            "plan_phase_intent.md",
-            spec_text=spec_text,
-            context_report=context_report,
-            grounding_notes=grounding_notes,
-            user_answers=user_answers,
+                "plan_phase_intent.md",
+                spec_text=spec_text,
+                context_report=context_report,
+                grounding_notes=grounding_notes,
+                user_answers=user_answers,
             ),
             Path(context.run_dir),
         )
@@ -363,16 +504,18 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
         context.emit_progress("[ainative] plan: implementation")
         implementation_prompt = append_reference_prompt_block(
             context.prompt_library.render(
-            "plan_phase_implementation.md",
-            spec_text=spec_text,
-            context_report=context_report,
-            grounding_notes=grounding_notes,
-            intent_notes=intent_notes,
-            user_answers=user_answers,
+                "plan_phase_implementation.md",
+                spec_text=spec_text,
+                context_report=context_report,
+                grounding_notes=grounding_notes,
+                intent_notes=intent_notes,
+                user_answers=user_answers,
             ),
             Path(context.run_dir),
         )
-        implementation_notes = context.builder.run(implementation_prompt, cwd=context.repo_root).text
+        implementation_notes = context.builder.run(
+            implementation_prompt, cwd=context.repo_root
+        ).text
         write_text(implementation_md, implementation_notes)
         artifacts.append(implementation_md)
 
@@ -380,43 +523,68 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
     if approval_checklist_path.exists():
         approval_checklist = read_text(approval_checklist_path)
         artifacts.append(approval_checklist_path)
+    elif factory_mode:
+        approval_checklist = _FACTORY_APPROVAL_CHECKLIST
+        write_text(approval_checklist_path, approval_checklist)
+        artifacts.append(approval_checklist_path)
     else:
         context.emit_progress("[ainative] plan: approval checklist")
         checklist_prompt = append_reference_prompt_block(
             context.prompt_library.render(
-            "plan_checklist.md",
-            spec_text=spec_text,
-            context_report=context_report,
-            grounding_notes=grounding_notes,
-            intent_notes=intent_notes,
-            implementation_notes=implementation_notes,
-            user_answers=user_answers,
+                "plan_checklist.md",
+                spec_text=spec_text,
+                context_report=context_report,
+                grounding_notes=grounding_notes,
+                intent_notes=intent_notes,
+                implementation_notes=implementation_notes,
+                user_answers=user_answers,
             ),
             Path(context.run_dir),
         )
-        approval_checklist = context.builder.run(checklist_prompt, cwd=context.repo_root).text
+        approval_checklist = context.builder.run(
+            checklist_prompt, cwd=context.repo_root
+        ).text
         write_text(approval_checklist_path, approval_checklist)
         artifacts.append(approval_checklist_path)
 
     review_history = _load_review_history(stage_dir)
     critique_history = _render_critique_history(review_history)
     blocker_ledger = _render_blocker_ledger(_collect_blocker_ledger(review_history))
-    artifacts.extend(_write_guidance_artifacts(stage_dir, approval_checklist, critique_history, blocker_ledger))
+    artifacts.extend(
+        _write_guidance_artifacts(
+            stage_dir, approval_checklist, critique_history, blocker_ledger
+        )
+    )
 
     schema_path = context.template_root / "schemas" / "plan-artifact.json"
     review_schema = context.template_root / "schemas" / "review-report.json"
     attempt_limit = max(1, context.config.workspace.plan_max_attempts)
-    plan = PlanArtifact.model_validate(resume_state["prior_plan"]) if resume_state else None
-    review = ReviewReport.model_validate(resume_state["prior_review"]) if resume_state else None
+    plan = (
+        PlanArtifact.model_validate(resume_state["prior_plan"])
+        if resume_state
+        else None
+    )
+    review = (
+        ReviewReport.model_validate(resume_state["prior_review"])
+        if resume_state
+        else None
+    )
     next_attempt = int(resume_state["last_attempt"]) + 1 if resume_state else 1
 
     while True:
         if next_attempt > attempt_limit:
-            if context.config.quality_gates.require_plan_approval and review is not None:
+            if (
+                context.config.quality_gates.require_plan_approval
+                and review is not None
+            ):
                 context.emit_progress("[ainative] plan: attempt budget exhausted")
-                additional_attempts = _ask_to_continue_after_exhaustion(context, attempt_limit, review)
+                additional_attempts = _ask_to_continue_after_exhaustion(
+                    context, attempt_limit, review
+                )
                 if additional_attempts is None:
-                    raise StageError(f"Plan critique failed after {attempt_limit} attempts: {review.summary}")
+                    raise StageError(
+                        f"Plan critique failed after {attempt_limit} attempts: {review.summary}"
+                    )
                 attempt_limit += additional_attempts
                 context.emit_progress(
                     f"[ainative] plan: continuing with {additional_attempts} additional attempts (new limit {attempt_limit})"
@@ -426,9 +594,13 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
 
         attempt = next_attempt
         if attempt == 1 and review is None:
-            context.emit_progress(f"[ainative] plan: synthesis attempt {attempt}/{attempt_limit}")
+            context.emit_progress(
+                f"[ainative] plan: synthesis attempt {attempt}/{attempt_limit}"
+            )
         else:
-            context.emit_progress(f"[ainative] plan: revision attempt {attempt}/{attempt_limit}")
+            context.emit_progress(
+                f"[ainative] plan: revision attempt {attempt}/{attempt_limit}"
+            )
 
         prompt = _render_plan_prompt(
             context=context,
@@ -443,8 +615,11 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
             blocker_ledger=blocker_ledger,
             prior_plan=plan,
             critique=review,
+            factory_mode=factory_mode,
         )
-        response = context.builder.run(prompt, cwd=context.repo_root, schema_path=schema_path)
+        response = context.builder.run(
+            prompt, cwd=context.repo_root, schema_path=schema_path
+        )
         plan = PlanArtifact.model_validate(response.json_data)
 
         plan_json = stage_dir / "plan.json"
@@ -459,29 +634,44 @@ def run(context: ExecutionContext, state: RunState) -> list[Path]:
 
         review_prompt = append_reference_prompt_block(
             context.prompt_library.render(
-            "plan_review.md",
-            spec_text=spec_text,
-            plan=plan.model_dump(mode="json"),
-            context_report=context_report,
-            approval_checklist=approval_checklist,
-            critique_history=critique_history,
-            blocker_ledger=blocker_ledger,
+                "plan_review.md",
+                spec_text=spec_text,
+                plan=plan.model_dump(mode="json"),
+                context_report=context_report,
+                approval_checklist=approval_checklist,
+                critique_history=critique_history,
+                blocker_ledger=blocker_ledger,
             ),
             Path(context.run_dir),
         )
-        review_response = context.critic.run(review_prompt, cwd=context.repo_root, schema_path=review_schema)
+        review_response = context.critic.run(
+            review_prompt, cwd=context.repo_root, schema_path=review_schema
+        )
         review = ReviewReport.model_validate(review_response.json_data)
         review_md = stage_dir / "plan-review.md"
         attempt_review_md = stage_dir / f"plan-review-attempt-{attempt}.md"
         write_review(review_md, review)
         write_review(attempt_review_md, review)
-        artifacts.extend([review_md, review_md.with_suffix(".json"), attempt_review_md, attempt_review_md.with_suffix(".json")])
+        artifacts.extend(
+            [
+                review_md,
+                review_md.with_suffix(".json"),
+                attempt_review_md,
+                attempt_review_md.with_suffix(".json"),
+            ]
+        )
         review_history = _load_review_history(stage_dir)
         critique_history = _render_critique_history(review_history)
         blocker_ledger = _render_blocker_ledger(_collect_blocker_ledger(review_history))
-        artifacts.extend(_write_guidance_artifacts(stage_dir, approval_checklist, critique_history, blocker_ledger))
+        artifacts.extend(
+            _write_guidance_artifacts(
+                stage_dir, approval_checklist, critique_history, blocker_ledger
+            )
+        )
         if review.verdict == "approved":
             return list(dict.fromkeys(artifacts))
         if attempt < attempt_limit:
-            context.emit_progress(f"[ainative] plan: critique requested changes, retrying - {review.summary}")
+            context.emit_progress(
+                f"[ainative] plan: critique requested changes, retrying - {review.summary}"
+            )
         next_attempt = attempt + 1

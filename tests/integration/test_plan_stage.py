@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from ai_native.adapters.base import AgentResult
+from ai_native.factory_runner.author import FactoryClarificationRequired
 from ai_native.models import ReviewReport
 from ai_native.prompting import PromptLibrary
 from ai_native.stages.common import ExecutionContext
@@ -13,12 +16,367 @@ from ai_native.utils import read_json, write_json
 from tests.helpers import FakeWorkflowAdapter
 
 
+class RecordingPlanningAdapter:
+    def __init__(
+        self,
+        role: str,
+        calls: list[str],
+        *,
+        needs_clarification: bool = False,
+    ) -> None:
+        self.role = role
+        self.calls = calls
+        self.needs_clarification = needs_clarification
+        self.prompts: list[str] = []
+        self.estimated_tokens = 0
+
+    @staticmethod
+    def _token_estimate(text: str) -> int:
+        return max(1, (len(text.encode("utf-8")) + 3) // 4)
+
+    def _result(
+        self,
+        text: str,
+        json_data: dict[str, object] | None = None,
+    ) -> AgentResult:
+        self.estimated_tokens += self._token_estimate(text)
+        return AgentResult(text=text, json_data=json_data)
+
+    def run(
+        self,
+        prompt: str,
+        cwd: Path,
+        schema_path: Path | None = None,
+    ) -> AgentResult:
+        del cwd
+        self.prompts.append(prompt)
+        self.estimated_tokens += self._token_estimate(prompt)
+        schema_name = schema_path.name if schema_path is not None else None
+        if schema_name is None:
+            if "Phase 1:" in prompt:
+                call = "grounding"
+            elif "Phase 2:" in prompt:
+                call = "intent"
+            elif "Phase 3:" in prompt:
+                call = "implementation"
+            elif "stable approval rubric" in prompt:
+                call = "checklist"
+            else:
+                call = "freeform"
+        else:
+            call = schema_name
+        self.calls.append(f"{self.role}:{call}")
+
+        if schema_name == "question-batch.json":
+            payload = {
+                "needs_user_input": self.needs_clarification,
+                "summary": (
+                    "An acceptance-critical contract is missing."
+                    if self.needs_clarification
+                    else "The immutable factory context is sufficient."
+                ),
+                "questions": (
+                    ["Which observable contract should the implementation provide?"]
+                    if self.needs_clarification
+                    else []
+                ),
+            }
+            return self._result(json.dumps(payload), payload)
+        if schema_name == "plan-artifact.json":
+            payload = {
+                "title": "Factory plan",
+                "summary": "Implement the admitted behavior with focused tests.",
+                "implementation_steps": [
+                    "Add the failing test",
+                    "Implement the behavior",
+                ],
+                "interfaces": ["The admitted public interface"],
+                "data_flow": ["Input -> implementation -> observable output"],
+                "edge_cases": ["Reject inputs outside the admitted contract"],
+                "test_strategy": ["Run the declared focused and regression checks"],
+                "rollout_notes": ["Return the change set without publication"],
+            }
+            return self._result(json.dumps(payload), payload)
+        if schema_name == "review-report.json":
+            payload = ReviewReport(
+                verdict="approved",
+                summary="The plan is acceptance-complete and implementable.",
+                findings=[],
+                required_changes=[],
+            ).model_dump(mode="json")
+            return self._result(json.dumps(payload), payload)
+        return self._result("# Notes\n\nModel-generated planning notes.\n")
+
+
+def _prepare_planning_run(
+    app_config,
+    tmp_spec: Path,
+    tmp_path: Path,
+    *,
+    factory_mode: bool,
+):
+    app_config.workspace.plan_max_attempts = 1
+    state_store = StateStore(tmp_path / "artifacts")
+    state = state_store.create_run(tmp_spec, Path(__file__).resolve().parents[2])
+    state.metadata["factory_mode"] = factory_mode
+    run_dir = Path(state.run_dir)
+    (run_dir / "recon").mkdir(parents=True, exist_ok=True)
+    write_json(
+        run_dir / "recon" / "context.json",
+        {
+            "repo_state": "existing",
+            "languages": ["python"],
+            "manifests": ["pyproject.toml"],
+            "test_frameworks": ["pytest"],
+            "architecture_summary": "A small existing Python service.",
+            "risks": [],
+            "touched_areas": ["Application code", "Tests"],
+            "recommended_questions": [],
+        },
+    )
+    return state_store, state, run_dir
+
+
+def _recording_planning_context(
+    app_config,
+    tmp_spec: Path,
+    state_store: StateStore,
+    run_dir: Path,
+    builder: RecordingPlanningAdapter,
+    critic: RecordingPlanningAdapter,
+    *,
+    ask_questions=None,
+) -> ExecutionContext:
+    return ExecutionContext(
+        config=app_config,
+        prompt_library=PromptLibrary(
+            Path(__file__).resolve().parents[2] / "ai_native" / "prompts"
+        ),
+        state_store=state_store,
+        template_root=Path(__file__).resolve().parents[2] / "ai_native",
+        repo_root=Path(__file__).resolve().parents[2],
+        spec_path=tmp_spec,
+        run_dir=run_dir,
+        builder=builder,
+        critic=critic,
+        verifier=FakeWorkflowAdapter(),
+        pr_reviewer=FakeWorkflowAdapter(),
+        **({"ask_questions": ask_questions} if ask_questions is not None else {}),
+    )
+
+
+def test_factory_plan_uses_three_calls_and_materializes_compatibility_artifacts(
+    app_config,
+    tmp_spec: Path,
+    tmp_path: Path,
+) -> None:
+    state_store, state, run_dir = _prepare_planning_run(
+        app_config,
+        tmp_spec,
+        tmp_path,
+        factory_mode=True,
+    )
+    calls: list[str] = []
+    builder = RecordingPlanningAdapter("builder", calls)
+    critic = RecordingPlanningAdapter("critic", calls)
+    context = _recording_planning_context(
+        app_config,
+        tmp_spec,
+        state_store,
+        run_dir,
+        builder,
+        critic,
+    )
+
+    artifacts = run_plan(context, state)
+
+    assert calls == [
+        "builder:question-batch.json",
+        "builder:plan-artifact.json",
+        "critic:review-report.json",
+    ]
+    artifact_names = {path.name for path in artifacts}
+    assert {
+        "grounding.md",
+        "intent.md",
+        "implementation.md",
+        "approval-checklist.md",
+        "questions.json",
+        "answers.json",
+        "plan.json",
+        "plan-review.json",
+    } <= artifact_names
+    plan_dir = run_dir / "plan"
+    assert (
+        "immutable factory"
+        in (plan_dir / "grounding.md").read_text(encoding="utf-8").lower()
+    )
+    assert (
+        "every acceptance criterion"
+        in (plan_dir / "approval-checklist.md").read_text(encoding="utf-8").lower()
+    )
+    assert "Plan-Mode-style subworkflow" not in builder.prompts[-1]
+
+
+def test_factory_plan_clarification_remains_fail_closed(
+    app_config,
+    tmp_spec: Path,
+    tmp_path: Path,
+) -> None:
+    state_store, state, run_dir = _prepare_planning_run(
+        app_config,
+        tmp_spec,
+        tmp_path,
+        factory_mode=True,
+    )
+    calls: list[str] = []
+    builder = RecordingPlanningAdapter(
+        "builder",
+        calls,
+        needs_clarification=True,
+    )
+    critic = RecordingPlanningAdapter("critic", calls)
+
+    def reject_questions(_stage: str, _questions: list[str]) -> list[str]:
+        raise FactoryClarificationRequired("immutable context is incomplete")
+
+    context = _recording_planning_context(
+        app_config,
+        tmp_spec,
+        state_store,
+        run_dir,
+        builder,
+        critic,
+        ask_questions=reject_questions,
+    )
+
+    with pytest.raises(FactoryClarificationRequired):
+        run_plan(context, state)
+
+    assert calls == ["builder:question-batch.json"]
+    assert not (run_dir / "plan" / "plan.json").exists()
+
+
+def test_non_factory_plan_keeps_seven_call_workflow(
+    app_config,
+    tmp_spec: Path,
+    tmp_path: Path,
+) -> None:
+    state_store, state, run_dir = _prepare_planning_run(
+        app_config,
+        tmp_spec,
+        tmp_path,
+        factory_mode=False,
+    )
+    calls: list[str] = []
+    builder = RecordingPlanningAdapter("builder", calls)
+    critic = RecordingPlanningAdapter("critic", calls)
+    context = _recording_planning_context(
+        app_config,
+        tmp_spec,
+        state_store,
+        run_dir,
+        builder,
+        critic,
+    )
+
+    run_plan(context, state)
+
+    assert calls == [
+        "builder:grounding",
+        "builder:question-batch.json",
+        "builder:intent",
+        "builder:implementation",
+        "builder:checklist",
+        "builder:plan-artifact.json",
+        "critic:review-report.json",
+    ]
+
+
+def test_factory_plan_saves_enough_estimated_tokens_for_the_ten_thousand_token_budget(
+    app_config,
+    tmp_spec: Path,
+    tmp_path: Path,
+) -> None:
+    tmp_spec.write_text(
+        """# Deterministic fixture health endpoint
+
+## Acceptance criteria
+- Add a focused failing standard-library test before implementation.
+- GET /health returns status 200 OK.
+- The response content type is application/json.
+- The response body is exactly {\"status\":\"ok\"}.
+- The existing greeting test remains green.
+- python -m unittest discover -v passes.
+
+## Non-goals
+- Do not publish or merge directly; return only the protocol change set and evidence.
+
+## Constraints
+- Allowed paths: app.py and test_app.py.
+- Network access: none.
+- Do not add dependencies, credentials, deployment behavior, or unrelated endpoints.
+- Use only the Python standard library.
+""",
+        encoding="utf-8",
+    )
+    factory_store, factory_state, factory_run_dir = _prepare_planning_run(
+        app_config,
+        tmp_spec,
+        tmp_path / "factory",
+        factory_mode=True,
+    )
+    factory_calls: list[str] = []
+    factory_builder = RecordingPlanningAdapter("builder", factory_calls)
+    factory_critic = RecordingPlanningAdapter("critic", factory_calls)
+    run_plan(
+        _recording_planning_context(
+            app_config,
+            tmp_spec,
+            factory_store,
+            factory_run_dir,
+            factory_builder,
+            factory_critic,
+        ),
+        factory_state,
+    )
+
+    legacy_store, legacy_state, legacy_run_dir = _prepare_planning_run(
+        app_config,
+        tmp_spec,
+        tmp_path / "legacy",
+        factory_mode=False,
+    )
+    legacy_calls: list[str] = []
+    legacy_builder = RecordingPlanningAdapter("builder", legacy_calls)
+    legacy_critic = RecordingPlanningAdapter("critic", legacy_calls)
+    run_plan(
+        _recording_planning_context(
+            app_config,
+            tmp_spec,
+            legacy_store,
+            legacy_run_dir,
+            legacy_builder,
+            legacy_critic,
+        ),
+        legacy_state,
+    )
+
+    factory_tokens = factory_builder.estimated_tokens + factory_critic.estimated_tokens
+    legacy_tokens = legacy_builder.estimated_tokens + legacy_critic.estimated_tokens
+    assert len(factory_calls) == 3
+    assert len(legacy_calls) == 7
+    assert legacy_tokens - factory_tokens >= 1_500
+
+
 class RevisingPlanBuilder:
     def __init__(self) -> None:
         self.prompts: list[str] = []
         self.plan_attempts = 0
 
-    def run(self, prompt: str, cwd: Path, schema_path: Path | None = None) -> AgentResult:
+    def run(
+        self, prompt: str, cwd: Path, schema_path: Path | None = None
+    ) -> AgentResult:
         self.prompts.append(prompt)
         if schema_path and schema_path.name == "plan-artifact.json":
             self.plan_attempts += 1
@@ -61,8 +419,10 @@ class RevisingPlanBuilder:
                         "Unit test service transition and assignment rules with Arrange-Act-Assert structure",
                         "Integration test task endpoints and dashboard responses against acceptance criteria",
                     ],
-                    "rollout_notes": ["Release behind a feature branch and verify dashboard aggregates against seeded fixtures"],
-            }
+                    "rollout_notes": [
+                        "Release behind a feature branch and verify dashboard aggregates against seeded fixtures"
+                    ],
+                }
             return AgentResult(text=json.dumps(payload), json_data=payload)
         if schema_path and schema_path.name == "question-batch.json":
             payload = {
@@ -93,7 +453,9 @@ class OneRejectingPlanCritic:
         self.calls = 0
         self.prompts: list[str] = []
 
-    def run(self, prompt: str, cwd: Path, schema_path: Path | None = None) -> AgentResult:
+    def run(
+        self, prompt: str, cwd: Path, schema_path: Path | None = None
+    ) -> AgentResult:
         self.calls += 1
         self.prompts.append(prompt)
         if self.calls == 1:
@@ -101,7 +463,11 @@ class OneRejectingPlanCritic:
                 verdict="changes_required",
                 summary="The plan needs explicit workflow semantics, interfaces, assignment rules, and dashboard rollups.",
                 findings=["Interfaces are underspecified."],
-                required_changes=["Define API contracts", "Specify assignment rules", "Define dashboard rollup behavior"],
+                required_changes=[
+                    "Define API contracts",
+                    "Specify assignment rules",
+                    "Define dashboard rollup behavior",
+                ],
             ).model_dump(mode="json")
         else:
             payload = ReviewReport(
@@ -113,7 +479,9 @@ class OneRejectingPlanCritic:
         return AgentResult(text=json.dumps(payload), json_data=payload)
 
 
-def test_plan_stage_revises_after_critique(app_config, tmp_spec: Path, tmp_path: Path) -> None:
+def test_plan_stage_revises_after_critique(
+    app_config, tmp_spec: Path, tmp_path: Path
+) -> None:
     app_config.workspace.plan_max_attempts = 3
     state_store = StateStore(tmp_path / "artifacts")
     state = state_store.create_run(tmp_spec, Path(__file__).resolve().parents[2])
@@ -137,7 +505,9 @@ def test_plan_stage_revises_after_critique(app_config, tmp_spec: Path, tmp_path:
     progress: list[str] = []
     context = ExecutionContext(
         config=app_config,
-        prompt_library=PromptLibrary(Path(__file__).resolve().parents[2] / "ai_native" / "prompts"),
+        prompt_library=PromptLibrary(
+            Path(__file__).resolve().parents[2] / "ai_native" / "prompts"
+        ),
         state_store=state_store,
         template_root=Path(__file__).resolve().parents[2] / "ai_native",
         repo_root=Path(__file__).resolve().parents[2],
@@ -171,7 +541,9 @@ class QuestionAskingPlanBuilder:
     def __init__(self) -> None:
         self.prompts: list[str] = []
 
-    def run(self, prompt: str, cwd: Path, schema_path: Path | None = None) -> AgentResult:
+    def run(
+        self, prompt: str, cwd: Path, schema_path: Path | None = None
+    ) -> AgentResult:
         self.prompts.append(prompt)
         if schema_path and schema_path.name == "question-batch.json":
             payload = {
@@ -184,7 +556,11 @@ class QuestionAskingPlanBuilder:
             payload = {
                 "title": "Task Management Plan",
                 "summary": "Implement task management using the user-confirmed statuses.",
-                "implementation_steps": ["Add task model", "Add status transitions", "Add tests"],
+                "implementation_steps": [
+                    "Add task model",
+                    "Add status transitions",
+                    "Add tests",
+                ],
                 "interfaces": ["POST /tasks", "PATCH /tasks/{id}/status"],
                 "data_flow": ["Requests validate status values before persistence"],
                 "edge_cases": ["Reject unknown statuses"],
@@ -196,7 +572,9 @@ class QuestionAskingPlanBuilder:
 
 
 class ApprovingCritic:
-    def run(self, prompt: str, cwd: Path, schema_path: Path | None = None) -> AgentResult:
+    def run(
+        self, prompt: str, cwd: Path, schema_path: Path | None = None
+    ) -> AgentResult:
         payload = ReviewReport(
             verdict="approved",
             summary="The plan is concrete and implementable.",
@@ -219,13 +597,21 @@ class ReferenceAwarePlanBuilder:
     ) -> AgentResult:
         self.prompts.append(prompt)
         if schema_path and schema_path.name == "question-batch.json":
-            payload = {"needs_user_input": False, "summary": "No clarification needed.", "questions": []}
+            payload = {
+                "needs_user_input": False,
+                "summary": "No clarification needed.",
+                "questions": [],
+            }
             return AgentResult(text=json.dumps(payload), json_data=payload)
         if schema_path and schema_path.name == "plan-artifact.json":
             payload = {
                 "title": "Reference-driven Plan",
                 "summary": "Implement the page with fidelity checks.",
-                "implementation_steps": ["Extract primitives", "Implement UI", "Run fidelity verify"],
+                "implementation_steps": [
+                    "Extract primitives",
+                    "Implement UI",
+                    "Run fidelity verify",
+                ],
                 "interfaces": ["Reference-driven spec frontmatter"],
                 "data_flow": ["Spec manifest -> reference context -> plan"],
                 "edge_cases": ["Missing preview command"],
@@ -236,7 +622,9 @@ class ReferenceAwarePlanBuilder:
         return AgentResult(text="# Notes\nUse the reference context.")
 
 
-def test_plan_stage_passes_user_answers_back_into_planning(app_config, tmp_spec: Path, tmp_path: Path) -> None:
+def test_plan_stage_passes_user_answers_back_into_planning(
+    app_config, tmp_spec: Path, tmp_path: Path
+) -> None:
     app_config.workspace.plan_max_attempts = 1
     state_store = StateStore(tmp_path / "artifacts")
     state = state_store.create_run(tmp_spec, Path(__file__).resolve().parents[2])
@@ -258,7 +646,9 @@ def test_plan_stage_passes_user_answers_back_into_planning(app_config, tmp_spec:
     builder = QuestionAskingPlanBuilder()
     context = ExecutionContext(
         config=app_config,
-        prompt_library=PromptLibrary(Path(__file__).resolve().parents[2] / "ai_native" / "prompts"),
+        prompt_library=PromptLibrary(
+            Path(__file__).resolve().parents[2] / "ai_native" / "prompts"
+        ),
         state_store=state_store,
         template_root=Path(__file__).resolve().parents[2] / "ai_native",
         repo_root=Path(__file__).resolve().parents[2],
@@ -284,7 +674,9 @@ def test_plan_stage_passes_user_answers_back_into_planning(app_config, tmp_spec:
     assert any("todo, in_progress, done" in prompt for prompt in builder.prompts)
 
 
-def test_plan_stage_includes_reference_prompt_block_when_reference_context_exists(app_config, tmp_path: Path) -> None:
+def test_plan_stage_includes_reference_prompt_block_when_reference_context_exists(
+    app_config, tmp_path: Path
+) -> None:
     spec_path = tmp_path / "spec.md"
     reference_path = tmp_path / "landing.html"
     reference_path.write_text("<html></html>\n", encoding="utf-8")
@@ -348,7 +740,9 @@ Build the page.
     builder = ReferenceAwarePlanBuilder()
     context = ExecutionContext(
         config=app_config,
-        prompt_library=PromptLibrary(Path(__file__).resolve().parents[2] / "ai_native" / "prompts"),
+        prompt_library=PromptLibrary(
+            Path(__file__).resolve().parents[2] / "ai_native" / "prompts"
+        ),
         state_store=state_store,
         template_root=Path(__file__).resolve().parents[2] / "ai_native",
         repo_root=Path(__file__).resolve().parents[2],
@@ -362,7 +756,10 @@ Build the page.
 
     run_plan(context, state)
 
-    assert any("Reference-driven web fidelity profile is active" in prompt for prompt in builder.prompts)
+    assert any(
+        "Reference-driven web fidelity profile is active" in prompt
+        for prompt in builder.prompts
+    )
 
 
 class ResumeOnlyBuilder:
@@ -370,7 +767,9 @@ class ResumeOnlyBuilder:
         self.prompts: list[str] = []
         self.plan_attempts = 0
 
-    def run(self, prompt: str, cwd: Path, schema_path: Path | None = None) -> AgentResult:
+    def run(
+        self, prompt: str, cwd: Path, schema_path: Path | None = None
+    ) -> AgentResult:
         self.prompts.append(prompt)
         if schema_path and schema_path.name == "plan-artifact.json":
             self.plan_attempts += 1
@@ -399,10 +798,14 @@ class ResumeOnlyBuilder:
                     "- Edit semantics remain ambiguous."
                 )
             )
-        raise AssertionError("Resume should not rerun grounding, questions, intent, or implementation beyond checklist recovery.")
+        raise AssertionError(
+            "Resume should not rerun grounding, questions, intent, or implementation beyond checklist recovery."
+        )
 
 
-def test_plan_stage_resumes_from_latest_attempt(app_config, tmp_spec: Path, tmp_path: Path) -> None:
+def test_plan_stage_resumes_from_latest_attempt(
+    app_config, tmp_spec: Path, tmp_path: Path
+) -> None:
     app_config.workspace.plan_max_attempts = 4
     state_store = StateStore(tmp_path / "artifacts")
     state = state_store.create_run(tmp_spec, Path(__file__).resolve().parents[2])
@@ -451,16 +854,22 @@ def test_plan_stage_resumes_from_latest_attempt(app_config, tmp_spec: Path, tmp_
     write_json(plan_dir / "plan-attempt-1.json", prior_plan)
     (plan_dir / "plan-attempt-1.md").write_text("# Older Plan\n", encoding="utf-8")
     write_json(plan_dir / "plan-review-attempt-1.json", older_review)
-    (plan_dir / "plan-review-attempt-1.md").write_text("# Older Review\n", encoding="utf-8")
+    (plan_dir / "plan-review-attempt-1.md").write_text(
+        "# Older Review\n", encoding="utf-8"
+    )
     write_json(plan_dir / "plan-attempt-3.json", prior_plan)
     (plan_dir / "plan-attempt-3.md").write_text("# Prior Plan\n", encoding="utf-8")
     write_json(plan_dir / "plan-review-attempt-3.json", prior_review)
-    (plan_dir / "plan-review-attempt-3.md").write_text("# Prior Review\n", encoding="utf-8")
+    (plan_dir / "plan-review-attempt-3.md").write_text(
+        "# Prior Review\n", encoding="utf-8"
+    )
     builder = ResumeOnlyBuilder()
     progress: list[str] = []
     context = ExecutionContext(
         config=app_config,
-        prompt_library=PromptLibrary(Path(__file__).resolve().parents[2] / "ai_native" / "prompts"),
+        prompt_library=PromptLibrary(
+            Path(__file__).resolve().parents[2] / "ai_native" / "prompts"
+        ),
         state_store=state_store,
         template_root=Path(__file__).resolve().parents[2] / "ai_native",
         repo_root=Path(__file__).resolve().parents[2],
@@ -476,11 +885,17 @@ def test_plan_stage_resumes_from_latest_attempt(app_config, tmp_spec: Path, tmp_
     run_plan(context, state)
 
     assert builder.plan_attempts == 1
-    assert any("resuming from previous critique at attempt 4" in event for event in progress)
-    assert any("Need explicit read/edit interfaces" in prompt for prompt in builder.prompts)
+    assert any(
+        "resuming from previous critique at attempt 4" in event for event in progress
+    )
+    assert any(
+        "Need explicit read/edit interfaces" in prompt for prompt in builder.prompts
+    )
     assert any("Define workflow semantics" in prompt for prompt in builder.prompts)
     assert (plan_dir / "approval-checklist.md").exists()
-    assert "Define read/edit contracts" in (plan_dir / "blocker-ledger.md").read_text(encoding="utf-8")
+    assert "Define read/edit contracts" in (plan_dir / "blocker-ledger.md").read_text(
+        encoding="utf-8"
+    )
     assert (plan_dir / "plan-attempt-3.json").exists()
     assert (plan_dir / "plan-attempt-4.json").exists()
     assert (plan_dir / "plan-review-attempt-4.json").exists()
@@ -491,7 +906,9 @@ class ExhaustionCritic:
         self.calls = 0
         self.prompts: list[str] = []
 
-    def run(self, prompt: str, cwd: Path, schema_path: Path | None = None) -> AgentResult:
+    def run(
+        self, prompt: str, cwd: Path, schema_path: Path | None = None
+    ) -> AgentResult:
         self.calls += 1
         self.prompts.append(prompt)
         if self.calls < 3:
@@ -511,7 +928,9 @@ class ExhaustionCritic:
         return AgentResult(text=json.dumps(payload), json_data=payload)
 
 
-def test_plan_stage_can_continue_after_attempt_budget_is_exhausted(app_config, tmp_spec: Path, tmp_path: Path) -> None:
+def test_plan_stage_can_continue_after_attempt_budget_is_exhausted(
+    app_config, tmp_spec: Path, tmp_path: Path
+) -> None:
     app_config.workspace.plan_max_attempts = 1
     state_store = StateStore(tmp_path / "artifacts")
     state = state_store.create_run(tmp_spec, Path(__file__).resolve().parents[2])
@@ -536,7 +955,9 @@ def test_plan_stage_can_continue_after_attempt_budget_is_exhausted(app_config, t
     asked_questions: list[list[str]] = []
     context = ExecutionContext(
         config=app_config,
-        prompt_library=PromptLibrary(Path(__file__).resolve().parents[2] / "ai_native" / "prompts"),
+        prompt_library=PromptLibrary(
+            Path(__file__).resolve().parents[2] / "ai_native" / "prompts"
+        ),
         state_store=state_store,
         template_root=Path(__file__).resolve().parents[2] / "ai_native",
         repo_root=Path(__file__).resolve().parents[2],
@@ -547,7 +968,8 @@ def test_plan_stage_can_continue_after_attempt_budget_is_exhausted(app_config, t
         verifier=FakeWorkflowAdapter(),
         pr_reviewer=FakeWorkflowAdapter(),
         emit_progress=progress.append,
-        ask_questions=lambda stage, questions: asked_questions.append(questions) or ["yes", "2"],
+        ask_questions=lambda stage, questions: asked_questions.append(questions)
+        or ["yes", "2"],
     )
 
     run_plan(context, state)
