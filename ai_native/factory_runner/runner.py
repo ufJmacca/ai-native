@@ -83,6 +83,7 @@ from ai_native.factory_runner.phase_checkpoint import (
 from ai_native.factory_runner.process import (
     CancellationToken,
     Deadline,
+    FactoryProcessIsolationError,
     FactoryProcessRunner,
 )
 from ai_native.factory_runner.process_policy import (
@@ -798,8 +799,9 @@ def execute_factory(
             environment=git_environment,
             process_runner=process_runner,
             deadline=deadline,
-        )
-        validate_workspace(inputs, git_runtime=git_runtime)
+        ).with_ephemeral_private_indexes(private_root=private_environment_root)
+        with process_runner.exclusive_operation():
+            validate_workspace(inputs, git_runtime=git_runtime)
 
         if (
             expected_operation == "author"
@@ -818,7 +820,8 @@ def execute_factory(
                 events=events,
             )
 
-        security_snapshot = capture_repository_security_snapshot(git_runtime)
+        with process_runner.exclusive_operation():
+            security_snapshot = capture_repository_security_snapshot(git_runtime)
         command_environment = build_child_environment(
             allowed_keys=inputs.run_spec.policy.allowed_environment_keys,
             source_env=attempt_environment,
@@ -833,19 +836,21 @@ def execute_factory(
             )
 
         def boundary_check() -> None:
-            validate_author_boundary(
-                inputs,
-                git_runtime=git_runtime,
-                security_snapshot=security_snapshot,
-                secret_scanner=secret_scanner,
-            )
+            with process_runner.exclusive_operation():
+                validate_author_boundary(
+                    inputs,
+                    git_runtime=git_runtime,
+                    security_snapshot=security_snapshot,
+                    secret_scanner=secret_scanner,
+                )
 
         def restore_workspace() -> None:
-            restore_clean_author_workspace(
-                inputs,
-                git_runtime=git_runtime,
-                security_snapshot=security_snapshot,
-            )
+            with process_runner.exclusive_operation():
+                restore_clean_author_workspace(
+                    inputs,
+                    git_runtime=git_runtime,
+                    security_snapshot=security_snapshot,
+                )
 
         def emit_stage_event(status: str, stage: str) -> None:
             nonlocal completed_stages
@@ -1095,16 +1100,17 @@ def execute_factory(
                     )
 
             try:
-                checkpoint_manager.restore_transactionally(
-                    inputs.checkpoint,
-                    git_runtime=git_runtime,
-                    patch_validator=lambda patch: validate_checkpoint_patch_paths(
-                        inputs.run_spec.policy,
-                        patch=patch,
+                with process_runner.exclusive_operation():
+                    checkpoint_manager.restore_transactionally(
+                        inputs.checkpoint,
                         git_runtime=git_runtime,
-                    ),
-                    postcondition=boundary_check,
-                )
+                        patch_validator=lambda patch: validate_checkpoint_patch_paths(
+                            inputs.run_spec.policy,
+                            patch=patch,
+                            git_runtime=git_runtime,
+                        ),
+                        postcondition=boundary_check,
+                    )
             except CheckpointCancelled:
                 raise _Cancelled from None
             except CheckpointTimedOut:
@@ -1125,21 +1131,22 @@ def execute_factory(
             if not isinstance(boundary, str) or not boundary or len(boundary) > 128:
                 raise CheckpointRuntimeError("checkpoint boundary label is invalid")
             selected_runtime = runtime or git_runtime
-            if expected_operation == "author":
-                validate_author_boundary(
-                    inputs,
-                    git_runtime=selected_runtime,
-                    security_snapshot=security_snapshot,
-                    secret_scanner=secret_scanner,
+            with selected_runtime.process_runner.exclusive_operation():
+                if expected_operation == "author":
+                    validate_author_boundary(
+                        inputs,
+                        git_runtime=selected_runtime,
+                        security_snapshot=security_snapshot,
+                        secret_scanner=secret_scanner,
+                    )
+                patch = (
+                    capture_workspace_patch(
+                        inputs,
+                        git_runtime=selected_runtime,
+                    )
+                    if expected_operation == "author"
+                    else None
                 )
-            patch = (
-                capture_workspace_patch(
-                    inputs,
-                    git_runtime=selected_runtime,
-                )
-                if expected_operation == "author"
-                else None
-            )
             if (
                 expected_operation == "author"
                 and baseline_already_green
@@ -1558,10 +1565,11 @@ def execute_factory(
             raise _TimedOut
 
         if baseline_already_green:
-            if capture_workspace_patch(inputs, git_runtime=git_runtime) is not None:
-                raise FactoryPolicyViolation(
-                    "author changes require a genuine red baseline"
-                )
+            with process_runner.exclusive_operation():
+                if capture_workspace_patch(inputs, git_runtime=git_runtime) is not None:
+                    raise FactoryPolicyViolation(
+                        "author changes require a genuine red baseline"
+                    )
             if "verification" not in completed_phases:
                 no_change_verification = execute_declared_phase(
                     inputs,
@@ -1663,19 +1671,20 @@ def execute_factory(
             },
             artifact_refs=(verification.reference,),
         )
-        if capture_workspace_patch(inputs, git_runtime=git_runtime) is None:
-            raise FactoryPolicyViolation(
-                "a genuine red-to-green transition requires repository changes"
+        with process_runner.exclusive_operation():
+            if capture_workspace_patch(inputs, git_runtime=git_runtime) is None:
+                raise FactoryPolicyViolation(
+                    "a genuine red-to-green transition requires repository changes"
+                )
+            write_runtime_checkpoint("author-verification")
+            change_set, change_reference = build_change_set(
+                inputs,
+                writer=writer,
+                git_runtime=git_runtime,
+                evidence=verification.evidence,
+                evidence_reference=verification.reference,
+                secret_scanner=secret_scanner,
             )
-        write_runtime_checkpoint("author-verification")
-        change_set, change_reference = build_change_set(
-            inputs,
-            writer=writer,
-            git_runtime=git_runtime,
-            evidence=verification.evidence,
-            evidence_reference=verification.reference,
-            secret_scanner=secret_scanner,
-        )
         if change_set is not None and change_reference is not None:
             events.emit(
                 "ChangeSetWritten",
@@ -1858,6 +1867,7 @@ def execute_factory(
         )
     except (
         FactoryPolicyViolation,
+        FactoryProcessIsolationError,
         ChangePolicyError,
         EvidenceSufficiencyError,
         FactoryGitError,

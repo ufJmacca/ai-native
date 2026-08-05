@@ -2,13 +2,16 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
+import threading
 import time
 
 import pytest
 
+from ai_native.factory_runner import process as process_module
 from ai_native.factory_runner.process import (
     CancellationToken,
     Deadline,
+    FactoryProcessIsolationError,
     FactoryProcessRunner,
 )
 
@@ -128,6 +131,65 @@ def test_process_runner_honours_a_shared_absolute_deadline(
     assert time.monotonic() - started < 2.0
     assert result.returncode is None
     assert result.termination_reason == "timed_out"
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="requires Linux child-subreaper isolation",
+)
+def test_process_runner_fails_closed_without_linux_subreaper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    canary = tmp_path / "spawned-without-subreaper"
+    monkeypatch.setattr(process_module, "_enable_child_subreaper", lambda: False)
+
+    with pytest.raises(FactoryProcessIsolationError, match="subreaper"):
+        FactoryProcessRunner().run(
+            (
+                sys.executable,
+                "-c",
+                f"from pathlib import Path; Path({str(canary)!r}).touch()",
+            ),
+            cwd=tmp_path,
+            environment={},
+            timeout_seconds=2.0,
+        )
+
+    assert not canary.exists()
+
+
+def test_process_runner_serializes_exclusive_operations(tmp_path: Path) -> None:
+    first_runner = FactoryProcessRunner()
+    second_runner = FactoryProcessRunner()
+    canary = tmp_path / "concurrent-process"
+    attempted = threading.Event()
+    completed = threading.Event()
+
+    def run_process() -> None:
+        attempted.set()
+        second_runner.run(
+            (
+                sys.executable,
+                "-c",
+                f"from pathlib import Path; Path({str(canary)!r}).touch()",
+            ),
+            cwd=tmp_path,
+            environment={},
+            timeout_seconds=2.0,
+        )
+        completed.set()
+
+    with first_runner.exclusive_operation():
+        contender = threading.Thread(target=run_process)
+        contender.start()
+        assert attempted.wait(timeout=1.0)
+        assert not completed.wait(timeout=0.1)
+        assert not canary.exists()
+
+    contender.join(timeout=2.0)
+    assert completed.is_set()
+    assert canary.exists()
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX process groups")

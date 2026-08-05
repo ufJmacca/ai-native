@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import os
 import json
 import subprocess
 import sys
@@ -26,11 +27,33 @@ def test_factory_author_runs_unattended_without_committing(
     factory_invocation: Callable[..., FactoryInvocation],
 ) -> None:
     invocation = factory_invocation(operation="author")
+    repository_index = invocation.workspace / ".git" / "index"
+    tracked = invocation.workspace / "app.py"
+    tracked_metadata = tracked.stat()
+    os.utime(
+        tracked,
+        ns=(
+            tracked_metadata.st_atime_ns,
+            tracked_metadata.st_mtime_ns + 1_000_000_000,
+        ),
+    )
+    repository_index_before = repository_index.read_bytes()
+    repository_index_metadata_before = repository_index.stat(follow_symlinks=False)
 
     completed = invoke_factory(invocation, agent_mode="author")
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout == ""
+    assert repository_index.read_bytes() == repository_index_before
+    repository_index_metadata_after = repository_index.stat(follow_symlinks=False)
+    assert (
+        repository_index_metadata_after.st_mtime_ns
+        == repository_index_metadata_before.st_mtime_ns
+    )
+    assert (
+        repository_index_metadata_after.st_ctime_ns
+        == repository_index_metadata_before.st_ctime_ns
+    )
     assert invocation.marker_path.exists()
     assert (invocation.workspace / "app.py").read_text(encoding="utf-8") == AUTHORED_APP
     assert git_output(invocation.workspace, "rev-parse", "HEAD") == invocation.base_sha

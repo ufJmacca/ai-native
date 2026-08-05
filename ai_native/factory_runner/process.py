@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 import ctypes
 from dataclasses import dataclass
 import math
@@ -21,7 +22,12 @@ _POLL_INTERVAL_SECONDS = 0.02
 _READ_CHUNK_BYTES = 65_536
 _PR_SET_CHILD_SUBREAPER = 36
 _SUBREAPER_LOCK = threading.Lock()
-_SUBREAPER_ENABLED = False
+_SUBREAPER_PID: int | None = None
+_PROCESS_ISOLATION_LOCK = threading.RLock()
+
+
+class FactoryProcessIsolationError(RuntimeError):
+    """The runner cannot prove that no untrusted subprocess remains live."""
 
 
 class CancellationToken:
@@ -166,11 +172,12 @@ def _process_group_exists(process_group_id: int) -> bool:
 def _enable_child_subreaper() -> bool:
     """Keep detached descendants attributable to this Linux runner process."""
 
-    global _SUBREAPER_ENABLED
+    global _SUBREAPER_PID
     if not sys.platform.startswith("linux"):
         return False
     with _SUBREAPER_LOCK:
-        if _SUBREAPER_ENABLED:
+        process_id = os.getpid()
+        if _SUBREAPER_PID == process_id:
             return True
         try:
             libc = ctypes.CDLL(None, use_errno=True)
@@ -179,7 +186,7 @@ def _enable_child_subreaper() -> bool:
             return False
         if result != 0:
             return False
-        _SUBREAPER_ENABLED = True
+        _SUBREAPER_PID = process_id
         return True
 
 
@@ -187,8 +194,10 @@ def _linux_descendants(parent_pid: int) -> set[int]:
     relationships: dict[int, int] = {}
     try:
         process_entries = tuple(Path("/proc").iterdir())
-    except OSError:
-        return set()
+    except OSError as exc:
+        raise FactoryProcessIsolationError(
+            "Linux factory process isolation requires procfs"
+        ) from exc
     for entry in process_entries:
         if not entry.name.isdigit():
             continue
@@ -232,9 +241,9 @@ def _terminate_new_descendants(
     parent_pid: int,
     preexisting_descendants: set[int],
     grace_seconds: float,
-) -> None:
+) -> set[int]:
     if not sys.platform.startswith("linux"):
-        return
+        return set()
     deadline = time.monotonic() + grace_seconds
     observed: set[int] = set()
     while True:
@@ -255,6 +264,7 @@ def _terminate_new_descendants(
         remaining = _linux_descendants(parent_pid) - preexisting_descendants
         observed.update(remaining)
     _reap_adopted_children(observed)
+    return _linux_descendants(parent_pid) - preexisting_descendants
 
 
 def _terminate_process_group(
@@ -297,6 +307,57 @@ class FactoryProcessRunner:
         self._deadline = deadline
         self._max_capture_bytes = max_capture_bytes
         self._termination_grace_seconds = _validated_timeout(termination_grace_seconds)
+        self._supervisor_pid = os.getpid()
+
+    @contextmanager
+    def exclusive_operation(self) -> Iterator[None]:
+        """Exclude runner-spawned processes across a sensitive operation.
+
+        Linux factory runs require child-subreaper support. Combined with the
+        process-global lock, this makes every subprocess sequential and keeps
+        double-forked children attributable to this supervisor until reaped.
+        """
+
+        with _PROCESS_ISOLATION_LOCK:
+            if os.getpid() != self._supervisor_pid:
+                raise FactoryProcessIsolationError(
+                    "factory process runner cannot be reused after fork"
+                )
+            linux_isolation = sys.platform.startswith("linux")
+            if linux_isolation and not _enable_child_subreaper():
+                raise FactoryProcessIsolationError(
+                    "Linux factory process isolation requires child-subreaper support"
+                )
+            if linux_isolation:
+                existing_descendants = _linux_descendants(self._supervisor_pid)
+                _reap_adopted_children(existing_descendants)
+                existing_descendants = _linux_descendants(self._supervisor_pid)
+                if existing_descendants:
+                    remaining = _terminate_new_descendants(
+                        parent_pid=self._supervisor_pid,
+                        preexisting_descendants=set(),
+                        grace_seconds=self._termination_grace_seconds,
+                    )
+                    if remaining:
+                        raise FactoryProcessIsolationError(
+                            "factory runner could not reap concurrent descendants"
+                        )
+                    raise FactoryProcessIsolationError(
+                        "factory runner detected a concurrent descendant"
+                    )
+            try:
+                yield
+            finally:
+                if linux_isolation:
+                    remaining = _terminate_new_descendants(
+                        parent_pid=self._supervisor_pid,
+                        preexisting_descendants=set(),
+                        grace_seconds=self._termination_grace_seconds,
+                    )
+                    if remaining:
+                        raise FactoryProcessIsolationError(
+                            "factory runner could not reap spawned descendants"
+                        )
 
     def _preflight_reason(
         self,
@@ -324,6 +385,22 @@ class FactoryProcessRunner:
         timeout_seconds: float,
     ) -> FactoryProcessResult:
         argv = _validated_command(command)
+        with self.exclusive_operation():
+            return self._run_exclusive(
+                argv=argv,
+                cwd=cwd,
+                environment=environment,
+                timeout_seconds=timeout_seconds,
+            )
+
+    def _run_exclusive(
+        self,
+        *,
+        argv: tuple[str, ...],
+        cwd: Path,
+        environment: Mapping[str, str],
+        timeout_seconds: float,
+    ) -> FactoryProcessResult:
         invocation_deadline = Deadline.from_timeout(timeout_seconds)
         preflight_reason = self._preflight_reason(invocation_deadline)
         if preflight_reason is not None:
@@ -335,11 +412,8 @@ class FactoryProcessRunner:
                 termination_reason=preflight_reason,
             )
 
-        subreaper_enabled = _enable_child_subreaper()
-        supervisor_pid = os.getpid()
-        preexisting_descendants = (
-            _linux_descendants(supervisor_pid) if subreaper_enabled else set()
-        )
+        subreaper_enabled = sys.platform.startswith("linux")
+        supervisor_pid = self._supervisor_pid
         process = subprocess.Popen(
             argv,
             cwd=cwd,
@@ -401,10 +475,11 @@ class FactoryProcessRunner:
                 )
         else:
             returncode = None
+        remaining_descendants: set[int] = set()
         if subreaper_enabled:
-            _terminate_new_descendants(
+            remaining_descendants = _terminate_new_descendants(
                 parent_pid=supervisor_pid,
-                preexisting_descendants=preexisting_descendants,
+                preexisting_descendants=set(),
                 grace_seconds=self._termination_grace_seconds,
             )
 
@@ -412,6 +487,10 @@ class FactoryProcessRunner:
             reader.join(timeout=self._termination_grace_seconds)
         stdout_bytes, stdout, stdout_truncated = stdout_capture.snapshot()
         stderr_bytes, stderr, stderr_truncated = stderr_capture.snapshot()
+        if remaining_descendants:
+            raise FactoryProcessIsolationError(
+                "factory runner could not reap spawned descendants"
+            )
         return FactoryProcessResult(
             command=argv,
             returncode=returncode,
@@ -428,6 +507,7 @@ class FactoryProcessRunner:
 __all__ = [
     "CancellationToken",
     "Deadline",
+    "FactoryProcessIsolationError",
     "FactoryProcessResult",
     "FactoryProcessRunner",
 ]
