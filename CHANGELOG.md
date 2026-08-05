@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.5.1](https://github.com/ufJmacca/ai-native/compare/ai-native-base-v1.5.0...ai-native-base-v1.5.1) (2026-08-05)
+
+
+### Bug Fixes
+
+* **factory-runner:** harden rootless execution boundaries ([38e4a62](https://github.com/ufJmacca/ai-native/commit/38e4a621b05a5530e6870e772f79289f7375c172))
+* **factory-runner:** isolate runner-owned git reads ([3eb8d6c](https://github.com/ufJmacca/ai-native/commit/3eb8d6ce19961deb7bc1747c610c5d181910292c))
+* **factory-runner:** preserve private index timestamp ([10a33ae](https://github.com/ufJmacca/ai-native/commit/10a33aeb4f22affe075b44ef6ae0c82699a507b7))
+* **stages:** validate portable slice identities ([d6274f6](https://github.com/ufJmacca/ai-native/commit/d6274f618ff31b945739041cf337ea2205b2cd9d))
+
+
+### Performance Improvements
+
+* **factory-runner:** compact immutable planning ([08b93a3](https://github.com/ufJmacca/ai-native/commit/08b93a3c6935efdcf7ec3cb2d606ff7e02d644ea))
+
+
+### Documentation
+
+* adopt trusted exact-head CLI merging ([cf8ae2f](https://github.com/ufJmacca/ai-native/commit/cf8ae2f0503c874895191a933efc1537c0280bad))
+* **factory-runner:** use exact-head CLI merge gate ([19cf96e](https://github.com/ufJmacca/ai-native/commit/19cf96e556a7b36b92e6e1c326d5918028db2e75))
+
 ## [1.5.0](https://github.com/ufJmacca/ai-native/compare/ai-native-base-v1.4.0...ai-native-base-v1.5.0) (2026-07-31)
 
 
