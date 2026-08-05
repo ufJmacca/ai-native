@@ -241,6 +241,14 @@ class FactoryGitRuntime:
                     "runner-owned Git repository index changed during private copy"
                 )
             os.fsync(destination_descriptor)
+            # Git compares the index file timestamp with cached worktree
+            # timestamps to identify racily-clean entries. A fresh tempfile
+            # timestamp can make a same-size edit look clean, so the private
+            # copy must retain the source index's timestamp semantics.
+            os.utime(
+                destination_descriptor,
+                ns=(source_metadata.st_atime_ns, source_metadata.st_mtime_ns),
+            )
 
             final_source_metadata = os.fstat(source_descriptor)
             path_source_metadata = source_index.stat(follow_symlinks=False)
@@ -258,6 +266,7 @@ class FactoryGitRuntime:
                 or stat.S_IMODE(destination_metadata.st_mode) != 0o600
                 or destination_metadata.st_nlink != 1
                 or destination_metadata.st_size != source_metadata.st_size
+                or destination_metadata.st_mtime_ns != source_metadata.st_mtime_ns
             ):
                 raise FactoryGitError("runner-owned Git private index copy is unsafe")
             copy_complete = True

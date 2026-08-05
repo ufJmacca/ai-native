@@ -44,6 +44,7 @@ class _RecordingProcessRunner(FactoryProcessRunner):
         self.index_paths: list[Path] = []
         self.index_contents: list[bytes] = []
         self.index_modes: list[int] = []
+        self.index_mtimes_ns: list[int] = []
 
     def run(
         self,
@@ -57,6 +58,7 @@ class _RecordingProcessRunner(FactoryProcessRunner):
         self.index_paths.append(private_index)
         self.index_contents.append(private_index.read_bytes())
         self.index_modes.append(stat.S_IMODE(metadata.st_mode))
+        self.index_mtimes_ns.append(metadata.st_mtime_ns)
         return super().run(command, cwd, environment, timeout_seconds)
 
 
@@ -265,6 +267,7 @@ def test_ephemeral_private_index_keeps_diff_off_the_repository_index(
     assert private_index.parent == private_root.resolve(strict=True)
     assert private_index != repository_index
     assert process_runner.index_modes == [0o600]
+    assert process_runner.index_mtimes_ns == [repository_metadata_before.st_mtime_ns]
     assert not private_index.exists()
     assert not Path(f"{private_index}.lock").exists()
     assert not any(private_root.iterdir())
