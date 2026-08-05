@@ -273,6 +273,51 @@ def test_ephemeral_private_index_keeps_diff_off_the_repository_index(
     assert not any(private_root.iterdir())
 
 
+def test_private_index_preserves_racy_clean_detection(tmp_path: Path) -> None:
+    runtime = _runtime(
+        tmp_path,
+        cancellation_token=CancellationToken(),
+        deadline=Deadline.from_timeout(30),
+    )
+    tracked = _initialise_repository(runtime.workspace)
+    subprocess.run(
+        ["git", "config", "core.trustctime", "false"],
+        cwd=runtime.workspace,
+        check=True,
+    )
+    racy_timestamp_ns = 946_684_800_000_000_000
+    tracked_metadata = tracked.stat()
+    os.utime(
+        tracked,
+        ns=(tracked_metadata.st_atime_ns, racy_timestamp_ns),
+    )
+    subprocess.run(
+        ["git", "update-index", "--refresh"],
+        cwd=runtime.workspace,
+        check=True,
+    )
+    repository_index = runtime.workspace / ".git" / "index"
+    index_metadata = repository_index.stat(follow_symlinks=False)
+    os.utime(
+        repository_index,
+        ns=(index_metadata.st_atime_ns, racy_timestamp_ns),
+    )
+    tracked.write_text("modified content\n", encoding="utf-8")
+    assert tracked.stat().st_size == len("admitted content\n")
+    tracked_metadata = tracked.stat()
+    os.utime(
+        tracked,
+        ns=(tracked_metadata.st_atime_ns, racy_timestamp_ns),
+    )
+    isolated = runtime.with_ephemeral_private_indexes(
+        private_root=_private_root(tmp_path)
+    )
+
+    assert isolated.run(
+        "status", "--porcelain=v1", "--untracked-files=no"
+    ) == b" M tracked.txt\n"
+
+
 def test_prior_private_index_tampering_cannot_affect_the_next_git_call(
     tmp_path: Path,
 ) -> None:
