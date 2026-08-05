@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from contextlib import AbstractContextManager
 import os
 from pathlib import Path
 import subprocess
@@ -185,6 +186,9 @@ class _RacingProcessRunner:
         self.interruption = interruption
         self.commands: list[tuple[str, ...]] = []
         self.raced = False
+
+    def exclusive_operation(self) -> AbstractContextManager[None]:
+        return self.delegate.exclusive_operation()
 
     def run(
         self,
