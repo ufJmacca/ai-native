@@ -1,8 +1,0 @@
-diff --git a/app.py b/app.py
-index 1e7841587679b1fed561289cf6ef8f5701e38239..90c70dda94ffb4b23d88b63ace0fc87dd4f32828 100644
---- a/app.py
-+++ b/app.py
-@@ -1,2 +1,2 @@
- def greeting(name: str) -> str:
--    return f"Hello, {name}."
-+    return f"Hello, {name}!"
