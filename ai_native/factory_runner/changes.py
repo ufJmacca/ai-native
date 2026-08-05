@@ -80,20 +80,32 @@ def _git(
     return git_runtime.run(*arguments)
 
 
-def _resolved_git_path(
-    git_runtime: FactoryGitRuntime,
-    argument: str,
-) -> Path:
-    raw = _git(
-        git_runtime,
-        "rev-parse",
-        "--path-format=absolute",
-        argument,
-    )
+def _bound_git_directory(git_runtime: FactoryGitRuntime) -> Path:
+    workspace = git_runtime.workspace
+    git_marker = workspace / ".git"
     try:
-        return Path(raw.decode("utf-8", errors="strict").strip()).resolve(strict=True)
-    except (OSError, RuntimeError, UnicodeError) as exc:
+        resolved_workspace = workspace.resolve(strict=True)
+        if resolved_workspace != workspace or git_marker.is_symlink():
+            raise ChangePolicyError("repository metadata path is invalid")
+        metadata = git_marker.stat(follow_symlinks=False)
+        git_dir = git_marker.resolve(strict=True)
+    except ChangePolicyError:
+        raise
+    except (OSError, RuntimeError) as exc:
         raise ChangePolicyError("repository metadata path is invalid") from exc
+    if not stat.S_ISDIR(metadata.st_mode) or git_dir != resolved_workspace / ".git":
+        raise ChangePolicyError("repository metadata path is invalid")
+    for marker_name in ("commondir", "gitdir"):
+        try:
+            (git_dir / marker_name).lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise ChangePolicyError(
+                "repository metadata indirection is unreadable"
+            ) from exc
+        raise ChangePolicyError("repository metadata indirection is unsupported")
+    return git_dir
 
 
 def _snapshot_entry(
@@ -190,8 +202,8 @@ def capture_repository_security_snapshot(
     """Bind security-relevant Git metadata across every author boundary."""
 
     workspace = git_runtime.workspace
-    git_dir = _resolved_git_path(git_runtime, "--absolute-git-dir")
-    common_dir = _resolved_git_path(git_runtime, "--git-common-dir")
+    git_dir = _bound_git_directory(git_runtime)
+    common_dir = git_dir
     digest = hashlib.sha256()
     digest.update(f"git-dir\0{git_dir}\0common-dir\0{common_dir}\0".encode())
     budget = [0, 0]

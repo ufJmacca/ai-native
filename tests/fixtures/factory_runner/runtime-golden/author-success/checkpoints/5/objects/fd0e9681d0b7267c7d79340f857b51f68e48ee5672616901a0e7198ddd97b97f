@@ -1,0 +1,17 @@
+# Approval Checklist
+
+## Approval Gates
+- Every acceptance criterion maps to ordered implementation work and a concrete test.
+- The plan stays within the scope, constraints, and non-goals of the immutable factory task.
+- The implementation is small enough to execute without inventing optional scope.
+
+## Minimum Explicit Contracts
+- Public interfaces, data flow, failure and edge-case behavior, and rollout behavior are explicit.
+- Test strategy covers the admitted behavior and relevant existing regressions.
+- Repository paths and runtime assumptions do not exceed the supplied context.
+
+## Allowed Defaults
+- The planner may choose the smallest repository-consistent implementation detail that does not alter an acceptance-critical contract, and must record that choice.
+
+## Ask The User If
+- An acceptance-critical decision cannot be resolved from the immutable spec and repository context.

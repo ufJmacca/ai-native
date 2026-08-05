@@ -1,0 +1,5 @@
+# Factory Implementation Direction
+
+The final plan synthesizer must choose the smallest repository-grounded
+implementation and make its interfaces, data flow, edge cases, tests, and
+rollout behavior explicit. No implementation decision was precomputed here.

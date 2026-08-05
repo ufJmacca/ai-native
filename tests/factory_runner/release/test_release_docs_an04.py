@@ -8,6 +8,10 @@ MAKEFILE = REPOSITORY_ROOT / "Makefile"
 RUNBOOK = REPOSITORY_ROOT / "docs" / "factory-runner" / "releasing.md"
 README = REPOSITORY_ROOT / "docs" / "factory-runner" / "README.md"
 RELEASES = REPOSITORY_ROOT / "docs" / "releases.md"
+PHASE_EVIDENCE = tuple(
+    REPOSITORY_ROOT / "docs" / "factory-runner" / "evidence" / f"AN-0{phase}.md"
+    for phase in range(1, 5)
+)
 
 
 def test_makefile_exposes_reproducible_certification_and_release_gates() -> None:
@@ -69,3 +73,19 @@ def test_general_release_docs_delegate_to_the_exact_head_merge_controller() -> N
     assert "trusted cli merge" in lowered
     assert "exact head" in lowered
     assert "native auto-merge is not used" in lowered
+
+
+def test_phase_evidence_no_longer_delegates_to_native_auto_merge() -> None:
+    for path in PHASE_EVIDENCE:
+        lowered = " ".join(path.read_text(encoding="utf-8").casefold().split())
+
+        assert "cli" in lowered, path.name
+        assert "merge" in lowered, path.name
+        for stale_policy in (
+            "enables github auto-merge",
+            "enables protected github auto-merge",
+            "repository auto-merge is enabled",
+            "workflow enables auto-merge",
+            "receive protected github auto-merge",
+        ):
+            assert stale_policy not in lowered, path.name
