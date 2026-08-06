@@ -24,9 +24,10 @@ Execution order:
 2. Keep every required CI, security, policy, packaging, and compatibility
    check blocking.
 3. After the phase evidence is complete, have the trusted publisher/control
-   plane mark the PR ready, bind its decision to the exact PR head and base,
-   verify every configured check and evidence gate, and submit the fixed
-   normal merge through the exact-head GitHub API command in Section 12.1.
+   plane require the ordinary open PR to remain non-draft, bind its decision
+   to the exact PR head and base, verify every configured check and evidence
+   gate, and submit the fixed normal merge through the exact-head GitHub API
+   command in Section 12.1.
 4. Verify that GitHub has actually merged that exact PR head to the default
    branch before starting the next phase from the updated default branch.
 5. Complete the post-merge release job for `AN-04`.
@@ -1021,8 +1022,8 @@ Every phase:
 - keeps existing CLI tests green;
 - keeps every required CI, security, policy, packaging, and compatibility
   check blocking;
-- hands its draft PR to the trusted publisher/control plane, which marks it
-  ready and may submit the fixed normal merge only after the exact
+- hands its ordinary open non-draft PR to the trusted publisher/control plane,
+  which may submit the fixed normal merge only after the exact
   head/base/check/evidence gate is complete;
 - must not begin its dependent successor until GitHub reports the PR actually
   merged to the default branch;
@@ -1048,8 +1049,9 @@ multiple phases in one PR.
 The normal phase lifecycle is:
 
 1. The phase implementation worker creates the phase branch, commits only
-   phase-scoped work, pushes that feature branch, and opens one draft PR with
-   machine-verifiable red, green, refactor, and final evidence.
+   phase-scoped work, pushes that feature branch, and opens one ordinary
+   non-draft PR with machine-verifiable red, green, refactor, and final
+   evidence.
 2. GitHub runs all required CI, security, policy, packaging, and compatibility
    checks against the candidate head. Repository policy requires zero
    approving human reviews. Available branch protection also requires the
@@ -1058,12 +1060,12 @@ The normal phase lifecycle is:
    repository's GitHub plan does not provide branch protection.
 3. A trusted publisher/control plane, running outside the attempt sandbox,
    verifies that the PR is open, targets the expected default branch, has the
-   expected repository and feature branch, and is conflict-free. It marks a
-   draft PR ready, snapshots the exact head SHA and base SHA, verifies the
-   phase manifest and evidence for that head, and requires every configured
-   check to have a successful terminal conclusion for that same head. A
-   missing, pending, skipped where not explicitly allowed, stale, cancelled,
-   or failed check blocks the merge.
+   expected repository and feature branch, is non-draft, and is conflict-free.
+   It performs no readiness mutation, snapshots the exact head SHA and base
+   SHA, verifies the phase manifest and evidence for that head, and requires
+   every configured check to have a successful terminal conclusion for that
+   same head. A missing, pending, skipped where not explicitly allowed, stale,
+   cancelled, or failed check blocks the merge.
 4. Immediately before merging, the publisher rereads the PR and default branch
    and requires the PR head and base to equal the snapshots. A changed head or
    base restarts the complete validation; it is never accepted using evidence
@@ -1095,19 +1097,20 @@ The normal phase lifecycle is:
 The factory-mode attempt sandbox defined in Section 9 has no GitHub client or
 credentials at all. When the phase implementation workspace uses trusted host
 GitHub tooling, that tooling receives only the minimum feature-branch and
-draft-PR authority needed for its task. Neither environment receives GitHub
-merge, administration, review-approval, branch-protection-bypass, force-push,
-or deployment credentials. Neither may mark its own work approved, weaken or
-skip a required check, force-push, deploy, invoke the merge API, or push the
-default branch. Only the deployed trusted controller may receive the
-repository-scoped App installation token used by the publisher gate above.
+open non-draft PR publication authority needed for its task. Neither
+environment receives GitHub merge, administration, review-approval,
+branch-protection-bypass, force-push, or deployment credentials. Neither may
+mark its own work approved, weaken or skip a required check, force-push,
+deploy, invoke the merge API, or push the default branch. Only the deployed
+trusted controller may receive the repository-scoped App installation token
+used by the publisher gate above.
 
-Operator intervention is not a routine readiness or merge step. It is allowed
-only for a true exception: scope ambiguity, a security finding, a missing
-permission, a merge conflict the trusted automation cannot resolve, or a
-failed required check that needs diagnosis. The operator resolves the cause;
-the trusted publisher then restarts the complete exact-head/base/check/evidence
-path without bypassing policy.
+Operator intervention is not a routine publication, eligibility, or merge
+step. It is allowed only for a true exception: scope ambiguity, a security
+finding, a missing permission, a merge conflict the trusted automation cannot
+resolve, or a failed required check that needs diagnosis. The operator resolves
+the cause; the trusted publisher then restarts the complete
+exact-head/base/check/evidence path without bypassing policy.
 
 ---
 
@@ -1654,9 +1657,9 @@ change:
 3. Implement it in `ai-native` using a dedicated branch and PR.
 4. Add or update compatibility fixtures.
 5. Keep all required checks and evidence blocking; have the trusted publisher
-   mark the PR ready and apply the exact-head/base CLI merge policy in Section
-   12.1, then verify the actual default-branch merge before publishing a new
-   immutable release.
+   require the PR to remain open and non-draft and apply the exact-head/base CLI
+   merge policy in Section 12.1, then verify the actual default-branch merge
+   before publishing a new immutable release.
 6. Produce a new release receipt.
 7. In a separate factory PR, update the stored receipt and pinned OCI
    reference.
@@ -1741,8 +1744,8 @@ During implementation, Codex must:
 - never request or use GitHub merge, administration, review-approval,
   branch-protection-bypass, force-push, or deployment credentials inside the
   phase implementation workspace;
-- leave ready-state transitions and the exact-head/base/check/evidence merge
-  decision to the trusted publisher/control plane;
+- leave the exact-head/base/check/evidence merge decision to the trusted
+  publisher/control plane; no component performs a ready-state transition;
 - never implement private-factory control-plane features here;
 - update protocol docs and examples with implementation changes;
 - record discovered contract conflicts rather than silently changing v1.
@@ -1755,16 +1758,17 @@ Before handing the phase PR to the trusted publisher, Codex must:
 4. Run diff, secret, and factory-platform-coupling scans.
 5. Map the PR body to phase deliverables and exit criteria.
 6. Include concise red, green, refactor, and final verification evidence.
-7. Open one draft PR and emit a machine-verifiable publisher handoff.
+7. Open one ordinary non-draft PR and emit a machine-verifiable publisher
+   handoff.
 
-After the draft PR is open:
+After the ordinary open non-draft PR is published:
 
-- the attempt sandbox makes no readiness, approval, deployment, or merge
+- the attempt sandbox makes no publication, approval, deployment, or merge
   decision;
 - required CI, security, policy, packaging, and compatibility checks remain
   blocking;
 - the trusted publisher/control plane verifies the handoff, exact head and
-  base, configured check conclusions, and evidence, marks the PR ready, and
+  base, configured check conclusions, evidence, and non-draft state, and
   submits only the fixed normal merge defined in Section 12.1;
 - wait until GitHub reports the actual exact-head merge to the default branch;
 - request operator intervention only for a scope, security, permission,
@@ -1806,10 +1810,11 @@ to the default branch, force-push, bypass available branch protection, approve,
 deploy, or invoke the merge API. Only the deployed trusted controller may
 receive the repository-scoped GitHub App installation token.
 
-After opening the draft phase PR, emit the machine-verifiable handoff and leave
-readiness and merge control to the trusted publisher/control plane. It marks
-the PR ready only after binding the decision to the exact PR head and base and
-verifying every configured check and machine-verifiable evidence gate. It then
+After opening the ordinary non-draft phase PR, emit the machine-verifiable
+handoff and leave merge control to the trusted publisher/control plane. It
+requires the PR to remain open and non-draft after binding the decision to the
+exact PR head and base and verifying every configured check and
+machine-verifiable evidence gate. It performs no readiness mutation and then
 uses only `gh api --method PUT "repos/$owner/$repo/pulls/$pr_number/merge" -f "sha=$expected_head_sha" -f merge_method=merge`; it never uses `--auto`,
 `--admin`, another merge method, a bypass identity, or a direct default-branch
 push. Branch protection enforces the same rules where available but is not a
@@ -1831,9 +1836,9 @@ This repository's factory-runner work is complete when:
 - each `AN-*` phase was delivered as its own serial PR and GitHub reports each
   expected PR head actually merged to the default branch;
 - required CI, security, policy, packaging, and compatibility checks remained
-  blocking, and the trusted publisher/control plane controlled readiness and
-  the exact-head/base/check/evidence merge decision with zero approving human
-  reviews;
+  blocking, and the trusted publisher/control plane controlled open/non-draft
+  publication and the exact-head/base/check/evidence merge decision with zero
+  approving human reviews;
 - every merge used the fixed normal-merge API request in Section 12.1 with its
   exact `sha` precondition; no native auto-merge, administration bypass, merge
   queue, squash, rebase, or direct default-branch push was used;
